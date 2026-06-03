@@ -1,0 +1,159 @@
+/* ---- Emote shown over a player's avatar ---- */
+.gpe-emote-overlay {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(0.3);
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 46px;
+    line-height: 1;
+    pointer-events: none;
+    z-index: 50;
+    opacity: 0;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    transition: opacity 140ms ease, transform 140ms ease;
+}
+.gpe-emote-overlay.gpe-show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+}
+
+/* ---- Shared hand (cards) shown near a player's avatar ---- */
+.gpe-hand-wrap {
+    position: absolute;
+    left: 50%;
+    bottom: -6px;
+    transform: translate(-50%, 8px);
+    display: flex;
+    gap: 3px;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 60;
+    transition: opacity 150ms ease, transform 150ms ease;
+}
+.gpe-hand-wrap.gpe-show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+.gpe-shared-card {
+    width: 40px;
+    height: 52px;
+    border-radius: 3px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    background: #fff;
+}
+.gpe-text-card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: bold 15px/1 Arial, sans-serif;
+    border: 1px solid #999;
+    color: #111;
+}
+.gpe-suit-h,
+.gpe-suit-d {
+    color: #c81818;
+}
+
+/* ---- Picker button next to the chat input ---- */
+#gpe-picker-btn {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    width: 28px;
+    height: 24px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+#gpe-picker-btn:hover {
+    background: #f0f0f0;
+}
+
+/* ---- "Show Hand" button ---- */
+#gpe-hand-btn {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 4px 8px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+#gpe-hand-btn:hover {
+    background: #f0f0f0;
+}
+
+/* ---- Emote picker panel ---- */
+#gpe-picker-panel {
+    position: absolute;
+    z-index: 99999;
+    background: #fff;
+    border: 1px solid #cfcfcf;
+    border-radius: 10px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    padding: 8px;
+    display: none;
+    grid-template-columns: repeat(8, 34px);
+    grid-auto-rows: 34px;
+    gap: 4px;
+}
+#gpe-picker-panel.gpe-open {
+    display: grid;
+}
+#gpe-picker-panel button {
+    font-size: 21px;
+    line-height: 1;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    width: 34px;
+    height: 34px;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#gpe-picker-panel button:hover {
+    background: #eef1f5;
+}
+
+#gpe-test-label {
+    font: 11px/1 Arial, sans-serif;
+    color: #444;
+    margin-left: 6px;
+    vertical-align: middle;
+    cursor: pointer;
+    user-select: none;
+}
+#gpe-test-label input { vertical-align: middle; margin-right: 2px; }
+
+.gpe-toggle {
+    font: 11px/1 Arial, sans-serif;
+    color: #444;
+    margin-left: 6px;
+    vertical-align: middle;
+    cursor: pointer;
+    user-select: none;
+}
+.gpe-toggle input { vertical-align: middle; margin-right: 2px; }

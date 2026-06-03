@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "GPokr Emoticons",
+  "version": "1.0.0",
+  "description": "Show emoticons on player avatars at the GPokr table, driven by chat.",
+  "content_scripts": [
+	{
+	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"],
+	  "js": ["content.js"],
+	  "css": ["overlay.css"],
+	  "run_at": "document_idle"
+	}
+  ]
+}
