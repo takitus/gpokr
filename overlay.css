@@ -148,6 +148,30 @@
 }
 #gpe-test-label input { vertical-align: middle; margin-right: 2px; }
 
+/* ---- Odds HUD (floats over the top bar, left of Sit Out — never affects layout) ---- */
+#gpe-odds-hud {
+    position: fixed;
+    z-index: 99998;
+    white-space: nowrap;
+    text-align: left;
+    background: rgba(20, 24, 28, 0.88);
+    color: #eee;
+    font: 12px/1.5 Menlo, Consolas, monospace;
+    padding: 6px 10px;
+    border-radius: 8px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+}
+.gpe-odds-street { color: #999; }
+/* card colors: green good / yellow neutral / red bad */
+.gpe-odds-good { color: #6fdc6f; }
+.gpe-odds-neutral { color: #ffd966; }
+.gpe-odds-bad { color: #ff7b6b; }
+.gpe-odds-call { color: #6fdc6f; }
+.gpe-odds-check { color: #6fdc6f; }
+.gpe-odds-marginal { color: #ffcc66; }
+.gpe-odds-fold { color: #ff7b6b; }
+
 .gpe-toggle {
     font: 11px/1 Arial, sans-serif;
     color: #444;

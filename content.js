@@ -9,8 +9,10 @@
     // Settings (persisted)
     let LOCAL_TEST = false;
     let SHARE_HAND = false;
+    let SHOW_ODDS = false;
     try { LOCAL_TEST = localStorage.getItem("gpe_local_test") === "1"; } catch (e) {}
     try { SHARE_HAND = localStorage.getItem("gpe_share_hand") === "1"; } catch (e) {}
+    try { SHOW_ODDS = localStorage.getItem("gpe_show_odds") === "1"; } catch (e) {}
 
     // ---------- helpers: name -> avatar ----------
     function getSeatName(panel) {
@@ -22,18 +24,26 @@
     }
 
     function findAvatarByName(name) {
+        let hidden = null;
         const panels = document.querySelectorAll('table[class*="iogc-PlayerPanel"]');
         for (const p of panels) {
-            if (getSeatName(p) === name) return p.querySelector("img.iogc-PlayerPanel-avatar");
+            if (getSeatName(p) !== name) continue;
+            const av = p.querySelector("img.iogc-PlayerPanel-avatar");
+            if (!av) continue;
+            if (av.getBoundingClientRect().width > 0) return av; // prefer the visible duplicate
+            hidden = hidden || av;
         }
-        return null;
+        return hidden;
     }
 
-    // Position a fixed overlay over an avatar; never modifies the avatar's DOM.
-    function anchorToAvatar(overlay, avatar, lifetimeMs) {
+    // Position a fixed overlay over a player's avatar; never modifies the avatar's DOM.
+    // Takes a resolver, not an element: GWT recycles seat panels between hands, so a
+    // captured element can drift to another player. Re-resolve by name on every tick.
+    function anchorToAvatar(overlay, resolveAvatar, lifetimeMs) {
         function place() {
-            const r = avatar.getBoundingClientRect();
-            if (r.width === 0 && r.height === 0) { overlay.style.display = "none"; return; }
+            const avatar = resolveAvatar();
+            const r = avatar ? avatar.getBoundingClientRect() : null;
+            if (!r || (r.width === 0 && r.height === 0)) { overlay.style.display = "none"; return; }
             overlay.style.display = "";
             overlay.style.left = r.left + r.width / 2 + "px";
             overlay.style.top = r.top + r.height / 2 + "px";
@@ -46,19 +56,20 @@
     }
 
     // ---------- emotes ----------
-    function showEmoteOnAvatar(avatar, glyph) {
-        if (!avatar) return;
-        let overlay = avatar._gpeEmote;
+    const emoteOverlays = new Map(); // player name -> overlay
+    function showEmoteForName(name, glyph) {
+        if (!name) return;
+        let overlay = emoteOverlays.get(name);
         if (!overlay || !overlay.isConnected) {
             overlay = document.createElement("div");
             overlay.className = "gpe-emote-overlay";
             overlay.style.position = "fixed";
             overlay.style.transform = "translate(-50%, -50%) scale(0.3)";
             document.body.appendChild(overlay);
-            avatar._gpeEmote = overlay;
+            emoteOverlays.set(name, overlay);
         }
         overlay.textContent = glyph;
-        anchorToAvatar(overlay, avatar, DISPLAY_MS);
+        anchorToAvatar(overlay, () => findAvatarByName(name), DISPLAY_MS);
         void overlay.offsetWidth;
         overlay.classList.add("gpe-show");
         overlay.style.transform = "translate(-50%, -50%) scale(1)";
@@ -75,7 +86,8 @@
     }
 
     // ---------- card store (learning) ----------
-    const CARD_STORE_KEY = "gpe_card_images";
+    // v2: the v1 store got poisoned by learning from other players' showdown cards.
+    const CARD_STORE_KEY = "gpe_card_images_v2";
     const SUIT_GLYPH = { c: "♣", d: "♦", h: "♥", s: "♠" };
     const RANK_LABEL = { T: "10" };
 
@@ -122,16 +134,167 @@
         return false;
     }
 
+    // ---------- game-state parsing (odds feature) ----------
+    function normCard(c) {
+        c = c.trim();
+        if (c.startsWith("10")) c = "T" + c.slice(2);
+        return c[0].toUpperCase() + c[1].toLowerCase();
+    }
+
+    // Community cards from the log: "Dealing flop: [Ts, 7c, 4d]" / turn / river.
+    // (The 5 board <img> slots exist even face-down, so the log is the reliable source.)
+    function parseBoard() {
+        const board = [];
+        for (const line of currentHandScope()) {
+            const m = line.match(/Dealing (?:flop|turn|river):\s*\[([^\]]+)\]/i);
+            if (m) m[1].split(",").forEach((c) => board.push(normCard(c)));
+        }
+        return board.slice(0, 5);
+    }
+
+    // Visible seated players minus those who folded this hand, minus me.
+    function countActiveOpponents() {
+        const names = new Set(
+            Array.from(document.querySelectorAll(".iogc-PlayerPanel-name"))
+                .filter((n) => n.textContent.trim() && n.getBoundingClientRect().width > 0)
+                .map((n) => n.textContent.trim())
+        );
+        for (const line of currentHandScope()) {
+            const m = line.match(/^(.+?) folds$/i);
+            if (m) names.delete(m[1].trim());
+        }
+        return Math.max(1, Math.min(8, names.size - 1)); // -1 = me
+    }
+
+    function parseMoney(text) {
+        const m = text.match(/\$\s*([\d,]+)/);
+        return m ? parseInt(m[1].replace(/,/g, ""), 10) : 0;
+    }
+
+    // Pot from the pot label; amount to call from the Check/Call button (0 unless facing a bet).
+    function parsePotAndToCall() {
+        const potEl = document.querySelector(".gpokr-GameWindow-potLabel");
+        const pot = potEl ? parseMoney(potEl.textContent) : 0;
+        const callBtn = document.querySelector(".gpokr-GameWindow-checkCallButton");
+        let toCall = 0;
+        if (callBtn && callBtn.getBoundingClientRect().width > 0 && /call/i.test(callBtn.textContent)) {
+            toCall = parseMoney(callBtn.textContent);
+        }
+        return { pot, toCall };
+    }
+
+    // ---------- odds HUD ----------
+    let oddsKey = "";
+    let oddsResult = null;
+    let boardDeltas = [];
+
+    // Color classes: green = good, yellow = neutral, red = bad.
+    // Hole cards: equity vs the break-even share against this many opponents.
+    function equityClass(eq, nOpp) {
+        const fair = 1 / (nOpp + 1);
+        if (eq >= fair * 1.25) return "gpe-odds-good";
+        if (eq <= fair * 0.75) return "gpe-odds-bad";
+        return "gpe-odds-neutral";
+    }
+    // Board cards: how much the card moved my equity when it arrived.
+    function deltaClass(d) {
+        if (d >= 0.03) return "gpe-odds-good";
+        if (d <= -0.03) return "gpe-odds-bad";
+        return "gpe-odds-neutral";
+    }
+
+    // Float over the top bar, just left of the (visible) Sit Out button —
+    // fixed positioning so it never expands the bar's layout.
+    function placeOddsHud(hud) {
+        if (hud.style.display === "none") return;
+        const sitOut = Array.from(document.querySelectorAll(".iogc-GameWindow-sitOutButton"))
+            .find((b) => b.getBoundingClientRect().width > 0);
+        const anchor = sitOut || document.querySelector(".iogc-HeaderPanelRight");
+        if (!anchor) { hud.style.left = "12px"; hud.style.top = "60px"; return; }
+        const r = anchor.getBoundingClientRect();
+        // Top-align with the blue game-window container so the HUD stays out of the play area.
+        const container = document.querySelector(".iogc-GameWindow-container");
+        const top = container ? container.getBoundingClientRect().top + 2 : r.top;
+        hud.style.left = Math.max(0, r.left - 8 - hud.offsetWidth) + "px";
+        hud.style.top = top + "px";
+    }
+
+    function updateOddsHud() {
+        let hud = document.getElementById("gpe-odds-hud");
+        if (!SHOW_ODDS) {
+            if (hud) { clearInterval(hud._gpeReposition); hud.remove(); }
+            oddsKey = "";
+            return;
+        }
+
+        const hand = readMyHand();
+        if (!hand || handHasEnded() || !window.GPE_ODDS) {
+            if (hud) hud.style.display = "none";
+            return;
+        }
+
+        const board = parseBoard();
+        const nOpp = countActiveOpponents();
+        const { pot, toCall } = parsePotAndToCall();
+
+        // Recompute equity only when hand/board/opponent-count change.
+        const key = hand.join("") + "|" + board.join("") + "|" + nOpp;
+        if (key !== oddsKey) {
+            oddsResult = window.GPE_ODDS.monteCarloEquity(hand, board, nOpp, 5000);
+            // Attribute each board card: equity with it vs without it (fewer iters — color only).
+            boardDeltas = board.map((c, i) => {
+                const without = board.slice(0, i).concat(board.slice(i + 1));
+                return oddsResult.equity - window.GPE_ODDS.monteCarloEquity(hand, without, nOpp, 2000).equity;
+            });
+            oddsKey = key;
+        }
+
+        if (!hud) {
+            hud = document.createElement("div");
+            hud.id = "gpe-odds-hud";
+            document.body.appendChild(hud);
+            hud._gpeReposition = setInterval(() => placeOddsHud(hud), 200);
+        }
+        hud.style.display = "";
+
+        const eq = oddsResult.equity;
+        const odds = window.GPE_ODDS.potOdds(pot, toCall); // pot label already includes current bets
+        const dec = window.GPE_ODDS.evDecision(eq, odds);
+        const pct = (x) => (x * 100).toFixed(1) + "%";
+
+        const streets = ["preflop", "flop", "flop", "flop", "turn", "river"];
+        const handHtml = '<span class="' + equityClass(eq, nOpp) + '">' + hand.join(" ") + "</span>";
+        const boardHtml = board
+            .map((c, i) => '<span class="' + deltaClass(boardDeltas[i] || 0) + '">' + c + "</span>")
+            .join(" ");
+        let html =
+            '<div class="gpe-odds-row gpe-odds-title">' + handHtml +
+            (board.length ? " | " + boardHtml : "") +
+            ' <span class="gpe-odds-street">(' + streets[board.length] + ")</span></div>" +
+            '<div class="gpe-odds-row">equity <b>' + pct(eq) + "</b> vs " + nOpp +
+            (nOpp === 1 ? " opp" : " opps") + "</div>";
+        if (toCall > 0) {
+            html += '<div class="gpe-odds-row">pot $' + pot.toLocaleString() +
+                " | call $" + toCall.toLocaleString() +
+                " | need " + pct(odds) +
+                ' <span class="gpe-odds-' + dec.action + '"><b>' + dec.action.toUpperCase() + "</b></span></div>";
+        } else {
+            html += '<div class="gpe-odds-row">pot $' + pot.toLocaleString() + " | nothing to call</div>";
+        }
+        hud.innerHTML = html;
+        placeOddsHud(hud);
+    }
+
     function learnMyCards() {
+        if (handHasEnded()) return; // showdown reveals other players' cards — don't learn from those
         const hand = readMyHand();
         if (!hand) return;
-        const c0 = document.querySelector(".gpokr-Card0 img");
-        const c1 = document.querySelector(".gpokr-Card1 img");
-        if (!c0 || !c1) return;
+        const pair = findMyVisibleCards(); // unambiguous face-up pair = my own cards
+        if (!pair) return;
         const store = loadCardStore();
         let changed = false;
-        if (c0.src.startsWith("data:") && c0.src.length > 1400 && !store[hand[0]]) { store[hand[0]] = c0.src; changed = true; }
-        if (c1.src.startsWith("data:") && c1.src.length > 1400 && !store[hand[1]]) { store[hand[1]] = c1.src; changed = true; }
+        if (!store[hand[0]]) { store[hand[0]] = pair[0].src; changed = true; }
+        if (!store[hand[1]]) { store[hand[1]] = pair[1].src; changed = true; }
         if (changed) saveCardStore(store);
     }
 
@@ -175,19 +338,20 @@
         return div;
     }
 
-    function showHandOnAvatar(avatar, cards) {
-        if (!avatar || !cards || !cards.length) return;
-        let wrap = avatar._gpeHand;
-        if (wrap && wrap.isConnected) wrap.remove();
-        wrap = document.createElement("div");
+    const handOverlays = new Map(); // player name -> overlay
+    function showHandForName(name, cards) {
+        if (!name || !cards || !cards.length) return;
+        const prev = handOverlays.get(name);
+        if (prev && prev.isConnected) prev.remove();
+        const wrap = document.createElement("div");
         wrap.className = "gpe-hand-wrap";
         wrap.style.position = "fixed";
         wrap.style.transform = "translate(-50%, -50%)";
         cards.forEach((c) => wrap.appendChild(makeCardEl(c)));
         document.body.appendChild(wrap);
-        avatar._gpeHand = wrap;
+        handOverlays.set(name, wrap);
 
-        anchorToAvatar(wrap, avatar, HAND_MS);
+        anchorToAvatar(wrap, () => findAvatarByName(name), HAND_MS);
         void wrap.offsetWidth;
         wrap.classList.add("gpe-show");
         clearTimeout(wrap._gpeTimer);
@@ -197,17 +361,19 @@
         }, HAND_MS);
     }
 
-    // Find my two visible face-up hole cards (differ from each other; backs are identical).
+    // Find my two visible face-up hole cards. Backs are identical images, so a
+    // face-up pair is two data: images that differ. Returns the pair only when it
+    // is unambiguous (exactly one seat face-up — at showdown others are revealed too).
     function findMyVisibleCards() {
-        const panels = Array.from(document.querySelectorAll(".iogc-PlayerPanel"));
-        for (const panel of panels) {
-            const c0 = panel.querySelector(".gpokr-Card0 img");
-            const c1 = panel.querySelector(".gpokr-Card1 img");
-            if (!c0 || !c1) continue;
-            const faceUp = (im) => im.src.startsWith("data:") && im.src.length > 1400;
-            if (faceUp(c0) && faceUp(c1) && c0.src !== c1.src) return [c0, c1];
+        const pairs = [];
+        for (const c0 of document.querySelectorAll(".gpokr-Card0 img")) {
+            const seat = c0.closest('[class*="iogc-PlayerPanel"]') || c0.closest("td");
+            const c1 = seat ? seat.querySelector(".gpokr-Card1 img") : null;
+            if (!c1) continue;
+            const faceUp = (im) => im.src.startsWith("data:") && im.src.length > 800;
+            if (faceUp(c0) && faceUp(c1) && c0.src !== c1.src) pairs.push([c0, c1]);
         }
-        return null;
+        return pairs.length === 1 ? pairs[0] : null;
     }
 
     // Render my hand locally only (no chat).
@@ -255,10 +421,10 @@
         const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
 
         const cards = decodeHand(text);
-        if (cards) { showHandOnAvatar(findAvatarByName(name), cards); return; }
+        if (cards) { showHandForName(name, cards); return; }
 
         const glyph = firstEmoteIn(text);
-        if (glyph) showEmoteOnAvatar(findAvatarByName(name), glyph);
+        if (glyph) showEmoteForName(name, glyph);
     }
 
     function watchChat() {
@@ -287,6 +453,7 @@
 
     function pollHandState() {
         learnMyCards();
+        updateOddsHud();
 
         const ended = handHasEnded();
         if (!ended && lastEnded) sharedThisHand = false; // new hand began -> reset guard
@@ -392,9 +559,16 @@
             try { localStorage.setItem("gpe_local_test", v ? "1" : "0"); } catch (e) {}
         });
 
+        const oddsToggle = makeToggle("gpe-show-odds", "odds", SHOW_ODDS, (v) => {
+            SHOW_ODDS = v;
+            try { localStorage.setItem("gpe_show_odds", v ? "1" : "0"); } catch (e) {}
+            updateOddsHud();
+        });
+
         input.insertAdjacentElement("afterend", btn);
         btn.insertAdjacentElement("afterend", shareToggle);
         shareToggle.insertAdjacentElement("afterend", testToggle);
+        testToggle.insertAdjacentElement("afterend", oddsToggle);
         document.body.appendChild(panel);
     }
 
