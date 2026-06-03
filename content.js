@@ -14,6 +14,13 @@
     try { SHARE_HAND = localStorage.getItem("gpe_share_hand") === "1"; } catch (e) {}
     try { SHOW_ODDS = localStorage.getItem("gpe_show_odds") === "1"; } catch (e) {}
 
+    // Remove artifacts orphaned by a previous extension context: after an extension
+    // reload the old context's timers die, leaving overlays frozen on screen and
+    // buttons with dead listeners. They are re-created by this context as needed.
+    document.querySelectorAll(
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle"
+    ).forEach((el) => el.remove());
+
     // ---------- helpers: name -> avatar ----------
     function getSeatName(panel) {
         const link = panel.querySelector('a[href*="/profile/"]');
@@ -285,16 +292,65 @@
         placeOddsHud(hud);
     }
 
+    let lastSeenHand = "";
     function learnMyCards() {
-        if (handHasEnded()) return; // showdown reveals other players' cards — don't learn from those
+        if (handHasEnded()) return;
         const hand = readMyHand();
-        if (!hand) return;
-        const pair = findMyVisibleCards(); // unambiguous face-up pair = my own cards
-        if (!pair) return;
+        if (!hand) { lastSeenHand = ""; return; }
+        // Wait until the same hand has been read on two consecutive polls, so the
+        // seat <img>s have caught up with the log (they update a beat later).
+        const key = hand.join("");
+        const stable = key === lastSeenHand;
+        lastSeenHand = key;
+        if (!stable) return;
+        const pair = findMySeatCards();
+        if (!pair || pair[0].src === pair[1].src) return;
         const store = loadCardStore();
         let changed = false;
-        if (!store[hand[0]]) { store[hand[0]] = pair[0].src; changed = true; }
-        if (!store[hand[1]]) { store[hand[1]] = pair[1].src; changed = true; }
+        changed = learnInto(store, hand[0], pair[0]) || changed;
+        changed = learnInto(store, hand[1], pair[1]) || changed;
+        if (changed) saveCardStore(store);
+    }
+
+    // Board cards are public: map the logged board (deal order) onto the visible
+    // community-card slots, left to right. Up to 5 learned images per hand.
+    let lastSeenBoard = "";
+    function learnBoardCards() {
+        const board = parseBoard();
+        if (!board.length) { lastSeenBoard = ""; return; }
+        const key = board.join("");
+        const stable = key === lastSeenBoard;
+        lastSeenBoard = key;
+        if (!stable) return; // same two-poll settling as learnMyCards
+        const imgs = Array.from(document.querySelectorAll("img.gpokr-communityCard"))
+            .filter((im) => im.getBoundingClientRect().width > 0)
+            .sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x);
+        if (imgs.length < board.length) return;
+        const store = loadCardStore();
+        let changed = false;
+        for (let i = 0; i < board.length; i++) changed = learnInto(store, board[i], imgs[i]) || changed;
+        if (changed) saveCardStore(store);
+    }
+
+    // Showdown reveals are public too: "NAME shows [Ah, Kd]" + that seat's face-up imgs.
+    let lastSeenShows = "";
+    function learnShowdownCards() {
+        const shows = currentHandScope()
+            .map((t) => t.match(/^(.+?) shows \[([^,\]]+),\s*([^\]]+)\]/i))
+            .filter(Boolean);
+        if (!shows.length) { lastSeenShows = ""; return; }
+        const key = shows.map((m) => m[0]).join("|");
+        const stable = key === lastSeenShows;
+        lastSeenShows = key;
+        if (!stable) return;
+        const store = loadCardStore();
+        let changed = false;
+        for (const m of shows) {
+            const pair = findSeatCardsByName(m[1].trim());
+            if (!pair || pair[0].src === pair[1].src) continue;
+            changed = learnInto(store, normCard(m[2]), pair[0]) || changed;
+            changed = learnInto(store, normCard(m[3]), pair[1]) || changed;
+        }
         if (changed) saveCardStore(store);
     }
 
@@ -361,19 +417,33 @@
         }, HAND_MS);
     }
 
-    // Find my two visible face-up hole cards. Backs are identical images, so a
-    // face-up pair is two data: images that differ. Returns the pair only when it
-    // is unambiguous (exactly one seat face-up — at showdown others are revealed too).
-    function findMyVisibleCards() {
-        const pairs = [];
-        for (const c0 of document.querySelectorAll(".gpokr-Card0 img")) {
-            const seat = c0.closest('[class*="iogc-PlayerPanel"]') || c0.closest("td");
-            const c1 = seat ? seat.querySelector(".gpokr-Card1 img") : null;
-            if (!c1) continue;
-            const faceUp = (im) => im.src.startsWith("data:") && im.src.length > 800;
-            if (faceUp(c0) && faceUp(c1) && c0.src !== c1.src) pairs.push([c0, c1]);
+    // My own username, from the sidebar login panel.
+    function getMyName() {
+        const el = document.querySelector(".iogc-LoginPanel-nameHeading");
+        return el && el.textContent.trim() ? el.textContent.trim() : null;
+    }
+
+    // A seat's two hole-card <img>s, identified by name (visible panel only).
+    function findSeatCardsByName(name) {
+        if (!name) return null;
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            if (getSeatName(p) !== name) continue;
+            const c0 = p.querySelector(".gpokr-Card0 img");
+            const c1 = p.querySelector(".gpokr-Card1 img");
+            if (c0 && c1 && c0.getBoundingClientRect().width > 0) return [c0, c1];
         }
-        return pairs.length === 1 ? pairs[0] : null;
+        return null;
+    }
+    function findMySeatCards() { return findSeatCardsByName(getMyName()); }
+
+    function faceUpImg(im) {
+        return !!im && im.src.startsWith("data:") && im.src.length > 800;
+    }
+    // First write wins; never overwrite a learned card.
+    function learnInto(store, card, img) {
+        if (!faceUpImg(img) || store[card]) return false;
+        store[card] = img.src;
+        return true;
     }
 
     // Render my hand locally only (no chat).
@@ -389,7 +459,7 @@
         cards.forEach((c) => wrap.appendChild(makeCardEl(c)));
         document.body.appendChild(wrap);
 
-        const anchor = findMyVisibleCards();
+        const anchor = findMySeatCards();
         function place() {
             if (anchor && anchor[0].getBoundingClientRect().width > 0) {
                 const r = anchor[0].getBoundingClientRect();
@@ -453,6 +523,8 @@
 
     function pollHandState() {
         learnMyCards();
+        learnBoardCards();
+        learnShowdownCards();
         updateOddsHud();
 
         const ended = handHasEnded();

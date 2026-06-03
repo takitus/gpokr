@@ -24,22 +24,22 @@
     transform: translate(-50%, -50%) scale(1);
 }
 
-/* ---- Shared hand (cards) shown near a player's avatar ---- */
+/* ---- Shared hand (cards) shown near a player's avatar ----
+   Positioned via inline fixed left/top (centered by the translate). No bottom:
+   a leftover `bottom` here once stretched the box viewport-high and the cards
+   rendered hundreds of px above the avatar. */
 .gpe-hand-wrap {
-    position: absolute;
-    left: 50%;
-    bottom: -6px;
-    transform: translate(-50%, 8px);
+    position: fixed;
+    transform: translate(-50%, -50%);
     display: flex;
     gap: 3px;
     opacity: 0;
     pointer-events: none;
     z-index: 60;
-    transition: opacity 150ms ease, transform 150ms ease;
+    transition: opacity 150ms ease;
 }
 .gpe-hand-wrap.gpe-show {
     opacity: 1;
-    transform: translate(-50%, 0);
 }
 .gpe-shared-card {
     width: 40px;
