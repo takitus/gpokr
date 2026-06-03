@@ -446,7 +446,9 @@
         return true;
     }
 
-    // Render my hand locally only (no chat).
+    // Render my hand locally only (no chat) — anchored to my own avatar by name,
+    // exactly like a received share. (Anchoring to the hole-card <img>s broke at
+    // hand end, when GWT hides/recycles them for the next hand.)
     function showHandLocal(cards) {
         if (!cards || !cards.length) return;
         let wrap = document.getElementById("gpe-local-hand");
@@ -454,31 +456,15 @@
         wrap = document.createElement("div");
         wrap.id = "gpe-local-hand";
         wrap.className = "gpe-hand-wrap";
-        wrap.style.position = "fixed";
-        wrap.style.transform = "translate(-50%, -50%)";
         cards.forEach((c) => wrap.appendChild(makeCardEl(c)));
         document.body.appendChild(wrap);
 
-        const anchor = findMySeatCards();
-        function place() {
-            if (anchor && anchor[0].getBoundingClientRect().width > 0) {
-                const r = anchor[0].getBoundingClientRect();
-                wrap.style.left = r.left + r.width + 30 + "px";
-                wrap.style.top = r.top + r.height / 2 + "px";
-            } else {
-                wrap.style.left = "80px";
-                wrap.style.top = "120px";
-            }
-        }
-        place();
-        clearInterval(wrap._gpeReposition);
-        wrap._gpeReposition = setInterval(place, 200);
+        anchorToAvatar(wrap, () => findAvatarByName(getMyName()), HAND_MS);
         void wrap.offsetWidth;
         wrap.classList.add("gpe-show");
         clearTimeout(wrap._gpeTimer);
         wrap._gpeTimer = setTimeout(() => {
             wrap.classList.remove("gpe-show");
-            clearInterval(wrap._gpeReposition);
             setTimeout(() => wrap.remove(), 250);
         }, HAND_MS);
     }
