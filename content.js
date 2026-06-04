@@ -10,6 +10,8 @@
     let LOCAL_TEST = false;
     let SHARE_HAND = false;
     let SHOW_ODDS = false;
+    let SHOW_STATS = false;
+    let HOTKEYS = false;
 
     // User-defined bet-sizing buttons: multiplier × base ("blind"/"pot"),
     // placed in the column above or below the bet input per `pos`. The top
@@ -46,6 +48,8 @@
         LOCAL_TEST = !!(s && s.localTest);
         SHARE_HAND = !!(s && s.shareHand);
         SHOW_ODDS = !!(s && s.showOdds);
+        SHOW_STATS = !!(s && s.showStats);
+        HOTKEYS = !!(s && s.hotkeys);
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
@@ -84,7 +88,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, .gpe-bet-col"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip"
     ).forEach((el) => el.remove());
 
     // ---------- helpers: name -> avatar ----------
@@ -166,6 +170,19 @@
     const SUIT_GLYPH = { c: "♣", d: "♦", h: "♥", s: "♠" };
     const RANK_LABEL = { T: "10" };
 
+    // Per-player stats learned from completed hands (VPIP/PFR/aggression/
+    // showdowns), persisted so reads survive reloads. Keyed by player name.
+    const PLAYER_STATS_KEY = "gpe_player_stats";
+    let playerStats = {};
+    function savePlayerStats() {
+        if (EXT_STORE) { try { EXT_STORE.set({ [PLAYER_STATS_KEY]: playerStats }); } catch (e) {} }
+    }
+
+    // Free-text per-player notes (declared here: initStorage() runs at boot
+    // and reads this key, so it must exist before that call).
+    const NOTES_KEY = "gpe_player_notes";
+    let playerNotes = {}; // name -> free text
+
     let cardStore = {};
     function loadCardStore() { return cardStore; }
     function saveCardStore(store) {
@@ -185,13 +202,15 @@
             cardStore = legacyLocalStorageCardStore();
             return;
         }
-        EXT_STORE.get(["gpe_settings", CARD_STORE_KEY], (res) => {
+        EXT_STORE.get(["gpe_settings", CARD_STORE_KEY, PLAYER_STATS_KEY, NOTES_KEY], (res) => {
             if (res.gpe_settings) applySettings(res.gpe_settings);
             else { // one-time migration from the old localStorage toggles
                 const legacy = legacyLocalStorageSettings();
                 applySettings(legacy);
                 EXT_STORE.set({ gpe_settings: legacy });
             }
+            playerStats = res[PLAYER_STATS_KEY] || {};
+            playerNotes = res[NOTES_KEY] || {};
             let stored = res[CARD_STORE_KEY];
             if (!stored) {
                 stored = legacyLocalStorageCardStore();
@@ -206,6 +225,8 @@
             if (area !== "local") return;
             if (changes.gpe_settings) { applySettings(changes.gpe_settings.newValue || {}); updateOddsHud(); }
             if (changes[CARD_STORE_KEY]) cardStore = changes[CARD_STORE_KEY].newValue || {};
+            if (changes[PLAYER_STATS_KEY]) playerStats = changes[PLAYER_STATS_KEY].newValue || {};
+            if (changes[NOTES_KEY]) playerNotes = changes[NOTES_KEY].newValue || {};
         });
     }
     initStorage();
@@ -280,18 +301,35 @@
         return Array.from(names).slice(0, 8);
     }
 
-    // Crude preflop range model from this hand's log: raisers play ~top 18% of
-    // hands, callers ~top 35%, blinds/unacted players are random (1.0).
-    // A player's tightest preflop action wins.
+    // Preflop range model from this hand's log. Static guesses (raisers ~top
+    // 18%, callers ~top 35%) until a player has enough observed hands, then
+    // their measured PFR/VPIP takes over. Blinds/unacted players are random
+    // (1.0). A player's tightest preflop action wins.
     const RANGE_RAISE = 0.18, RANGE_CALL = 0.35;
+    const MIN_STATS_HANDS = 20;
+    function measuredRange(name, raised) {
+        const t = playerStats[name];
+        if (!t || t.hands < MIN_STATS_HANDS) return null;
+        const f = (raised ? t.pfr : t.vpip) / t.hands;
+        return Math.min(0.9, Math.max(0.05, f));
+    }
     function parseOppRanges(names) {
         const acted = {};
         for (const line of currentHandScope()) {
             if (/^Dealing (?:flop|turn|river)/i.test(line)) break; // preflop actions only
             let m = line.match(/^(.+?) raises\b/i);
-            if (m) { const n = m[1].trim(); acted[n] = Math.min(acted[n] || 1, RANGE_RAISE); continue; }
+            if (m) {
+                const n = m[1].trim();
+                const r = measuredRange(n, true);
+                acted[n] = Math.min(acted[n] || 1, r !== null ? r : RANGE_RAISE);
+                continue;
+            }
             m = line.match(/^(.+?) calls\b/i);
-            if (m) { const n = m[1].trim(); acted[n] = Math.min(acted[n] || 1, RANGE_CALL); }
+            if (m) {
+                const n = m[1].trim();
+                const r = measuredRange(n, false);
+                acted[n] = Math.min(acted[n] || 1, r !== null ? r : RANGE_CALL);
+            }
         }
         return names.map((n) => acted[n] || 1);
     }
@@ -317,6 +355,7 @@
     let oddsKey = "";
     let oddsResult = null;
     let oddsDraw = null;
+    let oddsLabel = "";
     let boardDeltas = [];
 
     // Color classes: green = good, yellow = neutral, red = bad.
@@ -334,20 +373,15 @@
         return "gpe-odds-neutral";
     }
 
-    // Float over the top bar, just left of the (visible) Sit Out button —
+    // Float over the game window's header bar, horizontally centered on it —
     // fixed positioning so it never expands the bar's layout.
     function placeOddsHud(hud) {
         if (hud.style.display === "none") return;
-        const sitOut = Array.from(document.querySelectorAll(".iogc-GameWindow-sitOutButton"))
-            .find((b) => b.getBoundingClientRect().width > 0);
-        const anchor = sitOut || document.querySelector(".iogc-HeaderPanelRight");
-        if (!anchor) { hud.style.left = "12px"; hud.style.top = "60px"; return; }
-        const r = anchor.getBoundingClientRect();
-        // Top-align with the blue game-window container so the HUD stays out of the play area.
         const container = document.querySelector(".iogc-GameWindow-container");
-        const top = container ? container.getBoundingClientRect().top + 2 : r.top;
-        hud.style.left = Math.max(0, r.left - 8 - hud.offsetWidth) + "px";
-        hud.style.top = top + "px";
+        if (!container) { hud.style.left = "12px"; hud.style.top = "60px"; return; }
+        const r = container.getBoundingClientRect();
+        hud.style.left = Math.max(0, r.left + (r.width - hud.offsetWidth) / 2) + "px";
+        hud.style.top = r.top + 2 + "px";
     }
 
     function updateOddsHud() {
@@ -381,6 +415,7 @@
                 return oddsResult.equity - window.GPE_ODDS.monteCarloEquity(hand, without, nOpp, 2000, ranges).equity;
             });
             oddsDraw = window.GPE_ODDS.drawInfo(hand, board);
+            oddsLabel = window.GPE_ODDS.handLabel(hand, board);
             oddsKey = key;
         }
 
@@ -407,7 +442,8 @@
         let html =
             '<div class="gpe-odds-row gpe-odds-title">' + handHtml +
             (board.length ? " | " + boardHtml : "") +
-            ' <span class="gpe-odds-street">(' + streets[board.length] + ")</span></div>";
+            ' <span class="gpe-odds-street">(' + streets[board.length] + ")</span></div>" +
+            '<div class="gpe-odds-row">' + oddsLabel + "</div>";
         if (oddsDraw) {
             const parts = [];
             if (oddsDraw.flushOuts) parts.push("flush " + oddsDraw.flushOuts);
@@ -640,8 +676,227 @@
         return true;
     }
 
-    // ---------- end-of-hand watcher (auto-share, once per hand) ----------
+    // ---------- per-hand harvest (player stats; one-shot per hand) ----------
+    // Observed log line shapes (live-sampled): "NAME folds", "NAME checks",
+    // "NAME calls" (no amount), "NAME bets $N", "NAME raises $N",
+    // "NAME wins main|side pot $N", "NAME shows [..] for <hand>".
+    // Names may contain spaces. Blinds are never logged.
+    function harvestHand(lines) {
+        updatePlayerStats(lines);
+        recordSessionPoint();
+    }
+
+    // ---------- session tracker (my stack after each hand) ----------
+    // Read-modify-write so a "reset" from the popup never gets clobbered.
+    const SESSION_KEY = "gpe_session";
+    const SESSION_MAX_POINTS = 500;
+    function recordSessionPoint() {
+        const stack = myStack();
+        if (!stack || !EXT_STORE) return; // not seated / no extension storage
+        EXT_STORE.get([SESSION_KEY], (res) => {
+            const s = res[SESSION_KEY] || { startedAt: Date.now(), points: [] };
+            s.points.push(stack);
+            if (s.points.length > SESSION_MAX_POINTS) s.points = s.points.slice(-SESSION_MAX_POINTS);
+            try { EXT_STORE.set({ [SESSION_KEY]: s }); } catch (e) {}
+        });
+    }
+
+    function updatePlayerStats(lines) {
+        // Per-hand tallies: vpip/pfr/showdown/sdWin are 0/1 flags,
+        // bets/raises/calls are postflop counts (for aggression factor).
+        const per = {};
+        const get = (n) => (per[n] = per[n] ||
+            { vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdown: 0, sdWin: 0 });
+        let preflop = true;
+        for (const line of lines) {
+            if (/^Dealing (?:flop|turn|river)/i.test(line)) { preflop = false; continue; }
+            let m;
+            if ((m = line.match(/^(.+?) (?:folds|checks)$/i))) { get(m[1].trim()); continue; }
+            if ((m = line.match(/^(.+?) calls$/i))) {
+                const s = get(m[1].trim());
+                if (preflop) s.vpip = 1; else s.calls++;
+                continue;
+            }
+            if ((m = line.match(/^(.+?) (bets|raises) \$[\d,]+$/i))) {
+                const s = get(m[1].trim());
+                const isRaise = /raises/i.test(m[2]);
+                if (preflop) { s.vpip = 1; if (isRaise) s.pfr = 1; }
+                else if (isRaise) s.raises++;
+                else s.bets++;
+                continue;
+            }
+            if ((m = line.match(/^(.+?) shows \[/i))) { get(m[1].trim()).showdown = 1; continue; }
+            if ((m = line.match(/^(.+?) wins (?:main|side) pot/i))) {
+                const s = get(m[1].trim());
+                if (s.showdown) s.sdWin = 1;
+            }
+        }
+        const names = Object.keys(per);
+        if (!names.length) return;
+        for (const n of names) {
+            const h = per[n];
+            const t = playerStats[n] ||
+                { hands: 0, vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdowns: 0, sdWins: 0 };
+            t.hands++;
+            t.vpip += h.vpip;
+            t.pfr += h.pfr;
+            t.bets += h.bets;
+            t.raises += h.raises;
+            t.calls += h.calls;
+            t.showdowns += h.showdown;
+            t.sdWins += h.sdWin;
+            playerStats[n] = t;
+        }
+        savePlayerStats();
+    }
+
+    // ---------- player notes ----------
+    function saveNote(name, text) {
+        text = (text || "").trim();
+        if (text) playerNotes[name] = text;
+        else delete playerNotes[name];
+        if (EXT_STORE) { try { EXT_STORE.set({ [NOTES_KEY]: playerNotes }); } catch (e) {} }
+        updateStatBadges();
+    }
+
+    // One editor at a time, anchored under the clicked badge.
+    function openNoteEditor(name, anchorRect) {
+        const existing = document.getElementById("gpe-note-editor");
+        if (existing) {
+            const was = existing._gpeName;
+            existing.remove();
+            if (was === name) return; // clicking the same badge toggles it closed
+        }
+        const ed = document.createElement("div");
+        ed.id = "gpe-note-editor";
+        ed._gpeName = name;
+
+        const head = document.createElement("div");
+        head.className = "gpe-note-head";
+        head.textContent = name;
+
+        const box = document.createElement("textarea");
+        box.value = playerNotes[name] || "";
+        box.placeholder = "notes on " + name + "…";
+
+        const row = document.createElement("div");
+        row.className = "gpe-note-row";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.textContent = "Save";
+        save.addEventListener("click", () => { saveNote(name, box.value); ed.remove(); });
+        const del = document.createElement("button");
+        del.type = "button";
+        del.textContent = "Delete";
+        del.addEventListener("click", () => { saveNote(name, ""); ed.remove(); });
+        row.appendChild(save);
+        row.appendChild(del);
+
+        ed.appendChild(head);
+        ed.appendChild(box);
+        ed.appendChild(row);
+        document.body.appendChild(ed);
+        ed.style.left = Math.min(anchorRect.left, window.innerWidth - ed.offsetWidth - 8) + "px";
+        ed.style.top = anchorRect.bottom + 4 + "px";
+        box.focus();
+    }
+
+    // ---------- stats badges on avatars ----------
+    const statBadges = new Map(); // player name -> badge el
+
+    function badgeTextFor(name) {
+        const t = playerStats[name];
+        if (!t || !t.hands) return null;
+        const pct = (x) => Math.round((x / t.hands) * 100);
+        return pct(t.vpip) + "/" + pct(t.pfr) + " (" + t.hands + ")";
+    }
+
+    // Hover tooltip: spell the numbers out in plain English.
+    function badgeTitleFor(name) {
+        const t = playerStats[name];
+        const lines = [];
+        if (t && t.hands) {
+            const pct = (x) => Math.round((x / t.hands) * 100) + "%";
+            lines.push(name + " — " + t.hands + " hand" + (t.hands === 1 ? "" : "s") + " observed");
+            lines.push("plays " + pct(t.vpip) + " of hands (VPIP)");
+            lines.push("raises " + pct(t.pfr) + " preflop (PFR)");
+            const aggr = (t.bets || 0) + (t.raises || 0);
+            if (aggr || t.calls) lines.push("postflop: " + aggr + " bets/raises vs " + (t.calls || 0) + " calls");
+            if (t.showdowns) lines.push("won " + t.sdWins + " of " + t.showdowns + " showdowns");
+        } else {
+            lines.push(name + " — no hands observed yet");
+        }
+        if (playerNotes[name]) lines.push("📝 " + playerNotes[name]);
+        lines.push("(click to edit note)");
+        return lines.join("\n");
+    }
+
+    // Hand-rolled hover tooltip. (Native title tooltips never appear here:
+    // the 300ms badge refresh rewrites the attribute, resetting the
+    // browser's tooltip timer every tick.)
+    function showBadgeTip(badge, name) {
+        hideBadgeTip();
+        const tip = document.createElement("div");
+        tip.id = "gpe-stat-tip";
+        tip.textContent = badgeTitleFor(name);
+        document.body.appendChild(tip);
+        const r = badge.getBoundingClientRect();
+        tip.style.left = Math.max(4, Math.min(r.left, window.innerWidth - tip.offsetWidth - 8)) + "px";
+        tip.style.top = r.bottom + 6 + "px";
+    }
+    function hideBadgeTip() {
+        const t = document.getElementById("gpe-stat-tip");
+        if (t) t.remove();
+    }
+
+    // One pass: create/update a badge over each visible seat, drop the rest.
+    // Badges show when stats are enabled, or minimally (just 📝) for players
+    // with a note even when they're off. Clicking a badge opens the editor.
+    function updateStatBadges() {
+        const wanted = new Set();
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            const name = getSeatName(p);
+            if (!name || wanted.has(name)) continue;
+            if (!SHOW_STATS && !playerNotes[name]) continue;
+            const av = p.querySelector("img.iogc-PlayerPanel-avatar");
+            if (!av) continue;
+            const r = av.getBoundingClientRect();
+            if (r.width === 0) continue;
+            wanted.add(name);
+            let badge = statBadges.get(name);
+            if (!badge || !badge.isConnected) {
+                badge = document.createElement("div");
+                badge.className = "gpe-stat-badge";
+                badge.addEventListener("click", () => {
+                    hideBadgeTip();
+                    openNoteEditor(name, badge.getBoundingClientRect());
+                });
+                badge.addEventListener("mouseenter", () => showBadgeTip(badge, name));
+                badge.addEventListener("mouseleave", hideBadgeTip);
+                document.body.appendChild(badge);
+                statBadges.set(name, badge);
+            }
+            const stats = SHOW_STATS ? badgeTextFor(name) : null;
+            const parts = [];
+            if (SHOW_STATS) parts.push(stats || "–/– (0)");
+            if (playerNotes[name]) parts.push("📝");
+            const text = parts.join(" ");
+            if (badge.textContent !== text) badge.textContent = text; // don't churn the DOM every tick
+            // sit just above the avatar's top-left corner
+            badge.style.left = r.left + "px";
+            badge.style.top = r.top - 2 + "px";
+        }
+        for (const [name, el] of statBadges) {
+            if (!wanted.has(name)) { el.remove(); statBadges.delete(name); }
+        }
+        // drop an orphaned tooltip if its badge went away under the cursor
+        const tip = document.getElementById("gpe-stat-tip");
+        if (tip && ![...statBadges.values()].some((b) => b.matches(":hover"))) hideBadgeTip();
+    }
+
+    // ---------- end-of-hand watcher (auto-share + harvest, once per hand) ----------
     let sharedThisHand = false;
+    let harvestedThisHand = false;
     let lastEnded = false;
     // One-shot share, armed from the inline "share hand" checkbox and cleared
     // once it fires. The popup's "always share" setting (SHARE_HAND) is
@@ -674,8 +929,13 @@
         addBetSizeButtons();
 
         const ended = handHasEnded();
-        if (!ended && lastEnded) sharedThisHand = false; // new hand began -> reset guard
+        if (!ended && lastEnded) { sharedThisHand = false; harvestedThisHand = false; } // new hand began -> reset guards
         lastEnded = ended;
+
+        if (ended && !harvestedThisHand) {
+            harvestedThisHand = true;
+            harvestHand(currentHandScope());
+        }
 
         if (ended && !sharedThisHand && (SHARE_HAND || shareNextHand || LOCAL_TEST)) {
             const hand = readMyHand();
@@ -895,7 +1155,34 @@
         document.body.appendChild(panel);
     }
 
+    // ---------- keyboard shortcuts ----------
+    // f = fold, c = check/call, 1-9 = fill the nth bet-sizing button's amount
+    // (top column first, then bottom — no auto-submit). Gated by the popup's
+    // "Keyboard shortcuts" setting (off by default: a stray F folding a hand
+    // would be bad). Never fires while typing (chat box, bet input, ...).
+    function visibleActionBtn(sel) {
+        const el = document.querySelector(sel);
+        return el && el.getBoundingClientRect().width > 0 ? el : null;
+    }
+    document.addEventListener("keydown", (e) => {
+        if (!HOTKEYS || e.ctrlKey || e.altKey || e.metaKey) return;
+        const t = e.target;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
+            t.tagName === "SELECT" || t.isContentEditable)) return;
+        const k = e.key.toLowerCase();
+        let btn = null;
+        if (k === "f") btn = visibleActionBtn(".gpokr-GameWindow-foldButton");
+        else if (k === "c") btn = visibleActionBtn(".gpokr-GameWindow-checkCallButton");
+        else if (/^[1-9]$/.test(k)) {
+            const btns = Array.from(document.querySelectorAll("#gpe-bet-sizes button, #gpe-pot-sizes button"))
+                .filter((b) => b.getBoundingClientRect().width > 0);
+            btn = btns[parseInt(k, 10) - 1] || null;
+        }
+        if (btn) { e.preventDefault(); btn.click(); }
+    });
+
     // ---------- boot ----------
+    setInterval(updateStatBadges, 300); // badges track avatars + setting live
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();

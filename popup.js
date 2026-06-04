@@ -6,7 +6,8 @@
 
     const SETTINGS_KEY = "gpe_settings";
     const CARD_STORE_KEY = "gpe_card_images_v2";
-    const TOGGLE_IDS = ["showOdds", "shareHand", "localTest"];
+    const SESSION_KEY = "gpe_session";
+    const TOGGLE_IDS = ["showOdds", "showStats", "shareHand", "localTest", "hotkeys"];
 
     const $ = (id) => document.getElementById(id);
     const statusEl = $("status");
@@ -33,11 +34,12 @@
     let settings = {};
     function saveSettings() { chrome.storage.local.set({ [SETTINGS_KEY]: settings }); }
 
-    chrome.storage.local.get([SETTINGS_KEY, CARD_STORE_KEY], (res) => {
+    chrome.storage.local.get([SETTINGS_KEY, CARD_STORE_KEY, SESSION_KEY], (res) => {
         settings = res[SETTINGS_KEY] || {};
         TOGGLE_IDS.forEach((id) => { $(id).checked = !!settings[id]; });
         renderBetRows();
         renderStore(res[CARD_STORE_KEY] || {});
+        renderSession(res[SESSION_KEY]);
     });
 
     TOGGLE_IDS.forEach((id) => {
@@ -189,6 +191,42 @@
             TOGGLE_IDS.forEach((id) => { $(id).checked = !!settings[id]; });
             renderBetRows();
         }
+        if (changes[SESSION_KEY]) renderSession(changes[SESSION_KEY].newValue);
+    });
+
+    // ---------- session tracker ----------
+    function renderSession(s) {
+        const pts = (s && s.points) || [];
+        const net = pts.length >= 2 ? pts[pts.length - 1] - pts[0] : 0;
+        const el = $("sessionNet");
+        el.textContent = pts.length
+            ? (net >= 0 ? "+$" : "−$") + Math.abs(net).toLocaleString() +
+              " over " + pts.length + " hand" + (pts.length === 1 ? "" : "s")
+            : "no hands yet";
+        el.className = net > 0 ? "pos" : net < 0 ? "neg" : "";
+
+        const cv = $("sessionChart");
+        const ctx = cv.getContext("2d");
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        if (pts.length < 2) return;
+        const min = Math.min.apply(null, pts);
+        const max = Math.max.apply(null, pts);
+        const span = max - min || 1;
+        ctx.strokeStyle = net >= 0 ? "#2a7a2a" : "#b33";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        pts.forEach((p, i) => {
+            const x = 2 + (i / (pts.length - 1)) * (cv.width - 4);
+            const y = cv.height - 3 - ((p - min) / span) * (cv.height - 6);
+            if (i) ctx.lineTo(x, y);
+            else ctx.moveTo(x, y);
+        });
+        ctx.stroke();
+    }
+
+    $("sessionReset").addEventListener("click", () => {
+        const fresh = { startedAt: Date.now(), points: [] };
+        chrome.storage.local.set({ [SESSION_KEY]: fresh }, () => renderSession(fresh));
     });
 
     // ---------- card store export / import ----------

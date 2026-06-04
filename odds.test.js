@@ -94,6 +94,25 @@ const aaVsTight = mcr("As Ah", 1, [0.1]);
 check("AA still crushes a tight range (>0.7)", aaVsTight > 0.7, "got " + aaVsTight.toFixed(3));
 check("AA vs tight < AA vs random", aaVsTight < aa1 + 0.01, aaVsTight.toFixed(3) + " vs " + aa1.toFixed(3));
 
+// ---- made-hand labels ----
+function lbl(hole, board) { return O.handLabel(hole.split(" "), board ? board.split(" ") : []); }
+check("label: royal flush", lbl("Ah Kh", "Qh Jh Th") === "royal flush", lbl("Ah Kh", "Qh Jh Th"));
+check("label: straight flush", lbl("9h 8h", "7h 6h 5h") === "straight flush, nine high", lbl("9h 8h", "7h 6h 5h"));
+check("label: quads", lbl("9c 9d", "9h 9s 2c") === "four of a kind, nines", lbl("9c 9d", "9h 9s 2c"));
+check("label: full house", lbl("8c 8d", "8h 3s 3c") === "full house, eights over threes", lbl("8c 8d", "8h 3s 3c"));
+check("label: flush", lbl("Ah Jh", "9h 6h 3h") === "flush, ace high", lbl("Ah Jh", "9h 6h 3h"));
+check("label: straight", lbl("9c 8d", "7h 6s 5c") === "straight, nine high", lbl("9c 8d", "7h 6s 5c"));
+check("label: wheel is five high", lbl("Ac 2d", "3h 4s 5c") === "straight, five high", lbl("Ac 2d", "3h 4s 5c"));
+check("label: trips", lbl("7c 7d", "7h Ks 2c") === "three of a kind, sevens", lbl("7c 7d", "7h Ks 2c"));
+check("label: two pair", lbl("Ac 4s", "Jc Jd 4h") === "two pair, jacks and fours", lbl("Ac 4s", "Jc Jd 4h"));
+check("label: pair", lbl("Tc Td", "8h 5s 2c") === "pair of tens", lbl("Tc Td", "8h 5s 2c"));
+check("label: sixes pluralizes", lbl("6c 6d", "8h 5s 2c") === "pair of sixes", lbl("6c 6d", "8h 5s 2c"));
+check("label: high card", lbl("Ac Jd", "8h 5s 2c") === "ace high", lbl("Ac Jd", "8h 5s 2c"));
+check("label: preflop pair", lbl("Qc Qd", "") === "pair of queens", lbl("Qc Qd", ""));
+check("label: preflop high card", lbl("Ac Jd", "") === "ace high", lbl("Ac Jd", ""));
+check("label: 6-card board (turn)", lbl("Tc Td", "8h 5s 2c 2d") === "two pair, tens and twos", lbl("Tc Td", "8h 5s 2c 2d"));
+check("label: 7 cards picks best", lbl("Ah Kh", "Qh Jh Th 2c 2d") === "royal flush", lbl("Ah Kh", "Qh Jh Th 2c 2d"));
+
 // ---- pot odds / decisions ----
 check("potOdds 100 into 300 pot = 0.25", O.potOdds(300, 100) === 0.25);
 check("potOdds free = 0", O.potOdds(500, 0) === 0);

@@ -107,6 +107,38 @@
     // Category lives above the five 4-bit tiebreakers.
     const categoryOf = (score) => score >>> 20;
 
+    // ---------- made-hand label ----------
+    const RANK_NAMES = ["two", "three", "four", "five", "six", "seven",
+        "eight", "nine", "ten", "jack", "queen", "king", "ace"];
+    const pluralRank = (r) => RANK_NAMES[r] + (r === 4 ? "es" : "s"); // sixes
+
+    // English description of the best made hand for hole + board cards.
+    // Preflop (2 cards) classifies directly; 5-7 cards decode the evaluator
+    // score (category + packed 4-bit tiebreaker ranks).
+    function handLabel(holeCards, boardCards) {
+        const cards = holeCards.concat(boardCards || []).map(cardToInt);
+        if (cards.length < 5) {
+            const ranks = cards.map(rankOf);
+            if (cards.length === 2 && ranks[0] === ranks[1]) return "pair of " + pluralRank(ranks[0]);
+            return RANK_NAMES[Math.max.apply(null, ranks)] + " high";
+        }
+        const score = evaluateBest(cards);
+        const tie = [];
+        for (let i = 0; i < 5; i++) tie.push((score >>> (16 - 4 * i)) & 15);
+        switch (categoryOf(score)) {
+            case 8: return tie[0] === 12 ? "royal flush"
+                : "straight flush, " + RANK_NAMES[tie[0]] + " high";
+            case 7: return "four of a kind, " + pluralRank(tie[0]);
+            case 6: return "full house, " + pluralRank(tie[0]) + " over " + pluralRank(tie[1]);
+            case 5: return "flush, " + RANK_NAMES[tie[0]] + " high";
+            case 4: return "straight, " + RANK_NAMES[tie[0]] + " high";
+            case 3: return "three of a kind, " + pluralRank(tie[0]);
+            case 2: return "two pair, " + pluralRank(tie[0]) + " and " + pluralRank(tie[1]);
+            case 1: return "pair of " + pluralRank(tie[0]);
+            default: return RANK_NAMES[tie[0]] + " high";
+        }
+    }
+
     // ---------- draw analysis ----------
     // On the flop/turn, count unseen cards that upgrade my hand to a straight or
     // better ("outs"), split by what they make: flush (incl. straight flush),
@@ -280,7 +312,7 @@
     }
 
     return {
-        cardToInt, evaluate5, evaluate7, evaluateBest, monteCarloEquity,
+        cardToInt, evaluate5, evaluate7, evaluateBest, monteCarloEquity, handLabel,
         drawInfo, chenScore, holePercentile, potOdds, evDecision, RANKS, SUITS,
     };
 });

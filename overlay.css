@@ -148,29 +148,111 @@
 }
 #gpe-test-label input { vertical-align: middle; margin-right: 2px; }
 
-/* ---- Odds HUD (floats over the top bar, left of Sit Out — never affects layout) ---- */
+/* ---- Odds HUD (floats over the top bar, left of Sit Out — never affects layout) ----
+   Styled to match the site: light, rounded, white-on-blue with navy text. */
 #gpe-odds-hud {
     position: fixed;
     z-index: 99998;
     white-space: nowrap;
     text-align: left;
-    background: rgba(20, 24, 28, 0.88);
-    color: #eee;
-    font: 12px/1.5 Menlo, Consolas, monospace;
-    padding: 6px 10px;
-    border-radius: 8px;
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+    background: rgba(255, 255, 255, 0.93);
+    color: #2a3f55;
+    border: 1px solid #aac9e4;
+    font: 12px/1.55 Arial, sans-serif;
+    padding: 6px 11px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(40, 80, 120, 0.25);
     pointer-events: none;
 }
-.gpe-odds-street { color: #999; }
-/* card colors: green good / yellow neutral / red bad */
-.gpe-odds-good { color: #6fdc6f; }
-.gpe-odds-neutral { color: #ffd966; }
-.gpe-odds-bad { color: #ff7b6b; }
-.gpe-odds-call { color: #6fdc6f; }
-.gpe-odds-check { color: #6fdc6f; }
-.gpe-odds-marginal { color: #ffcc66; }
-.gpe-odds-fold { color: #ff7b6b; }
+#gpe-odds-hud b { color: #16273a; }
+.gpe-odds-title { font-weight: bold; }
+.gpe-odds-street { color: #8aa0b8; font-weight: normal; }
+/* card colors: green good / amber neutral / red bad (tuned for light bg) */
+.gpe-odds-good { color: #1d8a3a; }
+.gpe-odds-neutral { color: #a87b00; }
+.gpe-odds-bad { color: #c43c2e; }
+.gpe-odds-call { color: #1d8a3a; }
+.gpe-odds-check { color: #1d8a3a; }
+.gpe-odds-marginal { color: #a87b00; }
+.gpe-odds-fold { color: #c43c2e; }
+
+/* ---- Per-player stats badge (VPIP/PFR (hands)) above each avatar ---- */
+.gpe-stat-badge {
+    position: fixed;
+    z-index: 70;
+    transform: translateY(-100%);
+    background: rgba(255, 255, 255, 0.7);
+    color: #444;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    font: 10px/1.5 Menlo, Consolas, monospace;
+    padding: 0 5px;
+    border-radius: 4px;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+}
+.gpe-stat-badge:hover {
+    background: #fff;
+    color: #111;
+}
+#gpe-stat-tip {
+    position: fixed;
+    z-index: 100000;
+    max-width: 240px;
+    background: #fff;
+    color: #333;
+    border: 1px solid #cfcfcf;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+    padding: 6px 9px;
+    font: 11px/1.5 Arial, sans-serif;
+    white-space: pre-line;
+    pointer-events: none;
+}
+
+/* ---- Player note editor (opens from a stats badge) ---- */
+#gpe-note-editor {
+    position: fixed;
+    z-index: 99999;
+    width: 200px;
+    background: #fff;
+    border: 1px solid #cfcfcf;
+    border-radius: 8px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.25);
+    padding: 8px;
+    font: 12px/1.4 Arial, sans-serif;
+}
+#gpe-note-editor .gpe-note-head {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+#gpe-note-editor textarea {
+    width: 100%;
+    box-sizing: border-box;
+    height: 64px;
+    resize: vertical;
+    font: 12px/1.4 Arial, sans-serif;
+    border: 1px solid #c9c9c9;
+    border-radius: 4px;
+    padding: 4px;
+}
+#gpe-note-editor .gpe-note-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+}
+#gpe-note-editor .gpe-note-row button {
+    flex: 1;
+    font-size: 12px;
+    padding: 3px 0;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+}
+#gpe-note-editor .gpe-note-row button:hover {
+    background: #f0f0f0;
+}
 
 /* ---- Inline one-shot "share hand" checkbox (next to the chat input) ---- */
 .gpe-toggle {
