@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body {
+        width: 240px;
+        margin: 0;
+        padding: 12px;
+        font: 13px/1.5 -apple-system, "Segoe UI", Arial, sans-serif;
+        color: #222;
+    }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    label { display: block; cursor: pointer; user-select: none; margin: 4px 0; }
+    label input { vertical-align: middle; margin-right: 6px; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 10px 0; }
+    #cardCount { color: #444; }
+    .bar {
+        height: 6px;
+        background: #e4e4e4;
+        border-radius: 3px;
+        overflow: hidden;
+        margin: 4px 0 8px;
+    }
+    #barFill { height: 100%; width: 0; background: #4c9aff; transition: width 200ms ease; }
+    .row { display: flex; gap: 6px; }
+    .row button {
+        flex: 1;
+        font-size: 12px;
+        padding: 4px 0;
+        border: 1px solid #c9c9c9;
+        background: #fff;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+    .row button:hover { background: #f0f0f0; }
+    #importBox {
+        width: 100%;
+        box-sizing: border-box;
+        height: 56px;
+        margin-top: 6px;
+        font: 11px/1.3 Menlo, Consolas, monospace;
+    }
+    #status { font-size: 11px; color: #2a7a2a; min-height: 14px; margin-top: 4px; }
+    #status.err { color: #b33; }
+</style>
+</head>
+<body>
+<h1>GPokr Tools</h1>
+
+<label><input type="checkbox" id="showOdds"> Odds HUD</label>
+<label><input type="checkbox" id="shareHand"> Always share hand at showdown</label>
+<label><input type="checkbox" id="localTest"> Local test mode</label>
+
+<hr>
+
+<div id="cardCount">…</div>
+<div class="bar"><div id="barFill"></div></div>
+<div class="row">
+    <button id="exportBtn">Copy JSON</button>
+    <button id="importBtn">Import…</button>
+</div>
+<textarea id="importBox" placeholder='Paste exported JSON, then press Import again' hidden></textarea>
+<div id="status"></div>
+
+<script src="popup.js"></script>
+</body>
+</html>

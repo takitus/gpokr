@@ -89,10 +89,108 @@
         return best;
     }
 
+    // Best score for 5, 6, or 7 cards.
+    function evaluateBest(cards) {
+        if (cards.length === 5) return evaluate5(cards);
+        if (cards.length === 7) return evaluate7(cards);
+        let best = -1; // 6 cards: best of the 6 skip-one hands
+        const hand = new Array(5);
+        for (let skip = 0; skip < 6; skip++) {
+            let k = 0;
+            for (let i = 0; i < 6; i++) if (i !== skip) hand[k++] = cards[i];
+            const s = evaluate5(hand);
+            if (s > best) best = s;
+        }
+        return best;
+    }
+
+    // Category lives above the five 4-bit tiebreakers.
+    const categoryOf = (score) => score >>> 20;
+
+    // ---------- draw analysis ----------
+    // On the flop/turn, count unseen cards that upgrade my hand to a straight or
+    // better ("outs"), split by what they make: flush (incl. straight flush),
+    // straight, or boat/quads (from a paired hand). Null when there's no draw to
+    // speak of: wrong street, already straight-or-better, or zero outs.
+    // hitProb is exact: 1 or 2 cards to come over the 47/46 unseen cards.
+    function drawInfo(holeCards, boardCards) {
+        if (boardCards.length < 3 || boardCards.length > 4) return null;
+        const mine = holeCards.map(cardToInt).concat(boardCards.map(cardToInt));
+        if (categoryOf(evaluateBest(mine)) >= 4) return null;
+        const used = new Set(mine);
+        let flushOuts = 0, straightOuts = 0, otherOuts = 0;
+        const straightRanks = new Set();
+        for (let c = 0; c < 52; c++) {
+            if (used.has(c)) continue;
+            const cat = categoryOf(evaluateBest(mine.concat(c)));
+            if (cat === 5 || cat === 8) flushOuts++;
+            else if (cat === 4) { straightOuts++; straightRanks.add(rankOf(c)); }
+            else if (cat >= 6) otherOuts++; // two pair/trips filling up
+        }
+        const outs = flushOuts + straightOuts + otherOuts;
+        if (!outs) return null;
+        const U = 52 - mine.length; // unseen from my point of view
+        const hitProb = boardCards.length === 3
+            ? 1 - ((U - outs) / U) * ((U - 1 - outs) / (U - 1))
+            : outs / U;
+        return { outs, flushOuts, straightOuts, straightRanks: straightRanks.size, otherOuts, hitProb };
+    }
+
+    // ---------- preflop hand ranking (Chen formula) ----------
+    // Heuristic strength for hole cards; only used to model opponent ranges.
+    function chenScore(hiRank, loRank, suited) { // rank indices 0..12 (2=0 .. A=12)
+        const pts = (r) => (r === 12 ? 10 : r === 11 ? 8 : r === 10 ? 7 : r === 9 ? 6 : (r + 2) / 2);
+        let score = pts(hiRank);
+        if (hiRank === loRank) return Math.max(5, score * 2);
+        if (suited) score += 2;
+        const gap = hiRank - loRank - 1;
+        if (gap === 1) score -= 1;
+        else if (gap === 2) score -= 2;
+        else if (gap === 3) score -= 4;
+        else if (gap >= 4) score -= 5;
+        if (gap <= 1 && hiRank < 10) score += 1; // connected low cards: straight bonus
+        return Math.ceil(score);
+    }
+
+    // For each of the 169 canonical hands: fraction of the 1326 combos that are
+    // STRICTLY stronger (by Chen score). 0 for the top class; tie groups share
+    // their start, so "pctl < range" includes a boundary class wholesale.
+    const PCTL = (() => {
+        const classes = [];
+        for (let hi = 0; hi < 13; hi++) {
+            for (let lo = 0; lo <= hi; lo++) {
+                if (hi === lo) classes.push({ key: hi * 100 + lo * 2, score: chenScore(hi, lo, false), combos: 6 });
+                else {
+                    classes.push({ key: hi * 100 + lo * 2 + 1, score: chenScore(hi, lo, true), combos: 4 });
+                    classes.push({ key: hi * 100 + lo * 2, score: chenScore(hi, lo, false), combos: 12 });
+                }
+            }
+        }
+        classes.sort((a, b) => b.score - a.score);
+        const map = new Map();
+        let above = 0, i = 0;
+        while (i < classes.length) {
+            let j = i, group = 0;
+            while (j < classes.length && classes[j].score === classes[i].score) { group += classes[j].combos; j++; }
+            for (let k = i; k < j; k++) map.set(classes[k].key, above / 1326);
+            above += group; i = j;
+        }
+        return map;
+    })();
+
+    function holePercentile(c1, c2) {
+        const r1 = rankOf(c1), r2 = rankOf(c2);
+        const hi = Math.max(r1, r2), lo = Math.min(r1, r2);
+        const suited = hi !== lo && suitOf(c1) === suitOf(c2);
+        return PCTL.get(hi * 100 + lo * 2 + (suited ? 1 : 0));
+    }
+
     // ---------- Monte Carlo equity ----------
     // hole: my 2 cards, board: 0-5 known community cards, nOpp: active opponents.
+    // oppRanges (optional): per-opponent fraction of top preflop hands they'd
+    // play (1 = any two cards); modeled by rejection-sampling on Chen percentile.
     // Returns {win, tie, equity} — equity counts split pots fractionally.
-    function monteCarloEquity(holeCards, boardCards, nOpp, iters) {
+    function monteCarloEquity(holeCards, boardCards, nOpp, iters, oppRanges) {
         iters = iters || 5000;
         nOpp = Math.max(1, nOpp | 0);
         const hole = holeCards.map(cardToInt);
@@ -101,6 +199,11 @@
         const used = new Set([...hole, ...board]);
         const baseDeck = [];
         for (let c = 0; c < 52; c++) if (!used.has(c)) baseDeck.push(c);
+
+        // Only engage the rejection-sampling path when some range constrains.
+        const ranges = oppRanges && oppRanges.some((r) => r < 1)
+            ? Array.from({ length: nOpp }, (_, i) => oppRanges[i] || 1)
+            : null;
 
         const needBoard = 5 - board.length;
         const needTotal = needBoard + nOpp * 2;
@@ -112,9 +215,28 @@
 
         for (let it = 0; it < iters; it++) {
             // Partial Fisher–Yates: sample needTotal cards into deck[0..needTotal)
-            for (let i = 0; i < needTotal; i++) {
+            // (with ranges: board cards only, opponents are sampled below).
+            const shuffleN = ranges ? needBoard : needTotal;
+            for (let i = 0; i < shuffleN; i++) {
                 const j = i + ((Math.random() * (deck.length - i)) | 0);
                 const tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp;
+            }
+            if (ranges) {
+                // Rejection-sample each opponent's hole cards into their two deck
+                // slots; give up after 20 tries (dead cards can starve a range).
+                for (let o = 0; o < nOpp; o++) {
+                    const pos = needBoard + o * 2;
+                    for (let t = 0; t < 20; t++) {
+                        const i1 = pos + ((Math.random() * (deck.length - pos)) | 0);
+                        let i2 = pos + ((Math.random() * (deck.length - pos - 1)) | 0);
+                        if (i2 >= i1) i2++;
+                        if (t < 19 && holePercentile(deck[i1], deck[i2]) >= ranges[o]) continue;
+                        let tmp = deck[pos]; deck[pos] = deck[i1]; deck[i1] = tmp;
+                        const j2 = i2 === pos ? i1 : i2; // first swap may have moved card #2
+                        tmp = deck[pos + 1]; deck[pos + 1] = deck[j2]; deck[j2] = tmp;
+                        break;
+                    }
+                }
             }
             // Fill the board
             for (let i = 0; i < board.length; i++) my7[i] = board[i];
@@ -157,5 +279,8 @@
         return { action, edge };
     }
 
-    return { cardToInt, evaluate5, evaluate7, monteCarloEquity, potOdds, evDecision, RANKS, SUITS };
+    return {
+        cardToInt, evaluate5, evaluate7, evaluateBest, monteCarloEquity,
+        drawInfo, chenScore, holePercentile, potOdds, evDecision, RANKS, SUITS,
+    };
 });

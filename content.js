@@ -6,19 +6,36 @@
     const DISPLAY_MS = 2500;
     const HAND_MS = 6000;
 
-    // Settings (persisted)
+    // Settings (persisted in chrome.storage.local; live-updated from the popup)
     let LOCAL_TEST = false;
     let SHARE_HAND = false;
     let SHOW_ODDS = false;
-    try { LOCAL_TEST = localStorage.getItem("gpe_local_test") === "1"; } catch (e) {}
-    try { SHARE_HAND = localStorage.getItem("gpe_share_hand") === "1"; } catch (e) {}
-    try { SHOW_ODDS = localStorage.getItem("gpe_show_odds") === "1"; } catch (e) {}
+
+    const EXT_STORE = (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local)
+        ? chrome.storage.local : null;
+
+    function applySettings(s) {
+        LOCAL_TEST = !!(s && s.localTest);
+        SHARE_HAND = !!(s && s.shareHand);
+        SHOW_ODDS = !!(s && s.showOdds);
+        syncShareToggleUI();
+    }
+
+    function legacyLocalStorageSettings() {
+        const s = { localTest: false, shareHand: false, showOdds: false };
+        try {
+            s.localTest = localStorage.getItem("gpe_local_test") === "1";
+            s.shareHand = localStorage.getItem("gpe_share_hand") === "1";
+            s.showOdds = localStorage.getItem("gpe_show_odds") === "1";
+        } catch (e) {}
+        return s;
+    }
 
     // Remove artifacts orphaned by a previous extension context: after an extension
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-bet-sizes"
     ).forEach((el) => el.remove());
 
     // ---------- helpers: name -> avatar ----------
@@ -94,17 +111,55 @@
 
     // ---------- card store (learning) ----------
     // v2: the v1 store got poisoned by learning from other players' showdown cards.
+    // Kept in memory; persisted to chrome.storage.local so the popup can show
+    // progress and export/import it. (Was page localStorage; migrated on first run.)
     const CARD_STORE_KEY = "gpe_card_images_v2";
     const SUIT_GLYPH = { c: "♣", d: "♦", h: "♥", s: "♠" };
     const RANK_LABEL = { T: "10" };
 
-    function loadCardStore() {
+    let cardStore = {};
+    function loadCardStore() { return cardStore; }
+    function saveCardStore(store) {
+        cardStore = store;
+        if (EXT_STORE) { try { EXT_STORE.set({ [CARD_STORE_KEY]: store }); } catch (e) {} }
+        else { try { localStorage.setItem(CARD_STORE_KEY, JSON.stringify(store)); } catch (e) {} }
+    }
+
+    function legacyLocalStorageCardStore() {
         try { return JSON.parse(localStorage.getItem(CARD_STORE_KEY)) || {}; }
         catch (e) { return {}; }
     }
-    function saveCardStore(store) {
-        try { localStorage.setItem(CARD_STORE_KEY, JSON.stringify(store)); } catch (e) {}
+
+    function initStorage() {
+        if (!EXT_STORE) { // no extension storage available: legacy fallback
+            applySettings(legacyLocalStorageSettings());
+            cardStore = legacyLocalStorageCardStore();
+            return;
+        }
+        EXT_STORE.get(["gpe_settings", CARD_STORE_KEY], (res) => {
+            if (res.gpe_settings) applySettings(res.gpe_settings);
+            else { // one-time migration from the old localStorage toggles
+                const legacy = legacyLocalStorageSettings();
+                applySettings(legacy);
+                EXT_STORE.set({ gpe_settings: legacy });
+            }
+            let stored = res[CARD_STORE_KEY];
+            if (!stored) {
+                stored = legacyLocalStorageCardStore();
+                if (Object.keys(stored).length) EXT_STORE.set({ [CARD_STORE_KEY]: stored });
+            }
+            // first-write-wins across the async load: persisted entries beat
+            // anything this session learned before the callback fired.
+            cardStore = Object.assign({}, cardStore, stored);
+            updateOddsHud();
+        });
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area !== "local") return;
+            if (changes.gpe_settings) { applySettings(changes.gpe_settings.newValue || {}); updateOddsHud(); }
+            if (changes[CARD_STORE_KEY]) cardStore = changes[CARD_STORE_KEY].newValue || {};
+        });
     }
+    initStorage();
 
     // ---------- game log reading ----------
     function logLines() {
@@ -160,7 +215,7 @@
     }
 
     // Visible seated players minus those who folded this hand, minus me.
-    function countActiveOpponents() {
+    function activeOpponents() {
         const names = new Set(
             Array.from(document.querySelectorAll(".iogc-PlayerPanel-name"))
                 .filter((n) => n.textContent.trim() && n.getBoundingClientRect().width > 0)
@@ -170,7 +225,26 @@
             const m = line.match(/^(.+?) folds$/i);
             if (m) names.delete(m[1].trim());
         }
-        return Math.max(1, Math.min(8, names.size - 1)); // -1 = me
+        const me = getMyName();
+        if (me && names.has(me)) names.delete(me);
+        else if (names.size) names.delete(names.values().next().value); // can't identify me: drop one
+        return Array.from(names).slice(0, 8);
+    }
+
+    // Crude preflop range model from this hand's log: raisers play ~top 18% of
+    // hands, callers ~top 35%, blinds/unacted players are random (1.0).
+    // A player's tightest preflop action wins.
+    const RANGE_RAISE = 0.18, RANGE_CALL = 0.35;
+    function parseOppRanges(names) {
+        const acted = {};
+        for (const line of currentHandScope()) {
+            if (/^Dealing (?:flop|turn|river)/i.test(line)) break; // preflop actions only
+            let m = line.match(/^(.+?) raises\b/i);
+            if (m) { const n = m[1].trim(); acted[n] = Math.min(acted[n] || 1, RANGE_RAISE); continue; }
+            m = line.match(/^(.+?) calls\b/i);
+            if (m) { const n = m[1].trim(); acted[n] = Math.min(acted[n] || 1, RANGE_CALL); }
+        }
+        return names.map((n) => acted[n] || 1);
     }
 
     function parseMoney(text) {
@@ -193,6 +267,7 @@
     // ---------- odds HUD ----------
     let oddsKey = "";
     let oddsResult = null;
+    let oddsDraw = null;
     let boardDeltas = [];
 
     // Color classes: green = good, yellow = neutral, red = bad.
@@ -241,18 +316,22 @@
         }
 
         const board = parseBoard();
-        const nOpp = countActiveOpponents();
+        const opps = activeOpponents();
+        const nOpp = Math.max(1, opps.length);
+        const ranges = parseOppRanges(opps);
+        while (ranges.length < nOpp) ranges.push(1);
         const { pot, toCall } = parsePotAndToCall();
 
-        // Recompute equity only when hand/board/opponent-count change.
-        const key = hand.join("") + "|" + board.join("") + "|" + nOpp;
+        // Recompute equity only when hand/board/opponents/ranges change.
+        const key = hand.join("") + "|" + board.join("") + "|" + nOpp + "|" + ranges.join(",");
         if (key !== oddsKey) {
-            oddsResult = window.GPE_ODDS.monteCarloEquity(hand, board, nOpp, 5000);
+            oddsResult = window.GPE_ODDS.monteCarloEquity(hand, board, nOpp, 5000, ranges);
             // Attribute each board card: equity with it vs without it (fewer iters — color only).
             boardDeltas = board.map((c, i) => {
                 const without = board.slice(0, i).concat(board.slice(i + 1));
-                return oddsResult.equity - window.GPE_ODDS.monteCarloEquity(hand, without, nOpp, 2000).equity;
+                return oddsResult.equity - window.GPE_ODDS.monteCarloEquity(hand, without, nOpp, 2000, ranges).equity;
             });
+            oddsDraw = window.GPE_ODDS.drawInfo(hand, board);
             oddsKey = key;
         }
 
@@ -279,7 +358,17 @@
             (board.length ? " | " + boardHtml : "") +
             ' <span class="gpe-odds-street">(' + streets[board.length] + ")</span></div>" +
             '<div class="gpe-odds-row">equity <b>' + pct(eq) + "</b> vs " + nOpp +
-            (nOpp === 1 ? " opp" : " opps") + "</div>";
+            (nOpp === 1 ? " opp" : " opps") +
+            (ranges.some((r) => r < 1) ? ' <span class="gpe-odds-street">(ranged)</span>' : "") + "</div>";
+        if (oddsDraw) {
+            const parts = [];
+            if (oddsDraw.flushOuts) parts.push("flush " + oddsDraw.flushOuts);
+            if (oddsDraw.straightOuts)
+                parts.push((oddsDraw.straightRanks >= 2 ? "straight " : "gutshot ") + oddsDraw.straightOuts);
+            if (oddsDraw.otherOuts) parts.push("boat " + oddsDraw.otherOuts);
+            html += '<div class="gpe-odds-row">draw: ' + parts.join(" + ") + " = " + oddsDraw.outs +
+                " outs (~" + pct(oddsDraw.hitProb) + ")</div>";
+        }
         if (toCall > 0) {
             html += '<div class="gpe-odds-row">pot $' + pot.toLocaleString() +
                 " | call $" + toCall.toLocaleString() +
@@ -506,24 +595,44 @@
     // ---------- end-of-hand watcher (auto-share, once per hand) ----------
     let sharedThisHand = false;
     let lastEnded = false;
+    // One-shot share, armed from the inline "share hand" checkbox and cleared
+    // once it fires. The popup's "always share" setting (SHARE_HAND) is
+    // independent and never auto-unchecks. Session-only — not persisted.
+    let shareNextHand = false;
+    function setShareNextHand(v) {
+        shareNextHand = v;
+        syncShareToggleUI();
+    }
+    // While the popup's "always share" is on, it owns the inline box: shown
+    // checked and grayed out. Otherwise the box reflects the one-shot state.
+    function syncShareToggleUI() {
+        const box = document.getElementById("gpe-share-next");
+        if (!box) return;
+        box.disabled = SHARE_HAND;
+        box.checked = SHARE_HAND ? true : shareNextHand;
+    }
 
     function pollHandState() {
         learnMyCards();
         learnBoardCards();
         learnShowdownCards();
         updateOddsHud();
+        addBetSizeButtons();
 
         const ended = handHasEnded();
         if (!ended && lastEnded) sharedThisHand = false; // new hand began -> reset guard
         lastEnded = ended;
 
-        if (ended && !sharedThisHand && (SHARE_HAND || LOCAL_TEST)) {
+        if (ended && !sharedThisHand && (SHARE_HAND || shareNextHand || LOCAL_TEST)) {
             const hand = readMyHand();
             if (hand) {
                 const cards = hand.map((c) => c[0].toUpperCase() + c[1].toLowerCase());
                 sharedThisHand = true; // one share per hand; mid-hand sharing is impossible
                 if (LOCAL_TEST) showHandLocal(cards);
-                else if (SHARE_HAND) sendMessage(encodeHand(cards));
+                else if (SHARE_HAND || shareNextHand) {
+                    sendMessage(encodeHand(cards));
+                    if (shareNextHand) setShareNextHand(false); // consume the one-shot
+                }
             }
         }
     }
@@ -560,20 +669,35 @@
         }, 60);
     }
 
-    // ---------- UI: emote picker + checkboxes ----------
-    function makeToggle(id, labelText, initial, onChange) {
-        const label = document.createElement("label");
-        label.className = "gpe-toggle";
-        const box = document.createElement("input");
-        box.type = "checkbox";
-        box.id = id;
-        box.checked = initial;
-        box.addEventListener("change", () => onChange(box.checked));
-        label.appendChild(box);
-        label.appendChild(document.createTextNode(" " + labelText));
-        return label;
+    // ---------- UI: pot-fraction bet sizing ----------
+    // Sits next to the bet input inside the action bar, so it shows/hides with
+    // it. Raise-to = call amount + fraction of the pot after calling.
+    const BET_FRACS = [["½", 0.5], ["⅔", 2 / 3], ["pot", 1]];
+    function addBetSizeButtons() {
+        const input = document.querySelector("input.gpokr-GameWindow-betInput");
+        if (!input || document.getElementById("gpe-bet-sizes")) return;
+        const wrap = document.createElement("span");
+        wrap.id = "gpe-bet-sizes";
+        BET_FRACS.forEach(([label, frac]) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.textContent = label;
+            b.addEventListener("click", () => {
+                const inp = document.querySelector("input.gpokr-GameWindow-betInput");
+                if (!inp) return;
+                const { pot, toCall } = parsePotAndToCall();
+                const amount = toCall + Math.round((pot + toCall) * frac);
+                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                setter.call(inp, String(amount));
+                inp.dispatchEvent(new Event("input", { bubbles: true }));
+                inp.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            wrap.appendChild(b);
+        });
+        input.insertAdjacentElement("afterend", wrap);
     }
 
+    // ---------- UI: emote picker ----------
     function addPicker() {
         const input = getChatInput();
         if (!input || document.getElementById("gpe-picker-btn")) return;
@@ -607,26 +731,20 @@
             }
         });
 
-        const shareToggle = makeToggle("gpe-share-hand", "share hand", SHARE_HAND, (v) => {
-            SHARE_HAND = v;
-            try { localStorage.setItem("gpe_share_hand", v ? "1" : "0"); } catch (e) {}
-        });
-
-        const testToggle = makeToggle("gpe-local-test", "local test", LOCAL_TEST, (v) => {
-            LOCAL_TEST = v;
-            try { localStorage.setItem("gpe_local_test", v ? "1" : "0"); } catch (e) {}
-        });
-
-        const oddsToggle = makeToggle("gpe-show-odds", "odds", SHOW_ODDS, (v) => {
-            SHOW_ODDS = v;
-            try { localStorage.setItem("gpe_show_odds", v ? "1" : "0"); } catch (e) {}
-            updateOddsHud();
-        });
+        // Inline one-shot "share hand": share at the end of this hand only,
+        // then uncheck. (Persistent settings live in the extension popup.)
+        const shareToggle = document.createElement("label");
+        shareToggle.className = "gpe-toggle";
+        const shareBox = document.createElement("input");
+        shareBox.type = "checkbox";
+        shareBox.id = "gpe-share-next";
+        shareBox.addEventListener("change", () => { shareNextHand = shareBox.checked; });
+        shareToggle.appendChild(shareBox);
+        shareToggle.appendChild(document.createTextNode(" share hand"));
 
         input.insertAdjacentElement("afterend", btn);
         btn.insertAdjacentElement("afterend", shareToggle);
-        shareToggle.insertAdjacentElement("afterend", testToggle);
-        testToggle.insertAdjacentElement("afterend", oddsToggle);
+        syncShareToggleUI();
         document.body.appendChild(panel);
     }
 

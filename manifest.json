@@ -1,8 +1,13 @@
 {
   "manifest_version": 3,
   "name": "GPokr Tools",
-  "version": "1.0.0",
-  "description": "Show emoticons on player avatars at the GPokr table, driven by chat.",
+  "version": "1.1.0",
+  "description": "Emotes, hand sharing, an odds HUD, and bet-sizing helpers for the GPokr table.",
+  "permissions": ["storage"],
+  "action": {
+	"default_popup": "popup.html",
+	"default_title": "GPokr Tools"
+  },
   "content_scripts": [
 	{
 	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"],

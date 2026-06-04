@@ -58,6 +58,42 @@ const dead = O.monteCarloEquity(["4c", "5c"], ["Ah", "Kh", "Qd", "Jd", "9s"], 1,
 check("busted draw on river never wins outright", dead.win < 0.005, "win " + dead.win.toFixed(3));
 check("busted draw equity is tie-share only (< 0.25)", dead.equity < 0.25, "got " + dead.equity.toFixed(3));
 
+// ---- draw analysis ----
+function draws(hole, board) { return O.drawInfo(hole.split(" "), board.split(" ")); }
+const nutFd = draws("Ah Kh", "Qh Jh 2c"); // flush draw + gutshot (Th counts as flush)
+check("AKs combo draw: 9 flush outs", nutFd.flushOuts === 9, "got " + nutFd.flushOuts);
+check("AKs combo draw: 3 straight outs", nutFd.straightOuts === 3, "got " + nutFd.straightOuts);
+check("AKs combo draw: 12 outs total", nutFd.outs === 12, "got " + nutFd.outs);
+check("flop hitProb for 12 outs ≈ 0.45", Math.abs(nutFd.hitProb - 0.4498) < 0.01, "got " + nutFd.hitProb.toFixed(4));
+const monster = draws("8s 7s", "6s 5s 2d"); // classic 15-outer
+check("open-ended flush combo: 15 outs", monster.outs === 15, "got " + monster.outs);
+check("open-ended: 2 straight ranks", monster.straightRanks === 2, "got " + monster.straightRanks);
+const gut = draws("9c 8d", "5h 6s Kd"); // needs exactly a 7
+check("gutshot: 4 outs", gut.outs === 4 && gut.straightRanks === 1, "got " + gut.outs);
+const turnGut = draws("9c 8d", "5h 6s Kd 2c");
+check("turn hitProb = outs/46", Math.abs(turnGut.hitProb - 4 / 46) < 1e-9, "got " + turnGut.hitProb);
+const boat = draws("Ac Kd", "Ah Kh 2s"); // two pair drawing to a boat
+check("two pair: 4 boat outs", boat.otherOuts === 4 && boat.outs === 4, "got " + JSON.stringify(boat));
+check("made straight: no draw line", draws("9c 8d", "7h 6s 5d") === null);
+check("no draw at all: null", draws("Qc Qd", "8h 3s 2d") === null);
+check("preflop: null", O.drawInfo(["Ah", "Kh"], []) === null);
+
+// ---- preflop ranking / ranged equity ----
+const pAA = O.holePercentile(O.cardToInt("As"), O.cardToInt("Ah"));
+const p72 = O.holePercentile(O.cardToInt("7c"), O.cardToInt("2d"));
+const pAKs = O.holePercentile(O.cardToInt("Ah"), O.cardToInt("Kh"));
+check("AA is the top class", pAA === 0, "got " + pAA);
+check("AA < AKs < 72o percentile", pAA < pAKs && pAKs < p72, pAA + " / " + pAKs + " / " + p72);
+check("72o is bottom decile", p72 > 0.9, "got " + p72.toFixed(3));
+function mcr(hole, n, ranges) { return O.monteCarloEquity(hole.split(" "), [], n, 5000, ranges).equity; }
+const junkVsTight = mcr("7c 2d", 1, [0.1]);
+check("72o vs top-10% range well below random (<0.32)", junkVsTight < 0.32, "got " + junkVsTight.toFixed(3));
+const junkVsRandom = mcr("7c 2d", 1, [1]);
+check("range of 1.0 falls back to random (≈0.346)", Math.abs(junkVsRandom - 0.346) < 0.03, "got " + junkVsRandom.toFixed(3));
+const aaVsTight = mcr("As Ah", 1, [0.1]);
+check("AA still crushes a tight range (>0.7)", aaVsTight > 0.7, "got " + aaVsTight.toFixed(3));
+check("AA vs tight < AA vs random", aaVsTight < aa1 + 0.01, aaVsTight.toFixed(3) + " vs " + aa1.toFixed(3));
+
 // ---- pot odds / decisions ----
 check("potOdds 100 into 300 pot = 0.25", O.potOdds(300, 100) === 0.25);
 check("potOdds free = 0", O.potOdds(500, 0) === 0);
@@ -71,6 +107,10 @@ const t0 = Date.now();
 O.monteCarloEquity(["As", "Kd"], ["7h", "8h", "2c"], 4, 5000);
 const ms = Date.now() - t0;
 check("5000 iters vs 4 opps < 700ms", ms < 700, ms + "ms");
-console.log("(timing: " + ms + "ms)");
+const t1 = Date.now();
+O.monteCarloEquity(["As", "Kd"], ["7h", "8h", "2c"], 4, 5000, [0.18, 0.35, 0.35, 1]);
+const ms2 = Date.now() - t1;
+check("5000 ranged iters vs 4 opps < 900ms", ms2 < 900, ms2 + "ms");
+console.log("(timing: " + ms + "ms random, " + ms2 + "ms ranged)");
 
 process.exit(failures ? 1 : 0);

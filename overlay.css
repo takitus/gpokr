@@ -172,6 +172,7 @@
 .gpe-odds-marginal { color: #ffcc66; }
 .gpe-odds-fold { color: #ff7b6b; }
 
+/* ---- Inline one-shot "share hand" checkbox (next to the chat input) ---- */
 .gpe-toggle {
     font: 11px/1 Arial, sans-serif;
     color: #444;
@@ -181,3 +182,34 @@
     user-select: none;
 }
 .gpe-toggle input { vertical-align: middle; margin-right: 2px; }
+/* grayed out while the popup's "always share" owns it */
+.gpe-toggle:has(input:disabled) {
+    color: #aaa;
+    cursor: default;
+}
+
+/* ---- Pot-fraction bet-sizing buttons (next to the raise input) ---- */
+#gpe-bet-sizes {
+    display: inline-flex;
+    gap: 3px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+#gpe-bet-sizes button {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font: 11px/1 Arial, sans-serif;
+    padding: 0 6px;
+    height: 22px;
+    min-width: 24px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 6px;
+}
+#gpe-bet-sizes button:hover {
+    background: #f0f0f0;
+}
