@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <style>
     body {
-        width: 240px;
+        width: 280px;
         margin: 0;
         padding: 12px;
         font: 13px/1.5 -apple-system, "Segoe UI", Arial, sans-serif;
@@ -43,6 +43,39 @@
     }
     #status { font-size: 11px; color: #2a7a2a; min-height: 14px; margin-top: 4px; }
     #status.err { color: #b33; }
+    .sec-title { font-weight: 600; margin: 2px 0 4px; }
+    .bet-row { display: flex; gap: 5px; align-items: center; margin: 3px 0; }
+    .bet-row .drag {
+        cursor: grab;
+        color: #aaa;
+        user-select: none;
+        font-size: 12px;
+    }
+    .bet-row.dragging { opacity: 0.45; }
+    .bet-row.dragover { box-shadow: 0 -2px 0 0 #4c9aff; } /* insertion line above */
+    .bet-row input[type=number] {
+        width: 52px;
+        box-sizing: border-box;
+        padding: 2px 4px;
+        border: 1px solid #c9c9c9;
+        border-radius: 4px;
+    }
+    .bet-row select {
+        flex: 1;
+        padding: 2px;
+        border: 1px solid #c9c9c9;
+        border-radius: 4px;
+        background: #fff;
+    }
+    .bet-row .del {
+        border: none;
+        background: none;
+        color: #b33;
+        cursor: pointer;
+        font-size: 13px;
+        padding: 0 3px;
+    }
+    .hint { font-size: 11px; color: #888; margin: 4px 0 0; }
 </style>
 </head>
 <body>
@@ -51,6 +84,15 @@
 <label><input type="checkbox" id="showOdds"> Odds HUD</label>
 <label><input type="checkbox" id="shareHand"> Always share hand at showdown</label>
 <label><input type="checkbox" id="localTest"> Local test mode</label>
+
+<hr>
+
+<div class="sec-title">Bet buttons</div>
+<div id="betRows"></div>
+<div class="row"><button id="addBetBtn">+ Add button</button></div>
+<div class="hint">multiplier × blind or pot — decimals OK (.5 = half).
+Top/bottom picks the column above or below the bet field; drag ⠿ to reorder.
+"All in" always caps the top column.</div>
 
 <hr>
 

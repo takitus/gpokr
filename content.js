@@ -11,6 +11,34 @@
     let SHARE_HAND = false;
     let SHOW_ODDS = false;
 
+    // User-defined bet-sizing buttons: multiplier × base ("blind"/"pot"),
+    // placed in the column above or below the bet input per `pos`. The top
+    // column is always capped by "all in". List order = render order.
+    const DEFAULT_BET_BTNS = [
+        { mult: 3, base: "blind", pos: "top" },
+        { mult: 2, base: "blind", pos: "top" },
+        { mult: 0.5, base: "pot", pos: "bottom" },
+        { mult: 0.67, base: "pot", pos: "bottom" },
+        { mult: 1, base: "pot", pos: "bottom" },
+    ];
+    let BET_CONFIG = DEFAULT_BET_BTNS;
+
+    // Defaults only when nothing was ever saved; an explicitly emptied list
+    // stays empty (just "all in"). Bad entries are dropped; entries saved
+    // before `pos` existed infer it from the base (blind->top, pot->bottom).
+    function sanitizeBetConfig(list) {
+        if (!Array.isArray(list)) return DEFAULT_BET_BTNS;
+        return list
+            .filter((c) => c && (c.base === "blind" || c.base === "pot") &&
+                typeof c.mult === "number" && isFinite(c.mult) && c.mult > 0)
+            .map((c) => ({
+                mult: c.mult,
+                base: c.base,
+                pos: c.pos === "top" || c.pos === "bottom" ? c.pos
+                    : (c.base === "blind" ? "top" : "bottom"),
+            }));
+    }
+
     const EXT_STORE = (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local)
         ? chrome.storage.local : null;
 
@@ -18,7 +46,28 @@
         LOCAL_TEST = !!(s && s.localTest);
         SHARE_HAND = !!(s && s.shareHand);
         SHOW_ODDS = !!(s && s.showOdds);
+        const cfg = sanitizeBetConfig(s && s.betButtons);
+        if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
+            BET_CONFIG = cfg;
+            rebuildBetColumns();
+        }
         syncShareToggleUI();
+        syncOddsToggleUI();
+    }
+
+    // Persist a single setting without clobbering the others; the popup picks
+    // the change up via chrome.storage.onChanged (and vice versa).
+    function saveSetting(key, value) {
+        if (EXT_STORE) {
+            EXT_STORE.get(["gpe_settings"], (res) => {
+                const s = res.gpe_settings || {};
+                s[key] = value;
+                EXT_STORE.set({ gpe_settings: s });
+            });
+        } else {
+            const legacyKeys = { localTest: "gpe_local_test", shareHand: "gpe_share_hand", showOdds: "gpe_show_odds" };
+            try { localStorage.setItem(legacyKeys[key], value ? "1" : "0"); } catch (e) {}
+        }
     }
 
     function legacyLocalStorageSettings() {
@@ -35,7 +84,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-bet-sizes"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, .gpe-bet-col"
     ).forEach((el) => el.remove());
 
     // ---------- helpers: name -> avatar ----------
@@ -353,13 +402,12 @@
         const boardHtml = board
             .map((c, i) => '<span class="' + deltaClass(boardDeltas[i] || 0) + '">' + c + "</span>")
             .join(" ");
+        // (Equity is still computed: it colors the hole cards and drives the
+        // CALL/FOLD verdict — just no longer shown as its own row.)
         let html =
             '<div class="gpe-odds-row gpe-odds-title">' + handHtml +
             (board.length ? " | " + boardHtml : "") +
-            ' <span class="gpe-odds-street">(' + streets[board.length] + ")</span></div>" +
-            '<div class="gpe-odds-row">equity <b>' + pct(eq) + "</b> vs " + nOpp +
-            (nOpp === 1 ? " opp" : " opps") +
-            (ranges.some((r) => r < 1) ? ' <span class="gpe-odds-street">(ranged)</span>' : "") + "</div>";
+            ' <span class="gpe-odds-street">(' + streets[board.length] + ")</span></div>";
         if (oddsDraw) {
             const parts = [];
             if (oddsDraw.flushOuts) parts.push("flush " + oddsDraw.flushOuts);
@@ -612,6 +660,12 @@
         box.checked = SHARE_HAND ? true : shareNextHand;
     }
 
+    // Inline "odds" box mirrors the persistent setting (same one as the popup).
+    function syncOddsToggleUI() {
+        const box = document.getElementById("gpe-show-odds");
+        if (box) box.checked = SHOW_ODDS;
+    }
+
     function pollHandState() {
         learnMyCards();
         learnBoardCards();
@@ -669,24 +723,84 @@
         }, 60);
     }
 
-    // ---------- UI: pot-fraction bet sizing ----------
+    // ---------- UI: blind-multiple bet sizing ----------
     // Sits next to the bet input inside the action bar, so it shows/hides with
-    // it. Raise-to = call amount + fraction of the pot after calling.
-    const BET_FRACS = [["½", 0.5], ["⅔", 2 / 3], ["pot", 1]];
-    function addBetSizeButtons() {
+    // it. 2x/3x = that multiple of the big blind; all in = my full stack.
+    // Amounts the site considers illegal (below min raise, over stack) are
+    // clamped by the game itself on submit.
+
+    // Big blind from the table status label, e.g. "9 player ring, $25/$50".
+    // (Blind posts are never written to the game log.)
+    function parseBigBlind() {
+        const status = document.querySelector(".iogc-GameWindow-status");
+        if (!status) return 0;
+        const m = status.textContent.match(/\$\s*[\d,]+\s*\/\s*\$\s*([\d,]+)/);
+        return m ? parseInt(m[1].replace(/,/g, ""), 10) : 0;
+    }
+
+    // My chip stack, from my (visible) seat panel.
+    function myStack() {
+        const me = getMyName();
+        if (!me) return 0;
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            if (getSeatName(p) !== me) continue;
+            if (p.getBoundingClientRect().width === 0) continue;
+            const v = parseMoney(p.textContent);
+            if (v) return v;
+        }
+        return 0;
+    }
+
+    // Raise-to = call amount + fraction of the pot after calling.
+    function potBet(frac) {
+        const { pot, toCall } = parsePotAndToCall();
+        return toCall + Math.round((pot + toCall) * frac);
+    }
+
+    // Trim float noise for labels: 0.6700000000000001 -> "0.67"
+    function fmtMult(m) { return String(parseFloat(m.toFixed(4))); }
+
+    // Build one column's button list from BET_CONFIG, in the user's defined
+    // order. "all in" always caps the top column.
+    function betButtonsFor(pos) {
+        const btns = pos === "top" ? [["all in", () => myStack()]] : [];
+        for (const c of BET_CONFIG) {
+            if (c.pos !== pos) continue;
+            if (c.base === "blind") {
+                btns.push([fmtMult(c.mult) + "x blind", () => Math.round(c.mult * parseBigBlind())]);
+            } else {
+                btns.push([c.mult === 1 ? "pot" : fmtMult(c.mult) + "x pot", () => potBet(c.mult)]);
+            }
+        }
+        return btns;
+    }
+
+    // Float a column flush against the bet input (above or below), matching
+    // its width; hidden whenever the input is (i.e. not my turn to bet).
+    function placeBetColumn(wrap, below) {
         const input = document.querySelector("input.gpokr-GameWindow-betInput");
-        if (!input || document.getElementById("gpe-bet-sizes")) return;
-        const wrap = document.createElement("span");
-        wrap.id = "gpe-bet-sizes";
-        BET_FRACS.forEach(([label, frac]) => {
+        const r = input ? input.getBoundingClientRect() : null;
+        if (!r || r.width === 0) { wrap.style.display = "none"; return; }
+        wrap.style.display = "";
+        wrap.style.width = r.width + "px";
+        wrap.style.left = r.left + "px";
+        wrap.style.top = (below ? r.bottom : r.top - wrap.offsetHeight) + "px";
+    }
+
+    function makeBetColumn(id, btns, below) {
+        if (!btns.length || document.getElementById(id)) return;
+        const wrap = document.createElement("div");
+        wrap.id = id;
+        wrap.className = "gpe-bet-col";
+        btns.forEach(([label, amountFn]) => {
             const b = document.createElement("button");
             b.type = "button";
             b.textContent = label;
             b.addEventListener("click", () => {
                 const inp = document.querySelector("input.gpokr-GameWindow-betInput");
                 if (!inp) return;
-                const { pot, toCall } = parsePotAndToCall();
-                const amount = toCall + Math.round((pot + toCall) * frac);
+                const amount = amountFn();
+                if (!amount) return; // blind/stack/pot not readable yet
                 const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
                 setter.call(inp, String(amount));
                 inp.dispatchEvent(new Event("input", { bubbles: true }));
@@ -694,7 +808,23 @@
             });
             wrap.appendChild(b);
         });
-        input.insertAdjacentElement("afterend", wrap);
+        document.body.appendChild(wrap);
+        placeBetColumn(wrap, below);
+        wrap._gpeReposition = setInterval(() => placeBetColumn(wrap, below), 200);
+    }
+
+    function addBetSizeButtons() {
+        makeBetColumn("gpe-bet-sizes", betButtonsFor("top"), false);
+        makeBetColumn("gpe-pot-sizes", betButtonsFor("bottom"), true);
+    }
+
+    // Tear down and recreate both columns (after a config change from the popup).
+    function rebuildBetColumns() {
+        for (const id of ["gpe-bet-sizes", "gpe-pot-sizes"]) {
+            const el = document.getElementById(id);
+            if (el) { clearInterval(el._gpeReposition); el.remove(); }
+        }
+        addBetSizeButtons();
     }
 
     // ---------- UI: emote picker ----------
@@ -742,9 +872,26 @@
         shareToggle.appendChild(shareBox);
         shareToggle.appendChild(document.createTextNode(" share hand"));
 
+        // Inline "odds" HUD toggle — same persistent setting as the popup's
+        // checkbox; either one updates the other through chrome.storage.
+        const oddsToggle = document.createElement("label");
+        oddsToggle.className = "gpe-toggle";
+        const oddsBox = document.createElement("input");
+        oddsBox.type = "checkbox";
+        oddsBox.id = "gpe-show-odds";
+        oddsBox.addEventListener("change", () => {
+            SHOW_ODDS = oddsBox.checked;
+            saveSetting("showOdds", oddsBox.checked);
+            updateOddsHud();
+        });
+        oddsToggle.appendChild(oddsBox);
+        oddsToggle.appendChild(document.createTextNode(" odds"));
+
         input.insertAdjacentElement("afterend", btn);
         btn.insertAdjacentElement("afterend", shareToggle);
+        shareToggle.insertAdjacentElement("afterend", oddsToggle);
         syncShareToggleUI();
+        syncOddsToggleUI();
         document.body.appendChild(panel);
     }
 

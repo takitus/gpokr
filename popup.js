@@ -28,24 +28,166 @@
     }
 
     // ---------- settings ----------
+    // Kept as a whole object so saving one field never clobbers the others
+    // (e.g. a toggle change must not wipe the bet-button config).
+    let settings = {};
+    function saveSettings() { chrome.storage.local.set({ [SETTINGS_KEY]: settings }); }
+
     chrome.storage.local.get([SETTINGS_KEY, CARD_STORE_KEY], (res) => {
-        const s = res[SETTINGS_KEY] || {};
-        TOGGLE_IDS.forEach((id) => { $(id).checked = !!s[id]; });
+        settings = res[SETTINGS_KEY] || {};
+        TOGGLE_IDS.forEach((id) => { $(id).checked = !!settings[id]; });
+        renderBetRows();
         renderStore(res[CARD_STORE_KEY] || {});
     });
 
     TOGGLE_IDS.forEach((id) => {
         $(id).addEventListener("change", () => {
-            const s = {};
-            TOGGLE_IDS.forEach((t) => { s[t] = $(t).checked; });
-            chrome.storage.local.set({ [SETTINGS_KEY]: s });
+            TOGGLE_IDS.forEach((t) => { settings[t] = $(t).checked; });
+            saveSettings();
         });
     });
 
-    // Live-update the count while the table keeps learning in the background.
+    // ---------- bet-button config ----------
+    // Mirrors DEFAULT_BET_BTNS in content.js: shown (and saved on first edit)
+    // when nothing was ever configured. `pos` picks the column (above/below
+    // the bet field); entries saved before it existed infer it from the base.
+    const DEFAULT_BET_BTNS = [
+        { mult: 3, base: "blind", pos: "top" },
+        { mult: 2, base: "blind", pos: "top" },
+        { mult: 0.5, base: "pot", pos: "bottom" },
+        { mult: 0.67, base: "pot", pos: "bottom" },
+        { mult: 1, base: "pot", pos: "bottom" },
+    ];
+    function normEntry(c) {
+        return {
+            mult: c.mult,
+            base: c.base,
+            pos: c.pos === "top" || c.pos === "bottom" ? c.pos
+                : (c.base === "blind" ? "top" : "bottom"),
+        };
+    }
+    function betConfig() {
+        const list = Array.isArray(settings.betButtons) ? settings.betButtons : DEFAULT_BET_BTNS;
+        return list.map(normEntry);
+    }
+    function commitBetConfig(list) {
+        settings.betButtons = list;
+        saveSettings();
+        renderBetRows();
+    }
+
+    // Update one field of row i, keeping the rest of the entry.
+    function patchBetRow(i, patch) {
+        const list = betConfig();
+        list[i] = Object.assign({}, list[i], patch);
+        commitBetConfig(list);
+    }
+
+    function makeSelect(options, value, onChange) {
+        const sel = document.createElement("select");
+        options.forEach((v) => {
+            const o = document.createElement("option");
+            o.value = v;
+            o.textContent = v;
+            sel.appendChild(o);
+        });
+        sel.value = value;
+        sel.addEventListener("change", () => onChange(sel.value));
+        return sel;
+    }
+
+    let dragIndex = null; // index of the row being dragged
+
+    function renderBetRows() {
+        const wrap = $("betRows");
+        wrap.textContent = "";
+        betConfig().forEach((c, i) => {
+            const row = document.createElement("div");
+            row.className = "bet-row";
+
+            // Drag to reorder: only the handle arms the drag, so the inputs
+            // keep normal text selection / interaction.
+            const handle = document.createElement("span");
+            handle.className = "drag";
+            handle.textContent = "⠿";
+            handle.title = "drag to reorder";
+            handle.addEventListener("mousedown", () => { row.draggable = true; });
+            row.addEventListener("dragstart", (e) => {
+                dragIndex = i;
+                row.classList.add("dragging");
+                e.dataTransfer.effectAllowed = "move";
+            });
+            row.addEventListener("dragend", () => {
+                row.draggable = false;
+                row.classList.remove("dragging");
+                dragIndex = null;
+            });
+            row.addEventListener("dragover", (e) => {
+                e.preventDefault(); // allow dropping here
+                if (dragIndex !== null && dragIndex !== i) row.classList.add("dragover");
+            });
+            row.addEventListener("dragleave", () => row.classList.remove("dragover"));
+            row.addEventListener("drop", (e) => {
+                e.preventDefault();
+                row.classList.remove("dragover");
+                if (dragIndex === null || dragIndex === i) return;
+                const list = betConfig();
+                const moved = list.splice(dragIndex, 1)[0];
+                list.splice(i, 0, moved);
+                dragIndex = null;
+                commitBetConfig(list);
+            });
+
+            const num = document.createElement("input");
+            num.type = "number";
+            num.min = "0";
+            num.step = "any";
+            num.value = c.mult;
+            num.addEventListener("change", () => {
+                const v = parseFloat(num.value);
+                if (!isFinite(v) || v <= 0) { num.value = c.mult; return; } // reject junk, keep old
+                patchBetRow(i, { mult: v });
+            });
+
+            const x = document.createElement("span");
+            x.textContent = "×";
+
+            const base = makeSelect(["blind", "pot"], c.base, (v) => patchBetRow(i, { base: v }));
+            const pos = makeSelect(["top", "bottom"], c.pos, (v) => patchBetRow(i, { pos: v }));
+
+            const del = document.createElement("button");
+            del.className = "del";
+            del.type = "button";
+            del.textContent = "✕";
+            del.title = "remove";
+            del.addEventListener("click", () => {
+                const list = betConfig();
+                list.splice(i, 1);
+                commitBetConfig(list);
+            });
+
+            row.append(handle, num, x, base, pos, del);
+            wrap.appendChild(row);
+        });
+    }
+
+    $("addBetBtn").addEventListener("click", () => {
+        const list = betConfig();
+        list.push({ mult: 1, base: "pot", pos: "bottom" });
+        commitBetConfig(list);
+    });
+
+    // Live-update the count while the table keeps learning in the background,
+    // and mirror settings changed from the in-page toggles.
     chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === "local" && changes[CARD_STORE_KEY]) {
+        if (area !== "local") return;
+        if (changes[CARD_STORE_KEY]) {
             renderStore(changes[CARD_STORE_KEY].newValue || {});
+        }
+        if (changes[SETTINGS_KEY]) {
+            settings = changes[SETTINGS_KEY].newValue || {};
+            TOGGLE_IDS.forEach((id) => { $(id).checked = !!settings[id]; });
+            renderBetRows();
         }
     });
 

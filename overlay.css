@@ -188,28 +188,43 @@
     cursor: default;
 }
 
-/* ---- Pot-fraction bet-sizing buttons (next to the raise input) ---- */
-#gpe-bet-sizes {
-    display: inline-flex;
-    gap: 3px;
-    margin-left: 6px;
-    vertical-align: middle;
+/* ---- Bet-sizing columns (float flush against the bet input) ----
+   Width is set inline to match the input. Blind buttons (all in / 3x / 2x)
+   stack above it with a rounded top; pot-fraction buttons (½ / ⅔ / pot)
+   stack below it with a rounded bottom. */
+.gpe-bet-col {
+    position: fixed;
+    z-index: 99997;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    /* semi-transparent so a covered turn-progress bar stays visible;
+       solid while the cursor is over it */
+    opacity: 0.75;
+    transition: opacity 120ms ease;
 }
-#gpe-bet-sizes button {
+.gpe-bet-col:hover {
+    opacity: 1;
+}
+#gpe-bet-sizes { border-radius: 8px 8px 0 0; }
+#gpe-pot-sizes { border-radius: 0 0 8px 8px; }
+.gpe-bet-col button {
     all: unset;
     box-sizing: border-box;
-    display: inline-flex;
+    display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    font: 11px/1 Arial, sans-serif;
-    padding: 0 6px;
-    height: 22px;
-    min-width: 24px;
+    font: bold 12px/1 Arial, sans-serif;
+    width: 100%;
+    padding: 3px 0;
     border: 1px solid #c9c9c9;
     background: #fff;
-    border-radius: 6px;
 }
-#gpe-bet-sizes button:hover {
+.gpe-bet-col button:not(:first-child) {
+    border-top: none; /* no doubled borders between stacked rows */
+}
+.gpe-bet-col button:hover {
     background: #f0f0f0;
 }
