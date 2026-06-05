@@ -231,6 +231,17 @@ html.gpe-dark img[src*="quickchart.io"] {
     filter: invert(0.88) hue-rotate(180deg);
     border-radius: 4px;
 }
+html.gpe-dark .yui-b { padding-bottom: 0 !important; }
+
+html.gpe-dark .menu2 {
+    text-align: center !important;
+    margin: 0px auto !important;
+    width: 75% !important;
+    padding: 0px 20px !important;
+    background-color: #2b3648 !important;
+    border-bottom-left-radius: 16px !important;
+    border-bottom-right-radius: 16px !important;
+}
 
 /* ============================================================
    Our own overlays, re-themed to match

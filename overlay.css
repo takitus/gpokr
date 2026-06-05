@@ -328,6 +328,19 @@ td:has(>table.iogc-ChatPanel-input) {
     margin: 5px 3px 5px 0 !important;
 }
 
+.yui-b { padding-bottom: 0 !important; }
+
+.menu2 {
+    text-align: center !important;
+    margin: 0px auto !important;
+    width: 75% !important;
+    padding: 0px 20px !important;
+    background-color: #f5f5f5 !important;
+    border-bottom-left-radius: 16px !important;
+    border-bottom-right-radius: 16px !important;
+    margin-bottom: 10px !important;
+}
+
 .gpe-bet-col button {
     all: unset;
     box-sizing: border-box;
