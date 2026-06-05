@@ -1,0 +1,68 @@
+CHROME WEB STORE LISTING — GPokr Tools v1.2.0
+(paste-ready; the store renders plain text, so the bullets/sections below work as-is)
+
+=== Summary (max 132 chars) ===
+
+Dark mode, live odds HUD, opponent stats & notes, bet-sizing buttons, session tracker, emotes, and hand sharing for gpokr.com.
+
+=== Detailed description ===
+
+GPokr Tools adds the quality-of-life features gpokr.com always needed — built by a player, for players.
+
+🌙 DARK MODE
+A complete hand-tuned dark theme for the entire site: the table (with custom dark felt artwork), lobby, leaderboard, forum, profiles, and dialogs. One checkbox, instant, no page reload.
+
+📊 LIVE ODDS HUD
+See your hand the way the math sees it, updated as the action unfolds:
+• Win equity simulated against the live opponents at your table
+• Your made hand, named ("two pair, aces and fours")
+• Draw outs and the odds of hitting by the river
+• Pot odds with a clear CALL / MARGINAL / FOLD read when facing a bet
+Equity even adapts to each opponent's real playing style once enough hands are observed.
+
+👤 OPPONENT STATS & NOTES
+Every hand at your table feeds per-player statistics — how loose they play (VPIP), how often they raise (PFR), postflop aggression, showdowns won. A small badge above each avatar shows the numbers; hover for the plain-English breakdown; click to save a private note ("only raises with the nuts").
+
+🎯 BET-SIZING BUTTONS
+One-click bet amounts that float right at the bet box: all-in, blind multiples, and pot fractions. Fully customizable — define your own buttons (any multiplier × blind or pot), drag to reorder, place them above or below the field.
+
+📈 SESSION TRACKER
+Your stack is recorded after every hand. Open the popup for your session profit/loss and a sparkline of your run.
+
+⌨️ KEYBOARD SHORTCUTS (optional, off by default)
+F to fold, C to check/call, number keys to fill your bet-size buttons. Never fires while you're typing in chat.
+
+😀 EMOTES & HAND SHARING
+Send emoji reactions that pop over your avatar, and optionally reveal your hole cards to other extension users after a hand ends — once, always, or never. Your choice.
+
+———
+
+PRIVACY
+Everything stays on your computer. All settings, statistics, and notes live in local browser storage. Nothing is collected, transmitted, or shared — no servers, no analytics, no accounts. The extension requires only the "storage" permission and runs only on gpokr.com.
+
+FAIR PLAY
+GPokr Tools displays information derived from what is already visible on your screen (the game log and table). It never acts for you — no auto-fold, no auto-bet, no automated play of any kind.
+
+This is an unofficial fan project and is not affiliated with or endorsed by GPokr.
+
+Found a bug or have a feature idea? Post in the GPokr forum thread — the extension is actively updated based on player feedback.
+
+=== Privacy tab answers ===
+
+Single purpose:
+Adds quality-of-life enhancements (dark theme, odds display, statistics, UI helpers) to the gpokr.com poker site.
+
+Permission justification — storage:
+Stores the user's settings, per-player notes, and locally computed statistics in chrome.storage.local. No data leaves the browser.
+
+Data usage:
+Does not collect, transmit, or sell any user data. Check "none of the above" for all data-collection categories and certify the disclosures.
+
+=== Screenshot requirements ===
+
+1280x800 or 640x400 PNG/JPG, up to 5. Suggested set:
+1. Dark mode table mid-hand with the odds HUD visible (resize assets/dark_mode.png to fit)
+2. Light/dark side-by-side comparison
+3. Odds HUD close-up showing equity + draw + CALL verdict
+4. Stats badge tooltip + note editor open on a player
+5. Popup with bet-button editor and session sparkline
