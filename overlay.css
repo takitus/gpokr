@@ -300,6 +300,34 @@
 
 /* ---- Site layout fix: change-table dialog tiles are mis-sized upstream ---- */
 .iogc-ChangeTableDialog-tile { width: 264px !important; }
+
+.iogc-GameWindow-container, .gwt-DialogBox { box-shadow: 1px 1px 0px 0px rgba(255,255,255,1) inset, -1px -1px 0px 0px rgba(0,0,0,.125) inset !important; }
+.ui-button_content { box-shadow: 1px 1px 0 0 rgba(255,255,255,1) inset, -1px -1px 0 0 rgba(0,0,0,.25) inset; }
+.iogc-GameWindow-table { box-shadow: rgba(0, 0, 0, 0.125) 0px -4px 8px 0px inset !important; }
+.iogc-Controls { box-shadow: 0px 1px 0px 0px rgba(255, 255, 255, .75) inset !important; }
+.rdews-RoundedComposite {
+    border-radius: 0px !important;
+    -webkit-border-radius: 0px !important;
+    -moz-border-radius: 0px !important;
+    padding: 0 0 0 5px !important;
+}
+.iogc-MessagesPanel{
+    background-color: rgb(255,255,255) !important;
+}
+.iogc-MessagePanel-messages {
+    height: 160px !important;
+    padding-bottom: 8px !important
+}
+td:has(>table.iogc-ChatPanel-input) {
+    background-color: #e4e9f2;
+    border-top-left-radius: 4px;
+    padding: 4px;
+}
+.seperator {
+    border-bottom: 2px solid rgba(0,0,0,.5) !important;
+    margin: 5px 3px 5px 0 !important;
+}
+
 .gpe-bet-col button {
     all: unset;
     box-sizing: border-box;

@@ -23,7 +23,14 @@ html.gpe-dark a { color: #6fb1e8; }
 
 /* ---- game window ---- */
 html.gpe-dark .iogc-GameWindow { background-color: #161a22 !important; }
-html.gpe-dark .iogc-GameWindow-container { background-color: #1c2531 !important; }
+html.gpe-dark .iogc-GameWindow-container {
+    background-color: #1c2531 !important;
+    box-shadow: 1px 1px 0 0 rgba(255,255,255,0.1) inset, -1px -1px 0 0 rgba(0,0,0,.125) inset !important;
+}
+html.gpe-dark .ui-button_content{
+    box-shadow: 1px 1px 0 0 rgba(255,255,255,1) inset, -1px -1px 0 0 rgba(0,0,0,.25) inset !important;
+}
+html.gpe-dark .iogc-GameWindow-table { box-shadow: 0px -8px 16px 0px rgba(0, 0, 0, .5) inset !important; }
 html.gpe-dark .iogc-GameWindow-layout { background-color: #202834 !important; }
 html.gpe-dark .iogc-GameWindow-status { color: #93a0b4 !important; }
 html.gpe-dark .iogc-GameWindow .title { color: #7cc4ff !important; } /* table name */
@@ -60,9 +67,15 @@ html.gpe-dark .iogc-Controls {
     background-color: #2b3648 !important;
     border-top: 1px solid #3c4a61;
     border-bottom: 1px solid #3c4a61;
+    box-shadow: none !important;
 }
 html.gpe-dark .iogc-GamePanel { background-color: #232c3a !important; } /* seat cards */
-
+html.gpe-dark .gpokr-PlayerPanel-onsitout div.iogc-GamePanel{
+    border-top: 3px solid rgba(0,0,0,.25) !important;
+}
+html.gpe-dark .iogc-MessagesPanel{
+    background-color:  #1f2530 !important;
+}
 /* current turn: tint the whole seat card, with a green edge along the top
    only — mirroring the site's original indicator. Inset shadow, not a real
    border, so the card doesn't grow/shift. (.gpe-turn-card is tagged by
@@ -81,7 +94,7 @@ html.gpe-dark .iogc-LoginPanel-menuButton svg * { fill: #c3cad6 !important; }
 html.gpe-dark .iogc-SidePanel-title,
 html.gpe-dark a.iogc-SidePanel-title { color: #d2d8e2 !important; }
 html.gpe-dark .iogc-SidePanel-inner { color: #c3cad6; }
-html.gpe-dark .iogc-AvailableGamePanel-tile { background-color: #232c3a !important; }
+html.gpe-dark .iogc-AvailableGamePanel-tile { background-color: #1f2530 !important; }
 
 /* soften the site's bright #ccc divider lines (tile edges, table rows,
    chat separator) */
@@ -110,10 +123,15 @@ html.gpe-dark .iogc-favoritePanel-list {
     background-color: #1f2530 !important;
     color: #c3cad6;
 }
+html.gpe-dark .iogc-MessagePanel-messages { padding-bottom: 0 !important }
+
 html.gpe-dark .iogc-SidePanel-inner { border-color: #39455a !important; }
 
 /* ---- dialogs ---- */
-html.gpe-dark .gwt-DialogBox { background-color: #1c2531 !important; }
+html.gpe-dark .gwt-DialogBox {
+    background-color: #1c2531 !important;
+    box-shadow: 1px 1px 0px 0px rgba(255,255,255,0.1) inset, -1px -1px 0px 0px rgba(0,0,0,.125) inset;
+}
 /* The inner content panel and everything inside it: near-black page-base
    tone, darker than the frame so the black separator border still reads.
    Excluded: the table tiles (card-colored) and native pill buttons. */
@@ -146,6 +164,10 @@ html.gpe-dark .iogc-ChangeTableDialog-tile {
 html.gpe-dark .iogc-ChangeTableDialog-tile-selected { background-color: #28455e !important; }
 html.gpe-dark .iogc-ChangeTableDialog-tile-inactive { color: #7a879b !important; }
 html.gpe-dark .iogc-ChangeTableDialog-stat { color: #aab4c4 !important; }
+
+html.gpe-dark td:has(>table.iogc-ChatPanel-input) {
+    background-color: #2b3648 !important;
+}
 
 /* ---- forms & buttons ---- */
 html.gpe-dark input[type="text"],
