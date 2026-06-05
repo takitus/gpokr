@@ -76,6 +76,25 @@
         padding: 0 3px;
     }
     .hint { font-size: 11px; color: #888; margin: 4px 0 0; }
+    /* popup's own dark theme, driven by the same setting */
+    body.dark { background: #1f2530; color: #d2d8e2; }
+    body.dark hr { border-top-color: #39455a; }
+    body.dark .hint, body.dark #cardCount, body.dark #sessionNet { color: #93a0b4; }
+    body.dark .bar { background: #2c3543; }
+    body.dark .row button, body.dark .bet-row .del {
+        background: #2a3342;
+        color: #d2d8e2;
+        border-color: #45526b;
+    }
+    body.dark .row button:hover { background: #344056; }
+    body.dark .bet-row input[type=number], body.dark .bet-row select,
+    body.dark #importBox {
+        background: #262e3b;
+        color: #d2d8e2;
+        border-color: #44516a;
+    }
+    body.dark #sessionChart { background: #1a202a; }
+    body.dark .bet-row .del { background: none; border: none; color: #e07b6e; }
     #sessionNet { font-weight: normal; color: #666; }
     #sessionNet.pos { color: #2a7a2a; }
     #sessionNet.neg { color: #b33; }
@@ -94,6 +113,7 @@
 
 <label><input type="checkbox" id="showOdds"> Odds HUD</label>
 <label><input type="checkbox" id="showStats"> Player stats on avatars</label>
+<label><input type="checkbox" id="darkMode"> Dark mode</label>
 <label><input type="checkbox" id="shareHand"> Always share hand at showdown</label>
 <label><input type="checkbox" id="localTest"> Local test mode</label>
 <label><input type="checkbox" id="hotkeys"> Keyboard shortcuts <span class="hint">(F fold · C check/call · 1–9 bet sizes)</span></label>

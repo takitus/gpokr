@@ -12,6 +12,7 @@
     let SHOW_ODDS = false;
     let SHOW_STATS = false;
     let HOTKEYS = false;
+    let DARK_MODE = false;
 
     // User-defined bet-sizing buttons: multiplier × base ("blind"/"pot"),
     // placed in the column above or below the bet input per `pos`. The top
@@ -50,6 +51,8 @@
         SHOW_ODDS = !!(s && s.showOdds);
         SHOW_STATS = !!(s && s.showStats);
         HOTKEYS = !!(s && s.hotkeys);
+        DARK_MODE = !!(s && s.darkMode);
+        document.documentElement.classList.toggle("gpe-dark", DARK_MODE);
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
@@ -849,6 +852,25 @@
         if (t) t.remove();
     }
 
+    // Tag the seat-name cell of the player whose turn it is: the site paints
+    // its light-green bar via a stylesheet path with no distinguishing class,
+    // so dark.css can't target it directly. We detect the painted background
+    // and add .gpe-turn (which only restyles the TEXT — never the background,
+    // so this detection stays stable).
+    function tagTurnHighlights() {
+        for (const el of document.querySelectorAll(".iogc-PlayerPanel-name")) {
+            // Measure with our class off: dark.css repaints the bar's background,
+            // so reading it while tagged would see our own paint and never untag.
+            // Remove + re-add happens within one JS turn — nothing is rendered
+            // in between, so there's no flicker.
+            el.classList.remove("gpe-turn");
+            const hl = getComputedStyle(el).backgroundColor !== "rgba(0, 0, 0, 0)";
+            el.classList.toggle("gpe-turn", hl);
+            const card = el.closest(".iogc-GamePanel"); // highlight the whole seat card too
+            if (card) card.classList.toggle("gpe-turn-card", hl);
+        }
+    }
+
     // One pass: create/update a badge over each visible seat, drop the rest.
     // Badges show when stats are enabled, or minimally (just 📝) for players
     // with a note even when they're off. Clicking a badge opens the editor.
@@ -1182,7 +1204,7 @@
     });
 
     // ---------- boot ----------
-    setInterval(updateStatBadges, 300); // badges track avatars + setting live
+    setInterval(() => { updateStatBadges(); tagTurnHighlights(); }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();

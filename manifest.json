@@ -20,11 +20,17 @@
 	  "128": "icons/icon128.png"
 	}
   },
+  "web_accessible_resources": [
+	{
+	  "resources": ["assets/table.png"],
+	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"]
+	}
+  ],
   "content_scripts": [
 	{
 	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"],
 	  "js": ["odds.js", "content.js"],
-	  "css": ["overlay.css"],
+	  "css": ["overlay.css", "dark.css"],
 	  "run_at": "document_idle"
 	}
   ]

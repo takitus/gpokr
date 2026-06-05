@@ -1,0 +1,196 @@
+/* GPokr Tools — extension dark mode.
+ * Every rule is scoped under html.gpe-dark, which content.js toggles from the
+ * "Dark mode" setting — the file is inert otherwise. This restyles the site's
+ * LIGHT theme; the site's own dark theme is deliberately ignored.
+ * Palette: slate navy bgs, soft gray-blue text, gpokr-blue links. The felt,
+ * cards, chips, and avatars are images and are left untouched.
+ */
+
+/* ---- page chrome ---- */
+html.gpe-dark,
+html.gpe-dark body {
+    background-color: #161a22 !important;
+    color: #d2d8e2;
+}
+html.gpe-dark #outside,
+html.gpe-dark #outside > div,
+html.gpe-dark #all,
+html.gpe-dark #mainpage,
+html.gpe-dark .page {
+    background-color: #161a22 !important;
+}
+html.gpe-dark a { color: #6fb1e8; }
+
+/* ---- game window ---- */
+html.gpe-dark .iogc-GameWindow { background-color: #161a22 !important; }
+html.gpe-dark .iogc-GameWindow-container { background-color: #1c2531 !important; }
+html.gpe-dark .iogc-GameWindow-layout { background-color: #202834 !important; }
+html.gpe-dark .iogc-GameWindow-status { color: #93a0b4 !important; }
+html.gpe-dark .iogc-GameWindow .title { color: #7cc4ff !important; } /* table name */
+html.gpe-dark .gpokr-GameWindow-potLabel { color: #e6ebf2 !important; }
+html.gpe-dark .iogc-PlayerPanel-name { color: #d2d8e2 !important; }
+html.gpe-dark .iogc-PlayerPanel-name a { color: #d2d8e2 !important; }
+
+/* Current-turn highlight (content.js tags .gpe-turn): mirror the light
+   theme's treatment — the name becomes vibrant green TEXT on the card,
+   instead of the site's light-green bar. The bar's background is repainted
+   to the turn-card color so it blends in (an opaque color, deliberately:
+   the tagger measures with the class off, see tagTurnHighlights). */
+html.gpe-dark .iogc-PlayerPanel-name.gpe-turn {
+    background-color: #1f4128 !important;
+    color: #5ad27f !important;
+    font-weight: bold;
+}
+html.gpe-dark .iogc-PlayerPanel-name.gpe-turn a { color: #5ad27f !important; }
+
+/* seat-card stats: values were #333-on-dark; labels get a softer gray */
+html.gpe-dark .iogc-PlayerPanel-stat { color: #e6ebf2 !important; }
+html.gpe-dark .iogc-GamePanel .gwt-InlineLabel { color: #8a97ab !important; }
+
+/* play-area backdrop: swap the site's light table jpg for our dark one.
+   Same 790x451 dimensions, so the site's own no-repeat / 0 -30px positioning
+   applies unchanged. (Served via web_accessible_resources; the @@extension_id
+   placeholder is substituted by Chrome when the CSS is injected.) */
+html.gpe-dark .iogc-GameWindow-table {
+    background-image: url("chrome-extension://__MSG_@@extension_id__/assets/table.png") !important;
+    background-color: #161a22 !important;
+}
+/* action bar (pot + fold/call/raise): a step lighter than its surroundings */
+html.gpe-dark .iogc-Controls {
+    background-color: #2b3648 !important;
+    border-top: 1px solid #3c4a61;
+    border-bottom: 1px solid #3c4a61;
+}
+html.gpe-dark .iogc-GamePanel { background-color: #232c3a !important; } /* seat cards */
+
+/* current turn: tint the whole seat card, with a green edge along the top
+   only — mirroring the site's original indicator. Inset shadow, not a real
+   border, so the card doesn't grow/shift. (.gpe-turn-card is tagged by
+   content.js alongside .gpe-turn.) */
+html.gpe-dark .iogc-GamePanel.gpe-turn-card {
+    background-color: #1f4128 !important;
+    box-shadow: inset 0 3px 0 0 #5ad27f;
+}
+
+/* the ⋮ profile menu button (svg inherits its gray) */
+html.gpe-dark .iogc-LoginPanel-menuButton { color: #c3cad6 !important; }
+html.gpe-dark .iogc-LoginPanel-menuButton svg,
+html.gpe-dark .iogc-LoginPanel-menuButton svg * { fill: #c3cad6 !important; }
+
+/* ---- right rail: titles, tiles, leaderboards ---- */
+html.gpe-dark .iogc-SidePanel-title,
+html.gpe-dark a.iogc-SidePanel-title { color: #d2d8e2 !important; }
+html.gpe-dark .iogc-SidePanel-inner { color: #c3cad6; }
+html.gpe-dark .iogc-AvailableGamePanel-tile { background-color: #232c3a !important; }
+html.gpe-dark .iogc-AvailableGamePanel-tableName { color: #d2d8e2 !important; }
+html.gpe-dark .iogc-AvailableGamePanel-categoryBadge { color: #aab4c4 !important; }
+html.gpe-dark .iogc-tourny-odd { background-color: #1b222d !important; }
+html.gpe-dark .footerSection { color: #93a0b4 !important; }
+
+/* ---- panels: chat, game log, sidebars ---- */
+html.gpe-dark .iogc-MessagePanel-inner,
+html.gpe-dark .iogc-MessagePanel-messages,
+html.gpe-dark .iogc-ChatPanel-messages,
+html.gpe-dark .iogc-SidePanel-inner,
+html.gpe-dark .iogc-favoritePanel-list {
+    background-color: #1f2530 !important;
+    color: #c3cad6;
+}
+html.gpe-dark .iogc-SidePanel-inner { border-color: #39455a !important; }
+
+/* ---- dialogs ---- */
+html.gpe-dark .gwt-DialogBox { background-color: #1c2531 !important; }
+html.gpe-dark .iogc-DialogOuter { background-color: #1f2530 !important; color: #d2d8e2; }
+
+/* ---- forms & buttons ---- */
+html.gpe-dark input[type="text"],
+html.gpe-dark input[type="number"],
+html.gpe-dark textarea,
+html.gpe-dark select {
+    background-color: #262e3b !important;
+    color: #d2d8e2 !important;
+    /* full shorthand: kills the default debossed inset style, flat 1px line */
+    border: 1px solid #44516a !important;
+    border-radius: 4px;
+}
+/* The site's pill buttons (ui-button) are deliberately left native: their
+   light pills with dark text stay readable on the dark page and keep the
+   site's look. Restyling them breaks the layered ::before shadow + content
+   span structure. */
+
+/* ---- scrollbars (chat/log panels) ---- */
+html.gpe-dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+html.gpe-dark ::-webkit-scrollbar-track { background: #1a202a; }
+html.gpe-dark ::-webkit-scrollbar-thumb { background: #3a4658; border-radius: 5px; }
+
+/* ============================================================
+   Our own overlays, re-themed to match
+   ============================================================ */
+
+/* odds HUD: dark card, bright good/bad colors (tuned for dark bg) */
+html.gpe-dark #gpe-odds-hud {
+    background: rgba(30, 37, 48, 0.95);
+    color: #cfd6e0;
+    border-color: #3c4a61;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+html.gpe-dark #gpe-odds-hud b { color: #fff; }
+html.gpe-dark .gpe-odds-street { color: #7d8da3; }
+html.gpe-dark .gpe-odds-good,
+html.gpe-dark .gpe-odds-call,
+html.gpe-dark .gpe-odds-check { color: #6fdc6f; }
+html.gpe-dark .gpe-odds-neutral,
+html.gpe-dark .gpe-odds-marginal { color: #ffd966; }
+html.gpe-dark .gpe-odds-bad,
+html.gpe-dark .gpe-odds-fold { color: #ff7b6b; }
+
+/* stat badges + tooltip */
+html.gpe-dark .gpe-stat-badge {
+    background: rgba(30, 37, 48, 0.8);
+    color: #b9c2cf;
+    border-color: #3c4a61;
+}
+html.gpe-dark .gpe-stat-badge:hover { background: #232c3a; color: #fff; }
+html.gpe-dark #gpe-stat-tip {
+    background: #232c3a;
+    color: #cfd6e0;
+    border-color: #3c4a61;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+}
+
+/* note editor */
+html.gpe-dark #gpe-note-editor {
+    background: #232c3a;
+    color: #d2d8e2;
+    border-color: #3c4a61;
+}
+html.gpe-dark #gpe-note-editor textarea {
+    background: #1b222d !important;
+    color: #d2d8e2 !important;
+    border-color: #44516a !important;
+}
+html.gpe-dark #gpe-note-editor .gpe-note-row button {
+    background: #2a3342;
+    color: #d2d8e2;
+    border-color: #45526b;
+}
+html.gpe-dark #gpe-note-editor .gpe-note-row button:hover { background: #344056; }
+
+/* bet-sizing columns */
+html.gpe-dark .gpe-bet-col button {
+    background: #2a3342;
+    color: #d2d8e2;
+    border-color: #45526b;
+}
+html.gpe-dark .gpe-bet-col button:hover { background: #344056; }
+
+/* emote picker + inline toggles */
+html.gpe-dark #gpe-picker-btn,
+html.gpe-dark #gpe-picker-panel {
+    background: #232c3a;
+    border-color: #3c4a61;
+}
+html.gpe-dark #gpe-picker-btn:hover { background: #2c3645; }
+html.gpe-dark #gpe-picker-panel button:hover { background: #344056; }
+html.gpe-dark .gpe-toggle { color: #b9c2cf; }
+html.gpe-dark .gpe-toggle:has(input:disabled) { color: #5d6a7e; }

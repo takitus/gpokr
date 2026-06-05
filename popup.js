@@ -7,7 +7,11 @@
     const SETTINGS_KEY = "gpe_settings";
     const CARD_STORE_KEY = "gpe_card_images_v2";
     const SESSION_KEY = "gpe_session";
-    const TOGGLE_IDS = ["showOdds", "showStats", "shareHand", "localTest", "hotkeys"];
+    const TOGGLE_IDS = ["showOdds", "showStats", "darkMode", "shareHand", "localTest", "hotkeys"];
+
+    function applyPopupTheme() {
+        document.body.classList.toggle("dark", !!settings.darkMode);
+    }
 
     const $ = (id) => document.getElementById(id);
     const statusEl = $("status");
@@ -37,6 +41,7 @@
     chrome.storage.local.get([SETTINGS_KEY, CARD_STORE_KEY, SESSION_KEY], (res) => {
         settings = res[SETTINGS_KEY] || {};
         TOGGLE_IDS.forEach((id) => { $(id).checked = !!settings[id]; });
+        applyPopupTheme();
         renderBetRows();
         renderStore(res[CARD_STORE_KEY] || {});
         renderSession(res[SESSION_KEY]);
@@ -45,6 +50,7 @@
     TOGGLE_IDS.forEach((id) => {
         $(id).addEventListener("change", () => {
             TOGGLE_IDS.forEach((t) => { settings[t] = $(t).checked; });
+            applyPopupTheme();
             saveSettings();
         });
     });
@@ -189,6 +195,7 @@
         if (changes[SETTINGS_KEY]) {
             settings = changes[SETTINGS_KEY].newValue || {};
             TOGGLE_IDS.forEach((id) => { $(id).checked = !!settings[id]; });
+            applyPopupTheme();
             renderBetRows();
         }
         if (changes[SESSION_KEY]) renderSession(changes[SESSION_KEY].newValue);
