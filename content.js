@@ -91,7 +91,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip"
     ).forEach((el) => el.remove());
 
     // ---------- helpers: name -> avatar ----------
@@ -1169,9 +1169,13 @@
         oddsToggle.appendChild(oddsBox);
         oddsToggle.appendChild(document.createTextNode(" odds"));
 
-        input.insertAdjacentElement("afterend", btn);
-        btn.insertAdjacentElement("afterend", shareToggle);
-        shareToggle.insertAdjacentElement("afterend", oddsToggle);
+        // One tidy flex row under the chat input for all our controls.
+        const tools = document.createElement("div");
+        tools.id = "gpe-chat-tools";
+        tools.appendChild(btn);
+        tools.appendChild(shareToggle);
+        tools.appendChild(oddsToggle);
+        input.insertAdjacentElement("afterend", tools);
         syncShareToggleUI();
         syncOddsToggleUI();
         document.body.appendChild(panel);

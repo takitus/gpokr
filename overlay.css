@@ -61,7 +61,14 @@
     color: #c81818;
 }
 
-/* ---- Picker button next to the chat input ---- */
+/* ---- Chat tools row: emote picker + share-hand + odds, one aligned line ---- */
+#gpe-chat-tools {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+    line-height: 1;
+}
 #gpe-picker-btn {
     all: unset;
     box-sizing: border-box;
@@ -72,12 +79,10 @@
     font-size: 16px;
     line-height: 1;
     width: 28px;
-    height: 24px;
+    height: 22px;
     border: 1px solid #c9c9c9;
     background: #fff;
     border-radius: 6px;
-    margin-left: 6px;
-    vertical-align: middle;
 }
 #gpe-picker-btn:hover {
     background: #f0f0f0;
@@ -179,7 +184,7 @@
 /* ---- Per-player stats badge (VPIP/PFR (hands)) above each avatar ---- */
 .gpe-stat-badge {
     position: fixed;
-    z-index: 70;
+    z-index: 9; /* below GWT dialogs (z 10) so popups aren't overlapped */
     transform: translateY(-100%);
     background: rgba(255, 255, 255, 0.7);
     color: #444;
@@ -254,16 +259,17 @@
     background: #f0f0f0;
 }
 
-/* ---- Inline one-shot "share hand" checkbox (next to the chat input) ---- */
+/* ---- Inline toggles (share hand / odds) in the chat tools row ---- */
 .gpe-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font: 11px/1 Arial, sans-serif;
     color: #444;
-    margin-left: 6px;
-    vertical-align: middle;
     cursor: pointer;
     user-select: none;
 }
-.gpe-toggle input { vertical-align: middle; margin-right: 2px; }
+.gpe-toggle input { margin: 0; }
 /* grayed out while the popup's "always share" owns it */
 .gpe-toggle:has(input:disabled) {
     color: #aaa;
@@ -291,6 +297,9 @@
 }
 #gpe-bet-sizes { border-radius: 8px 8px 0 0; }
 #gpe-pot-sizes { border-radius: 0 0 8px 8px; }
+
+/* ---- Site layout fix: change-table dialog tiles are mis-sized upstream ---- */
+.iogc-ChangeTableDialog-tile { width: 264px !important; }
 .gpe-bet-col button {
     all: unset;
     box-sizing: border-box;

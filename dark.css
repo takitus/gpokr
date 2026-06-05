@@ -82,6 +82,20 @@ html.gpe-dark .iogc-SidePanel-title,
 html.gpe-dark a.iogc-SidePanel-title { color: #d2d8e2 !important; }
 html.gpe-dark .iogc-SidePanel-inner { color: #c3cad6; }
 html.gpe-dark .iogc-AvailableGamePanel-tile { background-color: #232c3a !important; }
+
+/* soften the site's bright #ccc divider lines (tile edges, table rows,
+   chat separator) */
+html.gpe-dark .iogc-AvailableGamePanel-tile,
+html.gpe-dark .seperator,
+html.gpe-dark tr {
+    border-bottom-color: rgb(255 255 255 / 20%) !important;
+}
+/* full borders, matching the sidebar tiles' soft dividers */
+html.gpe-dark .iogc-ChangeTableDialog-tile,
+html.gpe-dark .iogc-ChangeTableDialog-sectionHeader,
+html.gpe-dark .iogc-LoginPanel-playerRow {
+    border-color: rgb(255 255 255 / 20%) !important;
+}
 html.gpe-dark .iogc-AvailableGamePanel-tableName { color: #d2d8e2 !important; }
 html.gpe-dark .iogc-AvailableGamePanel-categoryBadge { color: #aab4c4 !important; }
 html.gpe-dark .iogc-tourny-odd { background-color: #1b222d !important; }
@@ -100,7 +114,38 @@ html.gpe-dark .iogc-SidePanel-inner { border-color: #39455a !important; }
 
 /* ---- dialogs ---- */
 html.gpe-dark .gwt-DialogBox { background-color: #1c2531 !important; }
-html.gpe-dark .iogc-DialogOuter { background-color: #1f2530 !important; color: #d2d8e2; }
+/* The inner content panel and everything inside it: near-black page-base
+   tone, darker than the frame so the black separator border still reads.
+   Excluded: the table tiles (card-colored) and native pill buttons. */
+html.gpe-dark .iogc-DialogOuter,
+html.gpe-dark .iogc-DialogOuter *:not(button.ui-button):not(.ui-button_content):not(.iogc-ChangeTableDialog-tile):not(.iogc-ChangeTableDialog-tile *) {
+    background-color: #161a22 !important;
+}
+html.gpe-dark .iogc-DialogOuter {
+    border-color: #000 !important;
+    color: #d2d8e2;
+}
+html.gpe-dark .gwt-DialogBox .Caption { color: #d2d8e2 !important; } /* dialog titles */
+
+/* classic gwt buttons inside dialogs (Go / Cancel on Move Table etc.) */
+html.gpe-dark .gwt-DialogBox button.gwt-Button {
+    background: #2a3342 !important;
+    color: #d2d8e2 !important;
+    border: 1px solid #45526b !important;
+    border-radius: 4px;
+}
+
+/* change-table dialog: list area one step lighter than the panel;
+   tiles sit on it as distinct cards */
+html.gpe-dark .iogc-ChangeTableDialog-scrollContainer { background-color: #1b222d !important; }
+html.gpe-dark .iogc-ChangeTableDialog-scrollContainer b { color: #d2d8e2 !important; } /* group headers */
+html.gpe-dark .iogc-ChangeTableDialog-tile {
+    background-color: #232c3a !important;
+    color: #d2d8e2 !important;
+}
+html.gpe-dark .iogc-ChangeTableDialog-tile-selected { background-color: #28455e !important; }
+html.gpe-dark .iogc-ChangeTableDialog-tile-inactive { color: #7a879b !important; }
+html.gpe-dark .iogc-ChangeTableDialog-stat { color: #aab4c4 !important; }
 
 /* ---- forms & buttons ---- */
 html.gpe-dark input[type="text"],
@@ -122,6 +167,48 @@ html.gpe-dark select {
 html.gpe-dark ::-webkit-scrollbar { width: 10px; height: 10px; }
 html.gpe-dark ::-webkit-scrollbar-track { background: #1a202a; }
 html.gpe-dark ::-webkit-scrollbar-thumb { background: #3a4658; border-radius: 5px; }
+
+/* ============================================================
+   Site pages outside the table: leaderboard, tournaments,
+   discussion/topics, profiles, stats
+   ============================================================ */
+
+/* getComputedStyle hides :visited styling (privacy), but the site's visited
+   color renders dark — pin visited links to the theme's link blue. */
+html.gpe-dark a:visited { color: #6fb1e8; }
+
+/* horizontal tab menu (This Month / Teams / ... on every static page) */
+html.gpe-dark .hmenu {
+    background-color: #1f2530 !important;
+    border-color: #39455a !important;
+}
+html.gpe-dark .hmenu .current { background-color: #2b3648 !important; }
+
+/* page + section headings */
+html.gpe-dark h1, html.gpe-dark h2, html.gpe-dark h3,
+html.gpe-dark h4, html.gpe-dark h5 { color: #aab8cc !important; }
+
+/* heading/label spans on static pages (June 2026, Chip Gainers Today, ranks).
+   :has() gate keeps this off the game page, where spans include button
+   labels and seat text that must keep their own colors. */
+html.gpe-dark #mainpage:not(:has(.iogc-GameWindow)) span { color: #c3cad6; }
+
+/* leaderboard Top-25 card */
+html.gpe-dark .summary { background-color: #1f2530 !important; color: #c3cad6 !important; }
+html.gpe-dark .summary td { color: #c3cad6; }
+
+/* zebra rows (discussion lists, stats tables) */
+html.gpe-dark .list-item.list-odd { background-color: #1b222d !important; }
+
+/* discussion topic comment headers */
+html.gpe-dark #mainpage .header { background-color: #1f2530 !important; }
+
+/* stats charts are white quickchart.io images: invert to dark, hue-rotate
+   flips the line color back to blue */
+html.gpe-dark img[src*="quickchart.io"] {
+    filter: invert(0.88) hue-rotate(180deg);
+    border-radius: 4px;
+}
 
 /* ============================================================
    Our own overlays, re-themed to match
