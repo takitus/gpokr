@@ -316,6 +316,15 @@ html.gpe-dark .gpe-toggle { color: #b9c2cf; }
 html.gpe-dark .gpe-toggle:has(input:disabled) { color: #5d6a7e; }
 
 /* side-panel tools tab */
+html.gpe-dark #gpe-roster { color: #b9c2cf; }
+html.gpe-dark .gpe-roster-group { color: #8a97ab; }
+html.gpe-dark .gpe-roster-group::after { background: rgba(255, 255, 255, 0.12); }
+html.gpe-dark .gpe-roster-count { color: #6e7c92; }
+html.gpe-dark .gpe-roster-empty { color: #5d6a7e; }
+html.gpe-dark .gpe-roster-row:hover { background: rgba(255, 255, 255, 0.06); }
+html.gpe-dark .gpe-follow-star { color: #5d6a7e; }
+html.gpe-dark .gpe-follow-star:hover,
+html.gpe-dark .gpe-follow-star.gpe-followed { color: #e8b339; }
 html.gpe-dark .gpe-side-tabs button { color: #8a97ab; }
 html.gpe-dark .gpe-side-tabs button:hover { background: rgba(255, 255, 255, 0.06); }
 html.gpe-dark .gpe-side-tabs button.gpe-active {

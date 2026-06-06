@@ -91,11 +91,12 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster"
     ).forEach((el) => el.remove());
-    // ...and un-hide the site's panel content if the old context left the
-    // tools tab active (the class survives but the tab bar above is gone).
-    document.querySelectorAll(".gpe-tools-active").forEach((el) => el.classList.remove("gpe-tools-active"));
+    // ...and un-hide the site's panel content if the old context left a
+    // non-site tab active (the class survives but the tab bar above is gone).
+    document.querySelectorAll(".gpe-tools-active, .gpe-tab-tools, .gpe-tab-roster").forEach((el) =>
+        el.classList.remove("gpe-tools-active", "gpe-tab-tools", "gpe-tab-roster"));
 
     // ---------- helpers: name -> avatar ----------
     function getSeatName(panel) {
@@ -651,12 +652,23 @@
     // ---------- incoming chat handling ----------
     function handleChatMessage(node) {
         const nameEl = node.querySelector("b");
-        if (!nameEl) return;
+        if (!nameEl) {
+            // Plain (no-sender) lines carry presence: "NAME is here" / "NAME has left".
+            const m = node.textContent.trim().match(/^(.+?) (is here|has left)$/);
+            if (m) notePresence(m[1].trim(), m[2] === "is here");
+            return;
+        }
         const name = nameEl.textContent.trim();
+        notePresence(name, true); // chatting proves presence
         const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
 
         const cards = decodeHand(text);
-        if (cards) { showHandForName(name, cards); return; }
+        if (cards) {
+            // Never render my own share back onto my avatar — I can already
+            // see my cards; the overlay is for everyone else at the table.
+            if (name !== getMyName()) showHandForName(name, cards);
+            return;
+        }
 
         const glyph = firstEmoteIn(text);
         if (glyph) showEmoteForName(name, glyph);
@@ -946,7 +958,7 @@
     // panel's content freely, so installation is idempotent and re-checked on
     // every poll, and the site's own children are hidden via CSS while "tools"
     // is active (moving GWT's nodes would fight its renderer).
-    let sideToolsActive = false;
+    let sideTab = "site"; // "site" | "tools" | "roster"
 
     // [checkbox id, label, settings key, current value]
     const SIDE_OPTIONS = [
@@ -966,14 +978,16 @@
         }
     }
 
+    const SIDE_TAB_ORDER = ["site", "tools", "roster"];
     function applySideTabState() {
         const inner = document.querySelector(".iogc-LoginPanel .iogc-SidePanel-inner");
         if (!inner) return;
-        inner.classList.toggle("gpe-tools-active", sideToolsActive);
+        inner.classList.toggle("gpe-tab-tools", sideTab === "tools");
+        inner.classList.toggle("gpe-tab-roster", sideTab === "roster");
         const tabs = inner.querySelector(":scope > .gpe-side-tabs");
         if (!tabs) return;
-        tabs.children[0].classList.toggle("gpe-active", !sideToolsActive);
-        tabs.children[1].classList.toggle("gpe-active", sideToolsActive);
+        Array.from(tabs.children).forEach((b, i) =>
+            b.classList.toggle("gpe-active", sideTab === SIDE_TAB_ORDER[i]));
     }
 
     function ensureSidePanelTabs() {
@@ -983,11 +997,11 @@
 
         const tabs = document.createElement("div");
         tabs.className = "gpe-side-tabs";
-        [["gpokr", false], ["tools", true]].forEach(([label, tools]) => {
+        [["gpokr", "site"], ["tools", "tools"], ["table", "roster"]].forEach(([label, tab]) => {
             const b = document.createElement("button");
             b.type = "button";
             b.textContent = label;
-            b.addEventListener("click", () => { sideToolsActive = tools; applySideTabState(); });
+            b.addEventListener("click", () => { sideTab = tab; applySideTabState(); });
             tabs.appendChild(b);
         });
 
@@ -1005,10 +1019,187 @@
             pane.appendChild(row);
         }
 
+        // "who's here" roster: its own tab pane
+        const rosterPane = document.createElement("div");
+        rosterPane.className = "gpe-side-roster";
+        const roster = document.createElement("div");
+        roster.id = "gpe-roster";
+        rosterPane.appendChild(roster);
+
         inner.prepend(tabs);
         inner.appendChild(pane);
+        inner.appendChild(rosterPane);
         syncSideOptionsUI();
         applySideTabState();
+        renderRoster();
+    }
+
+    // ---------- who's here roster ----------
+    // Seated players come from the seat panels; watcher NAMES are only ever
+    // revealed incrementally — "NAME is here / has left" chat events and chat
+    // messages — so the roster grows the longer you stay. The site's public
+    // table API gives the watcher COUNT, letting us say how many remain unseen
+    // (lurkers who arrived before we did have no other footprint).
+    const presentNames = new Map(); // name -> last seen (ms)
+    let rosterTable = "";           // table the presence map belongs to
+    let viewerInfo = { table: "", count: -1, fetchedAt: 0 };
+
+    function notePresence(name, present) {
+        if (!name) return;
+        if (present) presentNames.set(name, Date.now());
+        else presentNames.delete(name);
+    }
+
+    function currentTableName() {
+        const el = document.querySelector(".iogc-GameWindow .title");
+        return el && el.getBoundingClientRect().width > 0 ? el.textContent.trim() : "";
+    }
+
+    function seatedNames() {
+        const names = new Set();
+        document.querySelectorAll(".iogc-PlayerPanel-name").forEach((n) => {
+            const t = n.textContent.trim();
+            if (t && n.getBoundingClientRect().width > 0) names.add(t);
+        });
+        return names;
+    }
+
+    // The watcher count for this table, from the site's own public JSON API
+    // (the same data the lobby's eye icons show). Polled at most every 30s and
+    // only while the tools tab is open. Tournament tables may not be listed.
+    function refreshViewerCount() {
+        const table = rosterTable;
+        if (!table) return;
+        if (viewerInfo.table === table && Date.now() - viewerInfo.fetchedAt < 30000) return;
+        viewerInfo = { table, count: -1, fetchedAt: Date.now() }; // rate-limits failures too
+        fetch("/api/gpokr/tables", { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+                if (!data || rosterTable !== table) return;
+                const t = (data.tables || []).find((x) => x.name === table);
+                if (t) { viewerInfo.count = t.viewerCount; renderRoster(); }
+            })
+            .catch(() => {});
+    }
+
+    function trackRoster() {
+        const table = currentTableName();
+        if (table !== rosterTable) {
+            rosterTable = table;
+            presentNames.clear();
+            // Seed from whatever the chat panel already holds (in order, so a
+            // later "has left" cancels an earlier "is here").
+            document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML").forEach((e) => {
+                const b = e.querySelector("b");
+                if (b) { notePresence(b.textContent.trim(), true); return; }
+                const m = e.textContent.trim().match(/^(.+?) (is here|has left)$/);
+                if (m) notePresence(m[1].trim(), m[2] === "is here");
+            });
+        }
+        if (sideTab === "roster") { refreshViewerCount(); refreshFollowing(false); }
+        renderRoster();
+    }
+
+    // ---------- follow / unfollow (the site's "watch someone") ----------
+    // Same API the site's Preferences > Following tab uses:
+    //   GET  /api/gpokr/me/following            -> ["name", ...]
+    //   POST /api/gpokr/user/{name}/following   body true|false
+    let followingSet = new Set();
+    let followingFetchedAt = 0;
+
+    function forceRosterRender() {
+        const box = document.getElementById("gpe-roster");
+        if (box) box._gpeKey = "";
+        renderRoster();
+    }
+
+    function refreshFollowing(force) {
+        if (!force && Date.now() - followingFetchedAt < 30000) return;
+        followingFetchedAt = Date.now();
+        fetch("/api/gpokr/me/following", { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((names) => {
+                if (!Array.isArray(names)) return;
+                followingSet = new Set(names);
+                forceRosterRender();
+            })
+            .catch(() => {});
+    }
+
+    function setFollowing(name, follow) {
+        if (follow) followingSet.add(name); else followingSet.delete(name); // optimistic
+        forceRosterRender();
+        fetch("/api/gpokr/user/" + encodeURIComponent(name) + "/following", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(!!follow),
+        }).then(() => refreshFollowing(true), () => refreshFollowing(true)); // confirm either way
+    }
+
+    function renderRoster() {
+        const box = document.getElementById("gpe-roster");
+        if (!box) return;
+        const seated = seatedNames();
+        const me = getMyName();
+        if (me) notePresence(me, true); // I'm certainly here
+        const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base" });
+        const playing = Array.from(seated).sort(byName);
+        const watching = Array.from(presentNames.keys())
+            .filter((n) => !seated.has(n))
+            .sort(byName);
+
+        let unseen = -1;
+        if (viewerInfo.table === rosterTable && viewerInfo.count >= 0) {
+            unseen = Math.max(0, viewerInfo.count - watching.length);
+        }
+
+        // Skip the DOM churn when nothing changed (stars included).
+        const key = rosterTable + "|" + playing.join(",") + "|" + watching.join(",") + "|" + unseen +
+            "|" + playing.concat(watching).map((n) => (followingSet.has(n) ? 1 : 0)).join("");
+        if (box._gpeKey === key) return;
+        box._gpeKey = key;
+
+        box.textContent = "";
+        if (!rosterTable) { box.textContent = "not at a table"; return; }
+        const group = (label, count, names) => {
+            const head = document.createElement("div");
+            head.className = "gpe-roster-group";
+            const lbl = document.createElement("span");
+            lbl.textContent = label;
+            const cnt = document.createElement("span");
+            cnt.className = "gpe-roster-count";
+            cnt.textContent = count;
+            head.appendChild(lbl);
+            head.appendChild(cnt);
+            box.appendChild(head);
+            if (!names.length) {
+                const empty = document.createElement("div");
+                empty.className = "gpe-roster-empty";
+                empty.textContent = "no one";
+                box.appendChild(empty);
+                return;
+            }
+            for (const n of names) {
+                const row = document.createElement("div");
+                row.className = "gpe-roster-row";
+                const followed = followingSet.has(n);
+                const star = document.createElement("button");
+                star.type = "button";
+                star.className = "gpe-follow-star" + (followed ? " gpe-followed" : "");
+                star.textContent = followed ? "★" : "☆";
+                star.title = (followed ? "unfollow " : "follow ") + n;
+                star.addEventListener("click", () => setFollowing(n, !followingSet.has(n)));
+                const span = document.createElement("span");
+                span.className = "gpe-roster-name";
+                span.textContent = n;
+                row.appendChild(star);
+                row.appendChild(span);
+                box.appendChild(row);
+            }
+        };
+        group("playing", String(playing.length), playing);
+        group("watching", watching.length + (unseen > 0 ? " +" + unseen + " unseen" : ""), watching);
     }
 
     function pollHandState() {
@@ -1017,6 +1208,7 @@
         learnShowdownCards();
         updateOddsHud();
         addBetSizeButtons();
+        trackRoster();
 
         const ended = handHasEnded();
         if (!ended && lastEnded) { sharedThisHand = false; harvestedThisHand = false; } // new hand began -> reset guards
