@@ -259,6 +259,46 @@
     background: #f0f0f0;
 }
 
+/* ---- Side-panel tools tab (team/level panel gains a second tab) ---- */
+.gpe-side-tabs {
+    display: flex;
+    gap: 2px;
+    /* stretch through the panel's 5px padding so the tabs sit flush with its
+       top edge; their 8px top radius then matches the panel's own corners */
+    margin: -5px -5px 6px;
+}
+.gpe-side-tabs button {
+    all: unset;
+    box-sizing: border-box;
+    flex: 1;
+    text-align: center;
+    cursor: pointer;
+    font: 11px/1 Arial, sans-serif;
+    padding: 5px 0;
+    color: #667;
+    border-bottom: 2px solid transparent;
+    border-radius: 8px 8px 0 0;
+}
+.gpe-side-tabs button:hover { background: rgba(0, 0, 0, 0.05); }
+.gpe-side-tabs button.gpe-active {
+    color: #223;
+    font-weight: bold;
+    border-bottom-color: #4c9aff;
+}
+/* While "tools" is active, hide the site's own panel content. CSS-only:
+   moving or removing GWT's nodes would fight its renderer. */
+.iogc-SidePanel-inner.gpe-tools-active > :not(.gpe-side-tabs):not(.gpe-side-options) {
+    display: none !important;
+}
+.gpe-side-options { display: none; }
+.iogc-SidePanel-inner.gpe-tools-active > .gpe-side-options { display: block; }
+/* one option per row (outranks .gpe-toggle's inline-flex, defined below) */
+.gpe-side-options .gpe-side-option {
+    display: flex;
+    margin: 0 0 8px;
+    font: 12px/1.2 Arial, sans-serif;
+}
+
 /* ---- Inline toggles (share hand / odds) in the chat tools row ---- */
 .gpe-toggle {
     display: inline-flex;

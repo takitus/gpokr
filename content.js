@@ -59,7 +59,7 @@
             rebuildBetColumns();
         }
         syncShareToggleUI();
-        syncOddsToggleUI();
+        syncSideOptionsUI();
     }
 
     // Persist a single setting without clobbering the others; the popup picks
@@ -91,8 +91,11 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options"
     ).forEach((el) => el.remove());
+    // ...and un-hide the site's panel content if the old context left the
+    // tools tab active (the class survives but the tab bar above is gone).
+    document.querySelectorAll(".gpe-tools-active").forEach((el) => el.classList.remove("gpe-tools-active"));
 
     // ---------- helpers: name -> avatar ----------
     function getSeatName(panel) {
@@ -937,10 +940,75 @@
         box.checked = SHARE_HAND ? true : shareNextHand;
     }
 
-    // Inline "odds" box mirrors the persistent setting (same one as the popup).
-    function syncOddsToggleUI() {
-        const box = document.getElementById("gpe-show-odds");
-        if (box) box.checked = SHOW_ODDS;
+    // ---------- UI: side-panel tools tab ----------
+    // The sidebar panel (team / level / money refill) becomes a two-tab panel;
+    // the second tab holds the plugin's quick options. GWT re-renders the
+    // panel's content freely, so installation is idempotent and re-checked on
+    // every poll, and the site's own children are hidden via CSS while "tools"
+    // is active (moving GWT's nodes would fight its renderer).
+    let sideToolsActive = false;
+
+    // [checkbox id, label, settings key, current value]
+    const SIDE_OPTIONS = [
+        ["gpe-show-odds", "odds HUD", "showOdds", () => SHOW_ODDS],
+        ["gpe-show-stats", "player stats", "showStats", () => SHOW_STATS],
+        ["gpe-dark-mode", "dark mode", "darkMode", () => DARK_MODE],
+        ["gpe-always-share", "always show cards", "shareHand", () => SHARE_HAND],
+        ["gpe-hotkeys", "keyboard shortcuts", "hotkeys", () => HOTKEYS],
+    ];
+
+    // Panel checkboxes mirror the persistent settings (same ones as the popup);
+    // either UI updates the other through chrome.storage.
+    function syncSideOptionsUI() {
+        for (const [id, , , current] of SIDE_OPTIONS) {
+            const box = document.getElementById(id);
+            if (box) box.checked = current();
+        }
+    }
+
+    function applySideTabState() {
+        const inner = document.querySelector(".iogc-LoginPanel .iogc-SidePanel-inner");
+        if (!inner) return;
+        inner.classList.toggle("gpe-tools-active", sideToolsActive);
+        const tabs = inner.querySelector(":scope > .gpe-side-tabs");
+        if (!tabs) return;
+        tabs.children[0].classList.toggle("gpe-active", !sideToolsActive);
+        tabs.children[1].classList.toggle("gpe-active", sideToolsActive);
+    }
+
+    function ensureSidePanelTabs() {
+        const inner = document.querySelector(".iogc-LoginPanel .iogc-SidePanel-inner");
+        if (!inner) return;
+        if (inner.querySelector(":scope > .gpe-side-tabs")) { applySideTabState(); return; }
+
+        const tabs = document.createElement("div");
+        tabs.className = "gpe-side-tabs";
+        [["gpokr", false], ["tools", true]].forEach(([label, tools]) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.textContent = label;
+            b.addEventListener("click", () => { sideToolsActive = tools; applySideTabState(); });
+            tabs.appendChild(b);
+        });
+
+        const pane = document.createElement("div");
+        pane.className = "gpe-side-options";
+        for (const [id, label, key] of SIDE_OPTIONS) {
+            const row = document.createElement("label");
+            row.className = "gpe-toggle gpe-side-option";
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.id = id;
+            box.addEventListener("change", () => saveSetting(key, box.checked));
+            row.appendChild(box);
+            row.appendChild(document.createTextNode(" " + label));
+            pane.appendChild(row);
+        }
+
+        inner.prepend(tabs);
+        inner.appendChild(pane);
+        syncSideOptionsUI();
+        applySideTabState();
     }
 
     function pollHandState() {
@@ -1154,30 +1222,14 @@
         shareToggle.appendChild(shareBox);
         shareToggle.appendChild(document.createTextNode(" share hand"));
 
-        // Inline "odds" HUD toggle — same persistent setting as the popup's
-        // checkbox; either one updates the other through chrome.storage.
-        const oddsToggle = document.createElement("label");
-        oddsToggle.className = "gpe-toggle";
-        const oddsBox = document.createElement("input");
-        oddsBox.type = "checkbox";
-        oddsBox.id = "gpe-show-odds";
-        oddsBox.addEventListener("change", () => {
-            SHOW_ODDS = oddsBox.checked;
-            saveSetting("showOdds", oddsBox.checked);
-            updateOddsHud();
-        });
-        oddsToggle.appendChild(oddsBox);
-        oddsToggle.appendChild(document.createTextNode(" odds"));
-
         // One tidy flex row under the chat input for all our controls.
+        // (The "odds" toggle moved up to the side panel's tools tab.)
         const tools = document.createElement("div");
         tools.id = "gpe-chat-tools";
         tools.appendChild(btn);
         tools.appendChild(shareToggle);
-        tools.appendChild(oddsToggle);
         input.insertAdjacentElement("afterend", tools);
         syncShareToggleUI();
-        syncOddsToggleUI();
         document.body.appendChild(panel);
     }
 
@@ -1212,9 +1264,10 @@
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();
+        ensureSidePanelTabs();
         if (ready) {
             clearInterval(boot);
-            setInterval(() => { watchChat(); addPicker(); pollHandState(); }, 1500);
+            setInterval(() => { watchChat(); addPicker(); ensureSidePanelTabs(); pollHandState(); }, 1500);
         }
     }, 800);
 })();
