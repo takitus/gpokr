@@ -130,7 +130,7 @@ html.gpe-dark .iogc-SidePanel-inner { border-color: #39455a !important; }
 /* ---- dialogs ---- */
 html.gpe-dark .gwt-DialogBox {
     background-color: #1c2531 !important;
-    box-shadow: 1px 1px 0px 0px rgba(255,255,255,0.1) inset, -1px -1px 0px 0px rgba(0,0,0,.125) inset;
+    box-shadow: 1px 1px 0px 0px rgba(255,255,255,0.1) inset, -1px -1px 0px 0px rgba(0,0,0,.125) inset !important;
 }
 /* The inner content panel and everything inside it: near-black page-base
    tone, darker than the frame so the black separator border still reads.
@@ -314,3 +314,20 @@ html.gpe-dark #gpe-picker-btn:hover { background: #2c3645; }
 html.gpe-dark #gpe-picker-panel button:hover { background: #344056; }
 html.gpe-dark .gpe-toggle { color: #b9c2cf; }
 html.gpe-dark .gpe-toggle:has(input:disabled) { color: #5d6a7e; }
+
+/* side-panel tools tab */
+html.gpe-dark #gpe-roster { color: #b9c2cf; }
+html.gpe-dark .gpe-roster-group { color: #8a97ab; }
+html.gpe-dark .gpe-roster-group::after { background: rgba(255, 255, 255, 0.12); }
+html.gpe-dark .gpe-roster-count { color: #6e7c92; }
+html.gpe-dark .gpe-roster-empty { color: #5d6a7e; }
+html.gpe-dark .gpe-roster-row:hover { background: rgba(255, 255, 255, 0.06); }
+html.gpe-dark .gpe-follow-star { color: #5d6a7e; }
+html.gpe-dark .gpe-follow-star:hover,
+html.gpe-dark .gpe-follow-star.gpe-followed { color: #e8b339; }
+html.gpe-dark .gpe-side-tabs button { color: #8a97ab; }
+html.gpe-dark .gpe-side-tabs button:hover { background: rgba(255, 255, 255, 0.06); }
+html.gpe-dark .gpe-side-tabs button.gpe-active {
+    color: #e6ebf2;
+    border-bottom-color: #6fb1e8;
+}

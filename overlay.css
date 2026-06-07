@@ -259,6 +259,105 @@
     background: #f0f0f0;
 }
 
+/* ---- Side-panel tools tab (team/level panel gains a second tab) ---- */
+.gpe-side-tabs {
+    display: flex;
+    gap: 2px;
+    /* stretch through the panel's 5px padding so the tabs sit flush with its
+       top edge; their 8px top radius then matches the panel's own corners */
+    margin: -5px -5px 6px;
+}
+.gpe-side-tabs button {
+    all: unset;
+    box-sizing: border-box;
+    flex: 1;
+    text-align: center;
+    cursor: pointer;
+    font: 11px/1 Arial, sans-serif;
+    padding: 5px 0;
+    color: #667;
+    border-bottom: 2px solid transparent;
+    border-radius: 8px 8px 0 0;
+}
+.gpe-side-tabs button:hover { background: rgba(0, 0, 0, 0.05); }
+.gpe-side-tabs button.gpe-active {
+    color: #223;
+    font-weight: bold;
+    border-bottom-color: #4c9aff;
+}
+/* While a plugin tab is active, hide the site's own panel content. CSS-only:
+   moving or removing GWT's nodes would fight its renderer. */
+.iogc-SidePanel-inner.gpe-tab-tools > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster),
+.iogc-SidePanel-inner.gpe-tab-roster > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster) {
+    display: none !important;
+}
+.gpe-side-options,
+.gpe-side-roster { display: none; }
+.iogc-SidePanel-inner.gpe-tab-tools > .gpe-side-options { display: block; }
+.iogc-SidePanel-inner.gpe-tab-roster > .gpe-side-roster { display: block; }
+/* one option per row (outranks .gpe-toggle's inline-flex, defined below) */
+.gpe-side-options .gpe-side-option {
+    display: flex;
+    margin: 0 0 8px;
+    font: 12px/1.2 Arial, sans-serif;
+}
+/* "who's here" roster (its own tab) */
+#gpe-roster {
+    font: 10px/1.5 Arial, sans-serif;
+    color: #444;
+    overflow-wrap: anywhere;
+    max-height: 320px;
+    overflow-y: auto;
+}
+/* section header: small caps label, count, hairline filling the rest */
+.gpe-roster-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0 4px;
+    font: bold 9px/1 Arial, sans-serif;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #778;
+}
+.gpe-roster-group:first-child { margin-top: 2px; }
+.gpe-roster-count {
+    font-weight: normal;
+    letter-spacing: normal;
+    text-transform: none;
+    color: #99a;
+}
+.gpe-roster-group::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: rgba(0, 0, 0, 0.14);
+}
+.gpe-roster-empty {
+    color: #9aa3af;
+    font: italic 10px/1.5 Arial, sans-serif; /* explicit: the site's own div rule outranks inheritance */
+    padding: 1px 2px;
+}
+.gpe-roster-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 3px;
+    border-radius: 4px;
+}
+.gpe-roster-row:hover { background: rgba(0, 0, 0, 0.05); }
+.gpe-roster-name { font-size: 10px; }
+/* follow star: the site's "watch someone", one click from the roster */
+.gpe-follow-star {
+    all: unset;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    color: #b6bdc6;
+}
+.gpe-follow-star:hover { color: #e8b339; }
+.gpe-follow-star.gpe-followed { color: #e8b339; }
+
 /* ---- Inline toggles (share hand / odds) in the chat tools row ---- */
 .gpe-toggle {
     display: inline-flex;
@@ -300,7 +399,13 @@
 
 /* ---- Site layout fix: change-table dialog tiles are mis-sized upstream ---- */
 .iogc-ChangeTableDialog-tile { width: 264px !important; }
-
+.iogc-PlayerPanel-avatar { border-radius: 4px !important; }
+.iogc-GamePanel {
+    border-radius: 4px;
+    padding: 2px;
+}
+.iogc-GamePanel span, .iogc-GamePanel a { padding: 0 2px; }
+.gwt-HTML { border-radius: 2px; }
 .iogc-GameWindow-container, .gwt-DialogBox { box-shadow: 1px 1px 0px 0px rgba(255,255,255,1) inset, -1px -1px 0px 0px rgba(0,0,0,.125) inset !important; }
 .ui-button_content { box-shadow: 1px 1px 0 0 rgba(255,255,255,1) inset, -1px -1px 0 0 rgba(0,0,0,.25) inset; }
 .iogc-GameWindow-table { box-shadow: rgba(0, 0, 0, 0.125) 0px -4px 8px 0px inset !important; }
@@ -311,7 +416,7 @@
     -moz-border-radius: 0px !important;
     padding: 0 0 0 5px !important;
 }
-.iogc-MessagesPanel{
+.iogc-MessagesPanel {
     background-color: rgb(255,255,255) !important;
 }
 .iogc-MessagePanel-messages {
