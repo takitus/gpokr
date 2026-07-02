@@ -66,11 +66,15 @@
     // the change up via chrome.storage.onChanged (and vice versa).
     function saveSetting(key, value) {
         if (EXT_STORE) {
-            EXT_STORE.get(["gpe_settings"], (res) => {
-                const s = res.gpe_settings || {};
-                s[key] = value;
-                EXT_STORE.set({ gpe_settings: s });
-            });
+            // try/catch: an orphaned context (extension updated while the tab
+            // stayed open) throws "context invalidated" on any storage call.
+            try {
+                EXT_STORE.get(["gpe_settings"], (res) => {
+                    const s = res.gpe_settings || {};
+                    s[key] = value;
+                    try { EXT_STORE.set({ gpe_settings: s }); } catch (e) {}
+                });
+            } catch (e) {}
         } else {
             const legacyKeys = { localTest: "gpe_local_test", shareHand: "gpe_share_hand", showOdds: "gpe_show_odds" };
             try { localStorage.setItem(legacyKeys[key], value ? "1" : "0"); } catch (e) {}
@@ -711,12 +715,16 @@
     function recordSessionPoint() {
         const stack = myStack();
         if (!stack || !EXT_STORE) return; // not seated / no extension storage
-        EXT_STORE.get([SESSION_KEY], (res) => {
-            const s = res[SESSION_KEY] || { startedAt: Date.now(), points: [] };
-            s.points.push(stack);
-            if (s.points.length > SESSION_MAX_POINTS) s.points = s.points.slice(-SESSION_MAX_POINTS);
-            try { EXT_STORE.set({ [SESSION_KEY]: s }); } catch (e) {}
-        });
+        // try/catch: orphaned contexts (extension updated under an open tab)
+        // throw "context invalidated" here on their next poll.
+        try {
+            EXT_STORE.get([SESSION_KEY], (res) => {
+                const s = res[SESSION_KEY] || { startedAt: Date.now(), points: [] };
+                s.points.push(stack);
+                if (s.points.length > SESSION_MAX_POINTS) s.points = s.points.slice(-SESSION_MAX_POINTS);
+                try { EXT_STORE.set({ [SESSION_KEY]: s }); } catch (e) {}
+            });
+        } catch (e) {}
     }
 
     function updatePlayerStats(lines) {
@@ -1042,7 +1050,10 @@
     // (lurkers who arrived before we did have no other footprint).
     const presentNames = new Map(); // name -> last seen (ms)
     let rosterTable = "";           // table the presence map belongs to
-    let viewerInfo = { table: "", count: -1, fetchedAt: 0 };
+    // listed: null = not fetched yet, true = found in public table list (count
+    // is authoritative), false = fetched but absent (tournament/SNG tables are
+    // not in /api/gpokr/tables, so their viewer total can't be verified).
+    let viewerInfo = { table: "", count: -1, listed: null, fetchedAt: 0 };
 
     function notePresence(name, present) {
         if (!name) return;
@@ -1053,6 +1064,20 @@
     function currentTableName() {
         const el = document.querySelector(".iogc-GameWindow .title");
         return el && el.getBoundingClientRect().width > 0 ? el.textContent.trim() : "";
+    }
+
+    // Name -> profile href, harvested from every profile link the page shows
+    // (seat panels, leaderboard, following lists...). Profiles are keyed by
+    // numeric id — there's no name-based URL — so watchers who never appear in
+    // any list stay unlinked. Refreshed each render (cheap querySelectorAll).
+    function profileLinks() {
+        const map = {};
+        document.querySelectorAll('a[href*="/profile/"]').forEach((a) => {
+            const name = a.textContent.trim();
+            const href = a.getAttribute("href");
+            if (name && href && !map[name]) map[name] = href;
+        });
+        return map;
     }
 
     function seatedNames() {
@@ -1071,34 +1096,55 @@
         const table = rosterTable;
         if (!table) return;
         if (viewerInfo.table === table && Date.now() - viewerInfo.fetchedAt < 30000) return;
-        viewerInfo = { table, count: -1, fetchedAt: Date.now() }; // rate-limits failures too
+        viewerInfo = { table, count: -1, listed: null, fetchedAt: Date.now() }; // rate-limits failures too
         fetch("/api/gpokr/tables", { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
             .then((data) => {
                 if (!data || rosterTable !== table) return;
                 const t = (data.tables || []).find((x) => x.name === table);
-                if (t) { viewerInfo.count = t.viewerCount; renderRoster(); }
+                if (t) { viewerInfo.count = t.viewerCount; viewerInfo.listed = true; }
+                else { viewerInfo.listed = false; } // tournament/SNG: count not exposed
+                renderRoster();
             })
             .catch(() => {});
     }
 
     function trackRoster() {
         const table = currentTableName();
-        if (table !== rosterTable) {
+        // Ignore transient empty titles (they blank out between hands) — only
+        // react to a real, changed table name.
+        if (table && table !== rosterTable) {
+            const firstSight = rosterTable === "";
             rosterTable = table;
             presentNames.clear();
-            // Seed from whatever the chat panel already holds (in order, so a
-            // later "has left" cancels an earlier "is here").
-            document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML").forEach((e) => {
-                const b = e.querySelector("b");
-                if (b) { notePresence(b.textContent.trim(), true); return; }
-                const m = e.textContent.trim().match(/^(.+?) (is here|has left)$/);
-                if (m) notePresence(m[1].trim(), m[2] === "is here");
-            });
+            viewerInfo = { table: "", count: -1, listed: null, fetchedAt: 0 }; // re-verify for the new table
+            // Seed presence from the chat panel ONLY on the first sighting (a
+            // fresh page load, where the panel holds this table's history). On
+            // an in-session anchor switch GWT keeps the *previous* table's chat
+            // in the same panel, so seeding there would carry stale watchers
+            // over (the reported bug) — start empty and let live "is here" /
+            // "has left" events refill it.
+            if (firstSight) {
+                document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML").forEach((e) => {
+                    const b = e.querySelector("b");
+                    if (b) { notePresence(b.textContent.trim(), true); return; }
+                    const m = e.textContent.trim().match(/^(.+?) (is here|has left)$/);
+                    if (m) notePresence(m[1].trim(), m[2] === "is here");
+                });
+            }
         }
         if (sideTab === "roster") { refreshViewerCount(); refreshFollowing(false); }
         renderRoster();
     }
+
+    // Anchor-based table switches don't reload the page, so reset roster
+    // presence the instant the hash changes rather than waiting for the next
+    // poll; trackRoster then picks up the new table name and re-verifies count.
+    window.addEventListener("hashchange", () => {
+        presentNames.clear();
+        viewerInfo = { table: "", count: -1, listed: null, fetchedAt: 0 };
+        forceRosterRender();
+    });
 
     // ---------- follow / unfollow (the site's "watch someone") ----------
     // Same API the site's Preferences > Following tab uses:
@@ -1149,20 +1195,23 @@
             .filter((n) => !seated.has(n))
             .sort(byName);
 
-        let unseen = -1;
-        if (viewerInfo.table === rosterTable && viewerInfo.count >= 0) {
-            unseen = Math.max(0, viewerInfo.count - watching.length);
-        }
+        // Watcher total: authoritative when the table is in the public list,
+        // otherwise unverifiable (tournament/SNG) — we then show only observed.
+        const verified = viewerInfo.table === rosterTable && viewerInfo.listed === true && viewerInfo.count >= 0;
+        const unverifiable = viewerInfo.table === rosterTable && viewerInfo.listed === false;
+        const unknownCount = verified ? Math.max(0, viewerInfo.count - watching.length) : 0;
+        const links = profileLinks();
 
-        // Skip the DOM churn when nothing changed (stars included).
-        const key = rosterTable + "|" + playing.join(",") + "|" + watching.join(",") + "|" + unseen +
-            "|" + playing.concat(watching).map((n) => (followingSet.has(n) ? 1 : 0)).join("");
+        // Skip the DOM churn when nothing changed (stars + linked-state included).
+        const key = rosterTable + "|" + playing.join(",") + "|" + watching.join(",") +
+            "|" + unknownCount + "|" + verified + "|" + unverifiable +
+            "|" + playing.concat(watching).map((n) => (followingSet.has(n) ? 1 : 0) + (links[n] ? "L" : "")).join();
         if (box._gpeKey === key) return;
         box._gpeKey = key;
 
         box.textContent = "";
         if (!rosterTable) { box.textContent = "not at a table"; return; }
-        const group = (label, count, names) => {
+        const group = (label, count, names, unknownCount, note) => {
             const head = document.createElement("div");
             head.className = "gpe-roster-group";
             const lbl = document.createElement("span");
@@ -1173,7 +1222,7 @@
             head.appendChild(lbl);
             head.appendChild(cnt);
             box.appendChild(head);
-            if (!names.length) {
+            if (!names.length && !unknownCount && !note) {
                 const empty = document.createElement("div");
                 empty.className = "gpe-roster-empty";
                 empty.textContent = "no one";
@@ -1190,16 +1239,48 @@
                 star.textContent = followed ? "★" : "☆";
                 star.title = (followed ? "unfollow " : "follow ") + n;
                 star.addEventListener("click", () => setFollowing(n, !followingSet.has(n)));
-                const span = document.createElement("span");
-                span.className = "gpe-roster-name";
-                span.textContent = n;
+                // Name links to the player's profile when the page has exposed
+                // their id; opens in a new tab so the table isn't navigated away.
+                let nameEl;
+                if (links[n]) {
+                    nameEl = document.createElement("a");
+                    nameEl.href = links[n];
+                    nameEl.target = "_blank";
+                    nameEl.rel = "noopener";
+                    nameEl.title = "view " + n + "'s profile";
+                } else {
+                    nameEl = document.createElement("span");
+                }
+                nameEl.className = "gpe-roster-name";
+                nameEl.textContent = n;
                 row.appendChild(star);
-                row.appendChild(span);
+                row.appendChild(nameEl);
                 box.appendChild(row);
             }
+            // Watchers the API count proves exist but who left no named
+            // footprint (arrived before we did, never spoke).
+            if (unknownCount > 0) {
+                const row = document.createElement("div");
+                row.className = "gpe-roster-row gpe-roster-empty";
+                row.textContent = "unknown (" + unknownCount + ")";
+                box.appendChild(row);
+            }
+            // Tournament/SNG tables aren't in the public count API, so the
+            // watcher total can't be verified — say so rather than imply it's
+            // complete (lurkers who arrived before us leave no trace).
+            if (note) {
+                const n = document.createElement("div");
+                n.className = "gpe-roster-note";
+                n.textContent = note;
+                box.appendChild(n);
+            }
         };
+        // Watching header: verified total (named + unknown) when listed; else
+        // just the observed names, flagged as a partial count.
+        const watchTotal = verified ? watching.length + unknownCount : watching.length;
         group("playing", String(playing.length), playing);
-        group("watching", watching.length + (unseen > 0 ? " +" + unseen + " unseen" : ""), watching);
+        group("watching", String(watchTotal), watching, unknownCount,
+            unverifiable ? "observed only — total not shown for tournaments" : "");
     }
 
     function pollHandState() {

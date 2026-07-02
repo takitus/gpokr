@@ -338,6 +338,11 @@
     font: italic 10px/1.5 Arial, sans-serif; /* explicit: the site's own div rule outranks inheritance */
     padding: 1px 2px;
 }
+.gpe-roster-note {
+    color: #9aa3af;
+    font: italic 9px/1.4 Arial, sans-serif;
+    padding: 1px 2px;
+}
 .gpe-roster-row {
     display: flex;
     align-items: center;
@@ -347,6 +352,13 @@
 }
 .gpe-roster-row:hover { background: rgba(0, 0, 0, 0.05); }
 .gpe-roster-name { font-size: 10px; }
+/* keep the roster's own text color; only hint the link on hover */
+a.gpe-roster-name {
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+a.gpe-roster-name:hover { text-decoration: underline; }
 /* follow star: the site's "watch someone", one click from the roster */
 .gpe-follow-star {
     all: unset;
