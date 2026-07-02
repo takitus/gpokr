@@ -298,8 +298,153 @@
 /* one option per row (outranks .gpe-toggle's inline-flex, defined below) */
 .gpe-side-options .gpe-side-option {
     display: flex;
+    align-items: center;
     margin: 0 0 8px;
     font: 12px/1.2 Arial, sans-serif;
+}
+/* hover-for-help info icon (ⓘ) next to an option label */
+.gpe-side-options .gpe-info {
+    margin-left: 4px;
+    color: #888;
+    cursor: help;
+    font-size: 12px;
+}
+.gpe-side-options .gpe-info:hover { color: #4c9aff; }
+/* inline "edit" button on the bet-buttons option row */
+.gpe-side-options .gpe-side-edit {
+    margin-left: auto;
+    font: 11px/1 Arial, sans-serif;
+    padding: 2px 8px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    color: #333;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.gpe-side-options .gpe-side-edit:hover { background: #f0f0f0; }
+
+/* ---- in-page bet-button editor modal ---- */
+.gpe-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483646;
+    background: rgba(0, 0, 0, 0.45);
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+.gpe-modal {
+    background: #fff;
+    color: #222;
+    width: 300px;
+    max-width: 92vw;
+    padding: 14px;
+    border-radius: 8px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    font: 13px/1.4 Arial, sans-serif;
+}
+.gpe-modal-head {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.gpe-modal-head button {
+    margin-left: auto;
+    border: none;
+    background: none;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    color: #888;
+}
+.gpe-bet-erow {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    margin: 4px 0;
+}
+.gpe-bet-erow .gpe-drag {
+    cursor: grab;
+    color: #aaa;
+    user-select: none;
+    font-size: 12px;
+}
+.gpe-bet-erow.gpe-dragging { opacity: 0.45; }
+.gpe-bet-erow.gpe-dragover { box-shadow: 0 -2px 0 0 #4c9aff; } /* insertion line above */
+.gpe-bet-erow input[type=number] {
+    width: 52px;
+    box-sizing: border-box;
+    padding: 2px 4px;
+    border: 1px solid #c9c9c9;
+    border-radius: 4px;
+}
+.gpe-bet-erow select {
+    flex: 1;
+    padding: 2px;
+    border: 1px solid #c9c9c9;
+    border-radius: 4px;
+    background: #fff;
+}
+.gpe-bet-erow .gpe-del {
+    border: none;
+    background: none;
+    color: #b33;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 3px;
+}
+#gpe-bet-add {
+    width: 100%;
+    margin-top: 6px;
+    padding: 4px 0;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font: 12px Arial, sans-serif;
+}
+#gpe-bet-add:hover { background: #f0f0f0; }
+.gpe-modal-hint { font-size: 11px; color: #888; margin-top: 8px; }
+
+/* "extension updated, reload" notice for orphaned tabs */
+#gpe-reload-banner {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2147483647;
+    background: #b3402e;
+    color: #fff;
+    font: 12px/1.4 Arial, sans-serif;
+    padding: 8px 12px;
+    border-radius: 0 0 6px 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+#gpe-reload-banner button {
+    margin-left: 4px;
+    border: 1px solid #fff;
+    background: transparent;
+    color: #fff;
+    border-radius: 4px;
+    padding: 1px 8px;
+    cursor: pointer;
+    font: inherit;
+}
+#gpe-reload-banner button:hover { background: rgba(255, 255, 255, 0.15); }
+
+/* instant hover popup (replaces the delayed native title tooltip) */
+.gpe-tip-pop {
+    position: fixed;
+    z-index: 2147483647;
+    max-width: 240px;
+    background: #222;
+    color: #fff;
+    font: 11px/1.4 Arial, sans-serif;
+    padding: 6px 8px;
+    border-radius: 5px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
 }
 /* "who's here" roster (its own tab) */
 #gpe-roster {

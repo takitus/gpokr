@@ -314,6 +314,31 @@ html.gpe-dark #gpe-picker-btn:hover { background: #2c3645; }
 html.gpe-dark #gpe-picker-panel button:hover { background: #344056; }
 html.gpe-dark .gpe-toggle { color: #b9c2cf; }
 html.gpe-dark .gpe-toggle:has(input:disabled) { color: #5d6a7e; }
+html.gpe-dark .gpe-side-options .gpe-info { color: #7f8b9c; }
+html.gpe-dark .gpe-side-options .gpe-info:hover { color: #6db0ff; }
+html.gpe-dark .gpe-side-options .gpe-side-edit {
+    background: #2a3342;
+    color: #d2d8e2;
+    border-color: #45526b;
+}
+html.gpe-dark .gpe-side-options .gpe-side-edit:hover { background: #344056; }
+/* bet-button editor modal */
+html.gpe-dark .gpe-modal { background: #1f2530; color: #d2d8e2; }
+html.gpe-dark .gpe-modal-head button { color: #93a0b4; }
+html.gpe-dark .gpe-bet-erow input[type=number],
+html.gpe-dark .gpe-bet-erow select {
+    background: #262e3b;
+    color: #d2d8e2;
+    border-color: #44516a;
+}
+html.gpe-dark .gpe-bet-erow .gpe-del { color: #e07b6e; }
+html.gpe-dark #gpe-bet-add {
+    background: #2a3342;
+    color: #d2d8e2;
+    border-color: #45526b;
+}
+html.gpe-dark #gpe-bet-add:hover { background: #344056; }
+html.gpe-dark .gpe-modal-hint { color: #93a0b4; }
 
 /* side-panel tools tab */
 html.gpe-dark #gpe-roster { color: #b9c2cf; }

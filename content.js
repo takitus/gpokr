@@ -15,10 +15,11 @@
     let DARK_MODE = false;
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
 
-    // User-defined bet-sizing buttons: multiplier × base ("blind"/"pot"),
-    // placed in the column above or below the bet input per `pos`. The top
-    // column is always capped by "all in". List order = render order.
+    // User-defined bet-sizing buttons: multiplier × base ("blind"/"pot"), or
+    // the "allin" base (full stack, multiplier ignored). Placed in the column
+    // above or below the bet input per `pos`. List order = render order.
     const DEFAULT_BET_BTNS = [
+        { mult: 1, base: "allin", pos: "top" },
         { mult: 3, base: "blind", pos: "top" },
         { mult: 2, base: "blind", pos: "top" },
         { mult: 0.5, base: "pot", pos: "bottom" },
@@ -28,18 +29,20 @@
     let BET_CONFIG = DEFAULT_BET_BTNS;
 
     // Defaults only when nothing was ever saved; an explicitly emptied list
-    // stays empty (just "all in"). Bad entries are dropped; entries saved
-    // before `pos` existed infer it from the base (blind->top, pot->bottom).
+    // stays empty. Bad entries are dropped. `mult` is ignored for the "allin"
+    // base but always carried (default 1) so the editor can switch bases back.
+    // Missing `pos` infers from base (pot->bottom, blind/allin->top).
     function sanitizeBetConfig(list) {
         if (!Array.isArray(list)) return DEFAULT_BET_BTNS;
         return list
-            .filter((c) => c && (c.base === "blind" || c.base === "pot") &&
-                typeof c.mult === "number" && isFinite(c.mult) && c.mult > 0)
+            .filter((c) => c && (c.base === "allin" || c.base === "blind" || c.base === "pot"))
+            .filter((c) => c.base === "allin" ||
+                (typeof c.mult === "number" && isFinite(c.mult) && c.mult > 0))
             .map((c) => ({
-                mult: c.mult,
+                mult: (typeof c.mult === "number" && isFinite(c.mult) && c.mult > 0) ? c.mult : 1,
                 base: c.base,
                 pos: c.pos === "top" || c.pos === "bottom" ? c.pos
-                    : (c.base === "blind" ? "top" : "bottom"),
+                    : (c.base === "pot" ? "bottom" : "top"),
             }));
     }
 
@@ -64,23 +67,52 @@
         } else if (prevShowBet !== SHOW_BET_BUTTONS) {
             rebuildBetColumns(); // toggle flipped -> add or tear down the columns
         }
+        // If the editor is open, mirror external changes (e.g. from the popup);
+        // the guard skips re-rendering for edits the modal itself just made.
+        const editor = document.getElementById("gpe-bet-editor");
+        if (editor && editor.style.display === "flex" &&
+            JSON.stringify(cfg) !== JSON.stringify(betEditorList)) {
+            betEditorList = cfg.map((c) => ({ mult: c.mult, base: c.base, pos: c.pos }));
+            renderBetEditorRows();
+        }
         syncShareToggleUI();
         syncSideOptionsUI();
+    }
+
+    // False once the extension is updated/reloaded while this tab stayed open:
+    // the injected script is orphaned and every chrome.* call throws. DOM still
+    // works, so we can at least tell the user why nothing is saving.
+    function extAlive() {
+        try { return !!(chrome && chrome.runtime && chrome.runtime.id); }
+        catch (e) { return false; }
+    }
+
+    function showReloadBanner() {
+        if (document.getElementById("gpe-reload-banner")) return;
+        const bar = document.createElement("div");
+        bar.id = "gpe-reload-banner";
+        bar.textContent = "GPokr Tools was updated — reload this page to keep saving changes. ";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Reload";
+        btn.addEventListener("click", () => location.reload());
+        bar.appendChild(btn);
+        document.body.appendChild(bar);
     }
 
     // Persist a single setting without clobbering the others; the popup picks
     // the change up via chrome.storage.onChanged (and vice versa).
     function saveSetting(key, value) {
         if (EXT_STORE) {
-            // try/catch: an orphaned context (extension updated while the tab
-            // stayed open) throws "context invalidated" on any storage call.
+            if (!extAlive()) { showReloadBanner(); return; } // orphaned tab: can't save
             try {
                 EXT_STORE.get(["gpe_settings"], (res) => {
+                    if (chrome.runtime.lastError) { showReloadBanner(); return; }
                     const s = res.gpe_settings || {};
                     s[key] = value;
-                    try { EXT_STORE.set({ gpe_settings: s }); } catch (e) {}
+                    try { EXT_STORE.set({ gpe_settings: s }); } catch (e) { showReloadBanner(); }
                 });
-            } catch (e) {}
+            } catch (e) { showReloadBanner(); }
         } else {
             const legacyKeys = { localTest: "gpe_local_test", shareHand: "gpe_share_hand", showOdds: "gpe_show_odds" };
             try { localStorage.setItem(legacyKeys[key], value ? "1" : "0"); } catch (e) {}
@@ -213,6 +245,19 @@
         catch (e) { return {}; }
     }
 
+    // "all in" used to be a hardcoded, always-on cap on the top column. Now
+    // it's a real config entry. For anyone who had customized their buttons
+    // (an explicit array), inject the entry once so it doesn't vanish; a flag
+    // stops it re-appearing after they delete it. Mutates and returns `s`.
+    function migrateAllIn(s) {
+        if (s.betAllInMigrated) return s;
+        if (Array.isArray(s.betButtons) && !s.betButtons.some((c) => c && c.base === "allin")) {
+            s.betButtons = [{ mult: 1, base: "allin", pos: "top" }].concat(s.betButtons);
+        }
+        s.betAllInMigrated = true; // no array = defaults already include all-in
+        return s;
+    }
+
     function initStorage() {
         if (!EXT_STORE) { // no extension storage available: legacy fallback
             applySettings(legacyLocalStorageSettings());
@@ -220,9 +265,13 @@
             return;
         }
         EXT_STORE.get(["gpe_settings", CARD_STORE_KEY, PLAYER_STATS_KEY, NOTES_KEY], (res) => {
-            if (res.gpe_settings) applySettings(res.gpe_settings);
-            else { // one-time migration from the old localStorage toggles
+            if (res.gpe_settings) {
+                const s = res.gpe_settings;
+                if (!s.betAllInMigrated) { migrateAllIn(s); EXT_STORE.set({ gpe_settings: s }); }
+                applySettings(s);
+            } else { // one-time migration from the old localStorage toggles
                 const legacy = legacyLocalStorageSettings();
+                legacy.betAllInMigrated = true; // fresh install: defaults have all-in
                 applySettings(legacy);
                 EXT_STORE.set({ gpe_settings: legacy });
             }
@@ -980,7 +1029,8 @@
         ["gpe-show-stats", "player stats", "showStats", () => SHOW_STATS],
         ["gpe-dark-mode", "dark mode", "darkMode", () => DARK_MODE],
         ["gpe-always-share", "always show cards", "shareHand", () => SHARE_HAND],
-        ["gpe-hotkeys", "keyboard shortcuts", "hotkeys", () => HOTKEYS],
+        ["gpe-hotkeys", "keyboard shortcuts", "hotkeys", () => HOTKEYS,
+            "F = fold · C = check/call · 1–9 = bet-size buttons · ↑/↓ = ±1 big blind"],
         ["gpe-bet-buttons", "bet buttons", "showBetButtons", () => SHOW_BET_BUTTONS],
     ];
 
@@ -1005,6 +1055,31 @@
             b.classList.toggle("gpe-active", sideTab === SIDE_TAB_ORDER[i]));
     }
 
+    // Instant hover popup — replaces the native `title` tooltip, which has an
+    // uncontrollable ~1s delay. The popup lives on <body> so the narrow side
+    // panel can't clip it, and is positioned under the anchor each time.
+    function attachInstantTip(el, text) {
+        let pop = null;
+        const hide = () => { if (pop) { pop.remove(); pop = null; } };
+        el.addEventListener("mouseenter", () => {
+            hide();
+            pop = document.createElement("div");
+            pop.className = "gpe-tip-pop";
+            pop.textContent = text;
+            document.body.appendChild(pop);
+            const r = el.getBoundingClientRect();
+            const pad = 6;
+            let left = r.left;
+            if (left + pop.offsetWidth > window.innerWidth - pad) {
+                left = window.innerWidth - pad - pop.offsetWidth;
+            }
+            if (left < pad) left = pad;
+            pop.style.left = Math.round(left) + "px";
+            pop.style.top = Math.round(r.bottom + 4) + "px";
+        });
+        el.addEventListener("mouseleave", hide);
+    }
+
     function ensureSidePanelTabs() {
         const inner = document.querySelector(".iogc-LoginPanel .iogc-SidePanel-inner");
         if (!inner) return;
@@ -1022,7 +1097,7 @@
 
         const pane = document.createElement("div");
         pane.className = "gpe-side-options";
-        for (const [id, label, key] of SIDE_OPTIONS) {
+        for (const [id, label, key, , tip] of SIDE_OPTIONS) {
             const row = document.createElement("label");
             row.className = "gpe-toggle gpe-side-option";
             const box = document.createElement("input");
@@ -1031,6 +1106,26 @@
             box.addEventListener("change", () => saveSetting(key, box.checked));
             row.appendChild(box);
             row.appendChild(document.createTextNode(" " + label));
+            if (tip) {
+                const info = document.createElement("span");
+                info.className = "gpe-info";
+                info.textContent = "ⓘ";
+                attachInstantTip(info, tip);
+                // Hover-only: don't let a click on the icon toggle the checkbox.
+                info.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+                row.appendChild(info);
+            }
+            // The bet-buttons option gets an inline editor (same config the popup edits).
+            if (id === "gpe-bet-buttons") {
+                const edit = document.createElement("button");
+                edit.type = "button";
+                edit.className = "gpe-side-edit";
+                edit.textContent = "edit";
+                edit.addEventListener("click", (e) => {
+                    e.preventDefault(); e.stopPropagation(); openBetEditor();
+                });
+                row.appendChild(edit);
+            }
             pane.appendChild(row);
         }
 
@@ -1391,12 +1486,14 @@
     function fmtMult(m) { return String(parseFloat(m.toFixed(4))); }
 
     // Build one column's button list from BET_CONFIG, in the user's defined
-    // order. "all in" always caps the top column.
+    // order. "all in" is just another entry now (see the "allin" base).
     function betButtonsFor(pos) {
-        const btns = pos === "top" ? [["all in", () => myStack()]] : [];
+        const btns = [];
         for (const c of BET_CONFIG) {
             if (c.pos !== pos) continue;
-            if (c.base === "blind") {
+            if (c.base === "allin") {
+                btns.push(["all in", () => myStack()]);
+            } else if (c.base === "blind") {
                 btns.push([fmtMult(c.mult) + "x blind", () => Math.round(c.mult * parseBigBlind())]);
             } else {
                 btns.push([c.mult === 1 ? "pot" : fmtMult(c.mult) + "x pot", () => potBet(c.mult)]);
@@ -1417,6 +1514,15 @@
         wrap.style.top = (below ? r.bottom : r.top - wrap.offsetHeight) + "px";
     }
 
+    // Write a value into the bet input the way GWT expects: via the native
+    // value setter, then fire input/change so the site's model picks it up.
+    function setBetInput(inp, amount) {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(inp, String(amount));
+        inp.dispatchEvent(new Event("input", { bubbles: true }));
+        inp.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
     function makeBetColumn(id, btns, below) {
         if (!btns.length || document.getElementById(id)) return;
         const wrap = document.createElement("div");
@@ -1431,10 +1537,7 @@
                 if (!inp) return;
                 const amount = amountFn();
                 if (!amount) return; // blind/stack/pot not readable yet
-                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                setter.call(inp, String(amount));
-                inp.dispatchEvent(new Event("input", { bubbles: true }));
-                inp.dispatchEvent(new Event("change", { bubbles: true }));
+                setBetInput(inp, amount);
             });
             wrap.appendChild(b);
         });
@@ -1456,6 +1559,157 @@
             if (el) { clearInterval(el._gpeReposition); el.remove(); }
         }
         addBetSizeButtons();
+    }
+
+    // ---------- UI: in-page bet-button editor ----------
+    // A modal that edits the same betButtons config the popup does; saving goes
+    // through saveSetting, so storage.onChanged rebuilds the columns and the
+    // popup UI mirrors it (and vice versa).
+    let betEditorList = null;   // working copy while the modal is open
+    let betEditorDrag = null;   // index of the row being dragged
+
+    function makeBetSelect(options, value, onChange, labelOf) {
+        const sel = document.createElement("select");
+        options.forEach((v) => {
+            const o = document.createElement("option");
+            o.value = v;
+            o.textContent = labelOf ? labelOf(v) : v;
+            sel.appendChild(o);
+        });
+        sel.value = value;
+        sel.addEventListener("change", () => onChange(sel.value));
+        return sel;
+    }
+    const baseLabel = (v) => (v === "allin" ? "all in" : v);
+
+    function commitBetEditor() {
+        saveSetting("betButtons", betEditorList.map((c) => ({ mult: c.mult, base: c.base, pos: c.pos })));
+        renderBetEditorRows(); // reflect adds/deletes/reorders immediately
+    }
+
+    function renderBetEditorRows() {
+        const wrap = document.getElementById("gpe-bet-editor-rows");
+        if (!wrap) return;
+        wrap.textContent = "";
+        betEditorList.forEach((c, i) => {
+            const row = document.createElement("div");
+            row.className = "gpe-bet-erow";
+
+            const handle = document.createElement("span");
+            handle.className = "gpe-drag";
+            handle.textContent = "⠿";
+            handle.title = "drag to reorder";
+            handle.addEventListener("mousedown", () => { row.draggable = true; });
+            row.addEventListener("dragstart", (e) => {
+                betEditorDrag = i;
+                row.classList.add("gpe-dragging");
+                e.dataTransfer.effectAllowed = "move";
+            });
+            row.addEventListener("dragend", () => {
+                row.draggable = false;
+                row.classList.remove("gpe-dragging");
+                betEditorDrag = null;
+            });
+            row.addEventListener("dragover", (e) => {
+                e.preventDefault();
+                if (betEditorDrag !== null && betEditorDrag !== i) row.classList.add("gpe-dragover");
+            });
+            row.addEventListener("dragleave", () => row.classList.remove("gpe-dragover"));
+            row.addEventListener("drop", (e) => {
+                e.preventDefault();
+                row.classList.remove("gpe-dragover");
+                if (betEditorDrag === null || betEditorDrag === i) return;
+                const moved = betEditorList.splice(betEditorDrag, 1)[0];
+                betEditorList.splice(i, 0, moved);
+                betEditorDrag = null;
+                commitBetEditor();
+            });
+
+            const num = document.createElement("input");
+            num.type = "number";
+            num.min = "0";
+            num.step = "any";
+            num.value = c.mult;
+            num.addEventListener("change", () => {
+                const v = parseFloat(num.value);
+                if (!isFinite(v) || v <= 0) { num.value = c.mult; return; } // reject junk, keep old
+                betEditorList[i].mult = v;
+                commitBetEditor();
+            });
+
+            const x = document.createElement("span");
+            x.textContent = "×";
+
+            // "all in" ignores the multiplier, so hide it (kept in state so a
+            // switch back to blind/pot restores the old value).
+            if (c.base === "allin") { num.style.display = "none"; x.style.display = "none"; }
+
+            const base = makeBetSelect(["blind", "pot", "allin"], c.base,
+                (v) => { betEditorList[i].base = v; commitBetEditor(); }, baseLabel);
+            const pos = makeBetSelect(["top", "bottom"], c.pos, (v) => { betEditorList[i].pos = v; commitBetEditor(); });
+
+            const del = document.createElement("button");
+            del.className = "gpe-del";
+            del.type = "button";
+            del.textContent = "✕";
+            del.title = "remove";
+            del.addEventListener("click", () => { betEditorList.splice(i, 1); commitBetEditor(); });
+
+            row.append(handle, num, x, base, pos, del);
+            wrap.appendChild(row);
+        });
+    }
+
+    function buildBetEditor() {
+        const backdrop = document.createElement("div");
+        backdrop.id = "gpe-bet-editor";
+        backdrop.className = "gpe-modal-backdrop";
+        backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeBetEditor(); });
+
+        const modal = document.createElement("div");
+        modal.className = "gpe-modal";
+
+        const head = document.createElement("div");
+        head.className = "gpe-modal-head";
+        head.appendChild(document.createTextNode("Bet buttons"));
+        const close = document.createElement("button");
+        close.type = "button";
+        close.textContent = "✕";
+        close.title = "close";
+        close.addEventListener("click", closeBetEditor);
+        head.appendChild(close);
+
+        const rows = document.createElement("div");
+        rows.id = "gpe-bet-editor-rows";
+
+        const add = document.createElement("button");
+        add.id = "gpe-bet-add";
+        add.type = "button";
+        add.textContent = "+ Add button";
+        add.addEventListener("click", () => { betEditorList.push({ mult: 1, base: "pot", pos: "bottom" }); commitBetEditor(); });
+
+        const hint = document.createElement("div");
+        hint.className = "gpe-modal-hint";
+        hint.textContent = "multiplier × blind or pot — decimals OK (.5 = half). " +
+            "Set a row's base to \"all in\" for the all-in button. " +
+            "Top/bottom picks the column above or below the bet field; drag ⠿ to reorder.";
+
+        modal.append(head, rows, add, hint);
+        backdrop.appendChild(modal);
+        document.body.appendChild(backdrop);
+        return backdrop;
+    }
+
+    function openBetEditor() {
+        betEditorList = BET_CONFIG.map((c) => ({ mult: c.mult, base: c.base, pos: c.pos }));
+        const backdrop = document.getElementById("gpe-bet-editor") || buildBetEditor();
+        backdrop.style.display = "flex";
+        renderBetEditorRows();
+    }
+
+    function closeBetEditor() {
+        const backdrop = document.getElementById("gpe-bet-editor");
+        if (backdrop) backdrop.style.display = "none";
     }
 
     // ---------- UI: emote picker ----------
@@ -1529,6 +1783,22 @@
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
             t.tagName === "SELECT" || t.isContentEditable)) return;
         const k = e.key.toLowerCase();
+        // Up/Down nudge the bet field by one big blind (only when it's my turn
+        // to bet, i.e. the input is on screen).
+        if (k === "arrowup" || k === "arrowdown") {
+            const inp = document.querySelector("input.gpokr-GameWindow-betInput");
+            if (!inp || inp.getBoundingClientRect().width === 0) return;
+            const bb = parseBigBlind();
+            if (!bb) return;
+            const cur = parseInt(String(inp.value).replace(/[^\d]/g, ""), 10) || 0;
+            let next = cur + (k === "arrowup" ? bb : -bb);
+            if (next < 0) next = 0;
+            const stack = myStack();
+            if (stack && next > stack) next = stack; // cap at all-in
+            e.preventDefault();
+            setBetInput(inp, next);
+            return;
+        }
         let btn = null;
         if (k === "f") btn = visibleActionBtn(".gpokr-GameWindow-foldButton");
         else if (k === "c") btn = visibleActionBtn(".gpokr-GameWindow-checkCallButton");

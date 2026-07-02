@@ -64,18 +64,21 @@
     // when nothing was ever configured. `pos` picks the column (above/below
     // the bet field); entries saved before it existed infer it from the base.
     const DEFAULT_BET_BTNS = [
+        { mult: 1, base: "allin", pos: "top" },
         { mult: 3, base: "blind", pos: "top" },
         { mult: 2, base: "blind", pos: "top" },
         { mult: 0.5, base: "pot", pos: "bottom" },
         { mult: 0.67, base: "pot", pos: "bottom" },
         { mult: 1, base: "pot", pos: "bottom" },
     ];
+    // `mult` is ignored for the "allin" base but always carried (default 1) so
+    // switching a row's base back to blind/pot restores a usable value.
     function normEntry(c) {
         return {
-            mult: c.mult,
+            mult: (typeof c.mult === "number" && c.mult > 0) ? c.mult : 1,
             base: c.base,
             pos: c.pos === "top" || c.pos === "bottom" ? c.pos
-                : (c.base === "blind" ? "top" : "bottom"),
+                : (c.base === "pot" ? "bottom" : "top"),
         };
     }
     function betConfig() {
@@ -95,18 +98,19 @@
         commitBetConfig(list);
     }
 
-    function makeSelect(options, value, onChange) {
+    function makeSelect(options, value, onChange, labelOf) {
         const sel = document.createElement("select");
         options.forEach((v) => {
             const o = document.createElement("option");
             o.value = v;
-            o.textContent = v;
+            o.textContent = labelOf ? labelOf(v) : v;
             sel.appendChild(o);
         });
         sel.value = value;
         sel.addEventListener("change", () => onChange(sel.value));
         return sel;
     }
+    const baseLabel = (v) => (v === "allin" ? "all in" : v);
 
     let dragIndex = null; // index of the row being dragged
 
@@ -164,7 +168,10 @@
             const x = document.createElement("span");
             x.textContent = "×";
 
-            const base = makeSelect(["blind", "pot"], c.base, (v) => patchBetRow(i, { base: v }));
+            // "all in" ignores the multiplier, so hide it (value kept in state).
+            if (c.base === "allin") { num.style.display = "none"; x.style.display = "none"; }
+
+            const base = makeSelect(["blind", "pot", "allin"], c.base, (v) => patchBetRow(i, { base: v }), baseLabel);
             const pos = makeSelect(["top", "bottom"], c.pos, (v) => patchBetRow(i, { pos: v }));
 
             const del = document.createElement("button");
