@@ -5,6 +5,8 @@
 #   ./pack.sh   ->  dist/gpokr-tools-<version>/      (staging dir)
 #                   dist/gpokr-tools-<version>.zip   (upload this to the Web Store)
 #
+# For a Firefox build, use ./pack_ff.sh (reuses this staging + adds the gecko id).
+#
 # For a local .crx instead: chrome://extensions -> Pack extension -> point it
 # at the staging dir. Keep the generated .pem out of git.
 
@@ -29,6 +31,8 @@ for f in $(grep -o '"[^"]*\.\(js\|css\|png\|html\)"' manifest.json | tr -d '"');
 done
 [ "$missing" -eq 0 ] || { echo "aborting — update the cp list in pack.sh" >&2; exit 1; }
 
-(cd dist && zip -qr "$NAME.zip" "$NAME")
+# Zip the files themselves (manifest.json at the root) — both Web Store and AMO
+# reject a zip whose contents are nested inside a wrapper folder.
+(cd "$STAGE" && zip -qr "../$NAME.zip" . -x '*.DS_Store')
 echo "built dist/$NAME.zip"
 unzip -l "dist/$NAME.zip"

@@ -518,35 +518,58 @@
         const pct = (x) => (x * 100).toFixed(1) + "%";
 
         const streets = ["preflop", "flop", "flop", "flop", "turn", "river"];
-        const handHtml = '<span class="' + equityClass(eq, nOpp) + '">' + hand.join(" ") + "</span>";
-        const boardHtml = board
-            .map((c, i) => '<span class="' + deltaClass(boardDeltas[i] || 0) + '">' + c + "</span>")
-            .join(" ");
+        const row = (cls) => { const d = document.createElement("div"); d.className = cls; return d; };
+        const span = (cls, text) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = text; return s; };
+
+        // Built with DOM nodes (not innerHTML) so no dynamic markup is parsed.
         // (Equity is still computed: it colors the hole cards and drives the
         // CALL/FOLD verdict — just no longer shown as its own row.)
-        let html =
-            '<div class="gpe-odds-row gpe-odds-title">' + handHtml +
-            (board.length ? " | " + boardHtml : "") +
-            ' <span class="gpe-odds-street">(' + streets[board.length] + ")</span></div>" +
-            '<div class="gpe-odds-row">' + oddsLabel + "</div>";
+        hud.textContent = "";
+
+        const title = row("gpe-odds-row gpe-odds-title");
+        title.appendChild(span(equityClass(eq, nOpp), hand.join(" ")));
+        if (board.length) {
+            title.appendChild(document.createTextNode(" | "));
+            board.forEach((c, i) => {
+                if (i) title.appendChild(document.createTextNode(" "));
+                title.appendChild(span(deltaClass(boardDeltas[i] || 0), c));
+            });
+        }
+        title.appendChild(document.createTextNode(" "));
+        title.appendChild(span("gpe-odds-street", "(" + streets[board.length] + ")"));
+        hud.appendChild(title);
+
+        const labelRow = row("gpe-odds-row");
+        labelRow.textContent = oddsLabel;
+        hud.appendChild(labelRow);
+
         if (oddsDraw) {
             const parts = [];
             if (oddsDraw.flushOuts) parts.push("flush " + oddsDraw.flushOuts);
             if (oddsDraw.straightOuts)
                 parts.push((oddsDraw.straightRanks >= 2 ? "straight " : "gutshot ") + oddsDraw.straightOuts);
             if (oddsDraw.otherOuts) parts.push("boat " + oddsDraw.otherOuts);
-            html += '<div class="gpe-odds-row">draw: ' + parts.join(" + ") + " = " + oddsDraw.outs +
-                " outs (~" + pct(oddsDraw.hitProb) + ")</div>";
+            const drawRow = row("gpe-odds-row");
+            drawRow.textContent = "draw: " + parts.join(" + ") + " = " + oddsDraw.outs +
+                " outs (~" + pct(oddsDraw.hitProb) + ")";
+            hud.appendChild(drawRow);
         }
+
+        const potRow = row("gpe-odds-row");
         if (toCall > 0) {
-            html += '<div class="gpe-odds-row">pot $' + pot.toLocaleString() +
-                " | call $" + toCall.toLocaleString() +
-                " | need " + pct(odds) +
-                ' <span class="gpe-odds-' + dec.action + '"><b>' + dec.action.toUpperCase() + "</b></span></div>";
+            potRow.appendChild(document.createTextNode(
+                "pot $" + pot.toLocaleString() + " | call $" + toCall.toLocaleString() +
+                " | need " + pct(odds) + " "));
+            const verdict = span("gpe-odds-" + dec.action, "");
+            const b = document.createElement("b");
+            b.textContent = dec.action.toUpperCase();
+            verdict.appendChild(b);
+            potRow.appendChild(verdict);
         } else {
-            html += '<div class="gpe-odds-row">pot $' + pot.toLocaleString() + " | nothing to call</div>";
+            potRow.textContent = "pot $" + pot.toLocaleString() + " | nothing to call";
         }
-        hud.innerHTML = html;
+        hud.appendChild(potRow);
+
         placeOddsHud(hud);
     }
 
