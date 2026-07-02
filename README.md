@@ -37,18 +37,13 @@ Mouse over for the plain-English breakdown (looseness, preflop raise rate, postf
 Click any stats badge to open a note editor for that player ("bluffs rivers", "only raises with nuts"...). Players with notes get a 📝 on their badge; the note shows in the hover tooltip. Notes persist in extension storage. Badges with notes stay visible even when stats are toggled off.
 
 ### Bet-sizing buttons
-Two button columns float flush against the bet input (visible only when it's your turn to bet):
+Two button columns float flush against the bet input (visible only when it's your turn to bet), in the top and bottom columns you configure. Clicking fills the bet input — you still press Bet/Raise yourself. Pot math is raise-to: call amount + fraction of the pot after calling. Columns are 75% opacity (solid on hover) so they don't hide turn-progress bars.
 
-- **Above** (rounded top): **all in** — always present — plus your blind-multiple buttons (e.g. `2x blind`)
-- **Below** (rounded bottom): your pot-multiple buttons (e.g. `0.5x pot`, `pot`)
-
-Clicking fills the bet input — you still press Bet/Raise yourself. Pot math is raise-to: call amount + fraction of the pot after calling. Columns are 75% opacity (solid on hover) so they don't hide turn-progress bars.
-
-**Fully configurable in the popup**: each button is *multiplier × blind|pot* (decimals fine, `.5` = half), assigned to the top or bottom column, reorderable by dragging the ⠿ handle, removable with ✕.
+**Fully configurable** — in the popup *or* in-page via the **tools** tab's **edit** button. Each button is *multiplier × blind|pot* (decimals fine, `.5` = half), or an **all in** button (multiplier ignored); assign it to the top or bottom column, reorder by dragging the ⠿ handle, remove with ✕. All-in is a normal entry now, so it can be moved, removed, or re-added like any other. Toggle the whole feature with the **bet buttons** checkbox.
 
 ### Keyboard shortcuts *(off by default)*
-- **F** — fold  **C** — check/call  **1–9** — fill the nth bet-size button's amount (top column first)
-- Never fires while you're typing (chat, bet input) or holding a modifier key. Enable in the popup.
+- **F** — fold  **C** — check/call  **1–9** — fill the nth bet-size button's amount (top column first)  **↑ / ↓** — nudge the bet amount by one big blind (clamped to 0 and your stack)
+- Never fires while you're typing (chat, bet input) or holding a modifier key. Enable in the popup; hover the ⓘ in the tools tab for the full list.
 
 ### Session tracker
 Your stack is recorded after every hand. The popup's **Session** section shows net profit/loss, hands played, a sparkline of your stack over time, and a **Reset session** button.
@@ -57,11 +52,13 @@ Your stack is recorded after every hand. The popup's **Session** section shows n
 A 😀 button next to the chat input opens a 16-emoji picker. Sent emotes (from anyone using the extension — they're plain chat messages) animate over the sender's avatar.
 
 ### Hand sharing
-Show your hole cards to other extension users after a hand ends, as a compact chat token (e.g. `[gh:as kd.x7p]`) rendered as card images over your avatar for anyone running the extension:
+Show your hole cards to other extension users after a hand ends. The extension posts a legible chat line — e.g. `shows cards: A♠, 7♣ [k4a2]` (your name comes from GPokr's own prefix) — rendered as card images over your avatar for anyone running the extension:
 
 - Inline **share hand** checkbox = share at the end of *this* hand only (auto-unchecks)
 - Popup **Always share hand at showdown** = every hand
 - Popup **Local test mode** = render your own hand locally without sending chat
+
+The trailing `[checksum]` binds the reveal to your name and the hand's unique id (from the hand's replay link), so a copied-and-pasted line won't render on someone else's avatar and an old reveal can't be replayed; each reveal shows at most once per hand. The older `[gh:…]` token is still understood for backward compatibility.
 
 ### Card-image learning
 The site renders cards as inline images. The extension learns which image is which card from your own hands, the board, and showdowns — used to render shared hands as real card images (text fallback until learned). The popup shows progress (n / 52) and supports **Copy JSON** / **Import** to share a learned set between machines.
