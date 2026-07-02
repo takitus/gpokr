@@ -315,6 +315,25 @@
         return lastStart >= 0 ? lines.slice(lastStart) : lines;
     }
 
+    // Unique per-hand id, read from the end-of-hand log line
+    // "Replay: <a href=.../games/<ID>>". Public and identical for every seat, so
+    // sharer and receiver derive the same value. Returns null until the current
+    // hand ends (the Replay link is inside an <a>, so it lives on a gwt-HTML row
+    // that logLines() drops — we read these rows directly and scope to the
+    // stretch after the last "Starting Hand").
+    function currentGameId() {
+        const rows = Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML"));
+        let lastStart = -1;
+        for (let i = rows.length - 1; i >= 0; i--) {
+            if (/Starting Hand/i.test(rows[i].textContent)) { lastStart = i; break; }
+        }
+        for (let i = rows.length - 1; i > lastStart; i--) {
+            const m = rows[i].textContent.match(/gpokr\.com\/games\/(\d+)/i);
+            if (m) return m[1];
+        }
+        return null;
+    }
+
     // My pocket cards for the current/most-recent hand.
     function readMyHand() {
         const pocket = currentHandScope().find((t) => /pocket cards/i.test(t));
@@ -594,6 +613,8 @@
     }
 
     // ---------- hand token (checksum speed-bump) ----------
+    // Rolling hash -> 3 base-36 chars. Kept intact so the legacy [gh:..] token
+    // still verifies; the new format layers name + game id on top via handToken.
     function handChecksum(body) {
         let h = 7919;
         const salt = "gpHand!";
@@ -602,19 +623,69 @@
         return (h % 46656).toString(36).padStart(3, "0");
     }
 
-    function encodeHand(cards) {
-        const body = cards.map((c) => c[0].toUpperCase() + c[1].toLowerCase()).join("").toLowerCase();
-        return "[gh:" + body + "." + handChecksum(body) + "]";
+    // Bind the reveal to WHO shared it and WHICH hand, so a copy-pasted token
+    // (different chat sender) or a stale/replayed one (different game id) fails
+    // to verify. 4 base-36 chars: not cryptographic (the salt ships in the
+    // code), just a speed-bump against casual copy-paste.
+    function handToken(name, gameId, body) {
+        const norm = (name || "").trim().toLowerCase();
+        return handChecksum(norm + "|" + (gameId || "") + "|" + body) +
+            handChecksum(body + "|" + (gameId || "") + "|" + norm).slice(0, 1);
     }
 
-    function decodeHand(text) {
-        const m = text.match(/\[gh:([2-9tjqka][cdhs](?:[2-9tjqka][cdhs])?)\.([0-9a-z]{3})\]/i);
+    // "As" -> "as" (rank+suit, both lower) for the checksum body.
+    function cardBody(cards) {
+        return cards.map((c) => c[0].toLowerCase() + c[1].toLowerCase()).join("");
+    }
+
+    // "As" -> "A♠" for the human-readable chat line (rank upper, suit symbol).
+    function fmtCardPretty(c) {
+        const suit = c[1].toLowerCase();
+        return c[0].toUpperCase() + (SUIT_GLYPH[suit] || suit);
+    }
+
+    // New format, e.g. "shows cards: A♠, 7♣ [k4a2]". The player's name comes
+    // from GPokr's own bold prefix, so we don't repeat it here.
+    function encodeHand(cards, gameId) {
+        const pretty = cards.map(fmtCardPretty).join(", ");
+        return "shows cards: " + pretty + " [" + handToken(getMyName(), gameId, cardBody(cards)) + "]";
+    }
+
+    // Map a symbol back to its suit letter (reverse of SUIT_GLYPH).
+    const SYM_SUIT = { "♣": "c", "♦": "d", "♥": "h", "♠": "s" };
+    // Parse "A♠" or "As" -> "As" (rank upper, suit lower), or null if not a card.
+    function parseCard(tok) {
+        const m = tok.trim().match(/^([2-9tjqka])\s*([cdhs♣♦♥♠])$/i);
+        if (!m) return null;
+        const suit = (SYM_SUIT[m[2]] || m[2]).toLowerCase();
+        return m[1].toUpperCase() + suit;
+    }
+
+    // Returns { cards, gameId|null, fmt } or null. `sender` is the chat <b> name
+    // and `ids` are the receiver's [current, previous] game ids for verification.
+    function decodeHand(text, sender, ids) {
+        // New format: name + game-id bound token.
+        let m = text.match(/^shows cards:\s*(.+?)\s*\[([0-9a-z]+)\]\s*$/i);
+        if (m) {
+            const cards = m[1].split(",").map(parseCard);
+            if (cards.length && cards.every(Boolean)) {
+                const body = cardBody(cards);
+                for (const id of (ids || [])) {
+                    if (id != null && handToken(sender, id, body) === m[2].toLowerCase()) {
+                        return { cards, gameId: id, fmt: "v2" };
+                    }
+                }
+            }
+            return null; // looked like a share but failed verification -> drop
+        }
+        // Legacy format: body-only checksum, no name/id binding.
+        m = text.match(/\[gh:([2-9tjqka][cdhs](?:[2-9tjqka][cdhs])?)\.([0-9a-z]{3})\]/i);
         if (!m) return null;
         const body = m[1].toLowerCase();
         if (handChecksum(body) !== m[2].toLowerCase()) return null;
         const cards = [];
         for (let i = 0; i < body.length; i += 2) cards.push(body[i].toUpperCase() + body[i + 1].toLowerCase());
-        return cards;
+        return { cards, gameId: null, fmt: "v1" };
     }
 
     // ---------- rendering shared hands ----------
@@ -721,11 +792,15 @@
         notePresence(name, true); // chatting proves presence
         const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
 
-        const cards = decodeHand(text);
-        if (cards) {
-            // Never render my own share back onto my avatar — I can already
-            // see my cards; the overlay is for everyone else at the table.
-            if (name !== getMyName()) showHandForName(name, cards);
+        // Verify against the sender's name (blocks copy-paste onto another
+        // player) and this table's live hand ids (blocks stale/replayed shares).
+        const ids = [currentGameId(), curGameId, prevGameId];
+        const dec = decodeHand(text, name, ids);
+        if (dec) { renderDecoded(name, dec); return; }
+        // Looks like a new-format share but didn't verify yet — usually because
+        // our hand-id knowledge lags the sender. Retry as the id catches up.
+        if (name !== getMyName() && /^shows cards:\s*.+\[[0-9a-z]+\]\s*$/i.test(text)) {
+            stashPendingShare(name, text);
             return;
         }
 
@@ -998,6 +1073,60 @@
     let sharedThisHand = false;
     let harvestedThisHand = false;
     let lastEnded = false;
+    let curGameId = null;   // most recent completed hand's id (from the Replay line)
+    let prevGameId = null;  // the one before it — a one-hand grace for verification
+
+    // Dedupe received reveals so a repeated paste renders only once.
+    // bucket (gameId, or "v1" for legacy) -> Set(member). Pruned to the two live
+    // hand ids plus the legacy bucket.
+    const shownByHand = new Map();
+    function alreadyShown(bucket, member) {
+        let set = shownByHand.get(bucket);
+        if (set && set.has(member)) return true;
+        if (!set) shownByHand.set(bucket, (set = new Set()));
+        set.add(member);
+        return false;
+    }
+    function noteGameId(gid) {
+        if (!gid || gid === curGameId) return;
+        prevGameId = curGameId;
+        curGameId = gid;
+        // keep only the two live hand ids (plus the legacy bucket)
+        for (const k of shownByHand.keys()) {
+            if (k !== curGameId && k !== prevGameId && k !== "v1") shownByHand.delete(k);
+        }
+        retryPendingShares(); // a newly-known id may verify a share that arrived early
+    }
+
+    // Render a decoded reveal, skipping my own and deduping repeats.
+    function renderDecoded(sender, dec) {
+        const bucket = dec.gameId == null ? "v1" : dec.gameId;
+        const member = dec.gameId == null ? sender + "|" + cardBody(dec.cards) : sender;
+        if (sender !== getMyName() && !alreadyShown(bucket, member)) showHandForName(sender, dec.cards);
+    }
+
+    // A share can reach the chat before this client has registered the hand's
+    // id (our own Replay line / poll lags the sharer), which would make a valid
+    // reveal fail verification and vanish. Stash such shares and re-check them
+    // as our id knowledge catches up, dropping anything still unverified after
+    // a short window (that covers genuine spoof/replay attempts too).
+    const pendingShares = [];
+    function stashPendingShare(sender, text) {
+        if (pendingShares.some((p) => p.sender === sender && p.text === text)) return;
+        pendingShares.push({ sender, text, t: Date.now() });
+        if (pendingShares.length > 40) pendingShares.shift();
+    }
+    function retryPendingShares() {
+        if (!pendingShares.length) return;
+        const ids = [currentGameId(), curGameId, prevGameId];
+        const now = Date.now();
+        for (let i = pendingShares.length - 1; i >= 0; i--) {
+            const p = pendingShares[i];
+            if (now - p.t > 12000) { pendingShares.splice(i, 1); continue; }
+            const dec = decodeHand(p.text, p.sender, ids);
+            if (dec) { pendingShares.splice(i, 1); renderDecoded(p.sender, dec); }
+        }
+    }
     // One-shot share, armed from the inline "share hand" checkbox and cleared
     // once it fires. The popup's "always share" setting (SHARE_HAND) is
     // independent and never auto-unchecks. Session-only — not persisted.
@@ -1397,6 +1526,9 @@
         if (!ended && lastEnded) { sharedThisHand = false; harvestedThisHand = false; } // new hand began -> reset guards
         lastEnded = ended;
 
+        noteGameId(currentGameId()); // track the current/previous hand id for verification
+        retryPendingShares(); // re-check shares that arrived before we knew the id
+
         if (ended && !harvestedThisHand) {
             harvestedThisHand = true;
             harvestHand(currentHandScope());
@@ -1404,12 +1536,15 @@
 
         if (ended && !sharedThisHand && (SHARE_HAND || shareNextHand || LOCAL_TEST)) {
             const hand = readMyHand();
-            if (hand) {
+            const gameId = currentGameId();
+            // Wait for the Replay line so the shared token is bound to this hand;
+            // without it a peer couldn't verify. LOCAL_TEST needs no id.
+            if (hand && (gameId || LOCAL_TEST)) {
                 const cards = hand.map((c) => c[0].toUpperCase() + c[1].toLowerCase());
                 sharedThisHand = true; // one share per hand; mid-hand sharing is impossible
                 if (LOCAL_TEST) showHandLocal(cards);
                 else if (SHARE_HAND || shareNextHand) {
-                    sendMessage(encodeHand(cards));
+                    sendMessage(encodeHand(cards, gameId));
                     if (shareNextHand) setShareNextHand(false); // consume the one-shot
                 }
             }
