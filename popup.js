@@ -7,7 +7,11 @@
     const SETTINGS_KEY = "gpe_settings";
     const CARD_STORE_KEY = "gpe_card_images_v2";
     const SESSION_KEY = "gpe_session";
-    const TOGGLE_IDS = ["showOdds", "showStats", "darkMode", "shareHand", "localTest", "hotkeys"];
+    const TOGGLE_IDS = ["showOdds", "showStats", "darkMode", "shareHand", "localTest", "hotkeys", "showBetButtons"];
+    // Toggles that default on when nothing was ever saved (opt-out, not opt-in).
+    const TOGGLE_DEFAULTS = { showBetButtons: true };
+    const toggleChecked = (id) =>
+        settings[id] === undefined ? !!TOGGLE_DEFAULTS[id] : !!settings[id];
 
     function applyPopupTheme() {
         document.body.classList.toggle("dark", !!settings.darkMode);
@@ -40,7 +44,7 @@
 
     chrome.storage.local.get([SETTINGS_KEY, CARD_STORE_KEY, SESSION_KEY], (res) => {
         settings = res[SETTINGS_KEY] || {};
-        TOGGLE_IDS.forEach((id) => { $(id).checked = !!settings[id]; });
+        TOGGLE_IDS.forEach((id) => { $(id).checked = toggleChecked(id); });
         applyPopupTheme();
         renderBetRows();
         renderStore(res[CARD_STORE_KEY] || {});
@@ -194,7 +198,7 @@
         }
         if (changes[SETTINGS_KEY]) {
             settings = changes[SETTINGS_KEY].newValue || {};
-            TOGGLE_IDS.forEach((id) => { $(id).checked = !!settings[id]; });
+            TOGGLE_IDS.forEach((id) => { $(id).checked = toggleChecked(id); });
             applyPopupTheme();
             renderBetRows();
         }

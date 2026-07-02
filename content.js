@@ -13,6 +13,7 @@
     let SHOW_STATS = false;
     let HOTKEYS = false;
     let DARK_MODE = false;
+    let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
 
     // User-defined bet-sizing buttons: multiplier × base ("blind"/"pot"),
     // placed in the column above or below the bet input per `pos`. The top
@@ -53,10 +54,15 @@
         HOTKEYS = !!(s && s.hotkeys);
         DARK_MODE = !!(s && s.darkMode);
         document.documentElement.classList.toggle("gpe-dark", DARK_MODE);
+        // Opt-out: only an explicit `false` turns the bet buttons off.
+        const prevShowBet = SHOW_BET_BUTTONS;
+        SHOW_BET_BUTTONS = !(s && s.showBetButtons === false);
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
             rebuildBetColumns();
+        } else if (prevShowBet !== SHOW_BET_BUTTONS) {
+            rebuildBetColumns(); // toggle flipped -> add or tear down the columns
         }
         syncShareToggleUI();
         syncSideOptionsUI();
@@ -975,6 +981,7 @@
         ["gpe-dark-mode", "dark mode", "darkMode", () => DARK_MODE],
         ["gpe-always-share", "always show cards", "shareHand", () => SHARE_HAND],
         ["gpe-hotkeys", "keyboard shortcuts", "hotkeys", () => HOTKEYS],
+        ["gpe-bet-buttons", "bet buttons", "showBetButtons", () => SHOW_BET_BUTTONS],
     ];
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
@@ -1437,6 +1444,7 @@
     }
 
     function addBetSizeButtons() {
+        if (!SHOW_BET_BUTTONS) return;
         makeBetColumn("gpe-bet-sizes", betButtonsFor("top"), false);
         makeBetColumn("gpe-pot-sizes", betButtonsFor("bottom"), true);
     }
