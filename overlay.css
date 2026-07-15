@@ -322,6 +322,26 @@
     cursor: pointer;
 }
 .gpe-side-options .gpe-side-edit:hover { background: #f0f0f0; }
+/* inline "last N hands" number input on the bet-readout option row */
+.gpe-side-options .gpe-side-num {
+    margin-left: auto;
+    width: 40px;
+    box-sizing: border-box;
+    font: 11px/1 Arial, sans-serif;
+    padding: 2px 3px;
+    border: 1px solid #c9c9c9;
+    border-radius: 4px;
+    background: #fff;
+    color: #333;
+}
+.gpe-side-options .gpe-side-numhint {
+    margin-left: 4px;
+    color: #888;
+    font-size: 11px;
+    white-space: nowrap;
+}
+/* keep the option's text label on one line even with the number input present */
+.gpe-side-options .gpe-side-option { white-space: nowrap; }
 
 /* ---- in-page bet-button editor modal ---- */
 .gpe-modal-backdrop {

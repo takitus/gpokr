@@ -322,6 +322,12 @@ html.gpe-dark .gpe-side-options .gpe-side-edit {
     border-color: #45526b;
 }
 html.gpe-dark .gpe-side-options .gpe-side-edit:hover { background: #344056; }
+html.gpe-dark .gpe-side-options .gpe-side-num {
+    background: #262e3b;
+    color: #d2d8e2;
+    border-color: #44516a;
+}
+html.gpe-dark .gpe-side-options .gpe-side-numhint { color: #7f8b9c; }
 /* bet-button editor modal */
 html.gpe-dark .gpe-modal { background: #1f2530; color: #d2d8e2; }
 html.gpe-dark .gpe-modal-head button { color: #93a0b4; }

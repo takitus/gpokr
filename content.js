@@ -1,7 +1,12 @@
 (function () {
     "use strict";
 
-    const EMOTES = ["🙂","🙁","😀","😉","😡","😭","😎","😍","🤔","🫡","🔥","💩","👏","💀","🤑","🤫"];
+    const EMOTES = [
+        // general reactions
+        "🙂","🙁","😀","😅","😂","🤣","😉","😡","😭","😎","😍","🤔","🫡","🔥","💩","👏","💀","🤑","🤫",
+        // poker flavor: cards & suits, chips & money, luck, and table reactions
+        "🃏","♠️","♥️","♦️","♣️","💰","💵","💸","🪙","🎰","🎲","🏆","👑","🥳","🎁","🤝","🍀","🤞","🥶","🤯","🤡",
+    ];
 
     const DISPLAY_MS = 2500;
     const HAND_MS = 6000;
@@ -14,6 +19,11 @@
     let HOTKEYS = false;
     let DARK_MODE = false;
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
+    // Per-player bet readout: swap each seat's "Level" stat for the total the
+    // player has bet/raised (calls excluded) over their last BET_WINDOW hands.
+    let BET_READOUT = true;      // opt-out, like the bet buttons
+    let BET_WINDOW = 3;          // how many recent hands to sum (1..BET_HISTORY_MAX)
+    const BET_HISTORY_MAX = 100; // per-player rolling history kept (>= max window)
 
     // User-defined bet-sizing buttons: multiplier × base ("blind"/"pot"), or
     // the "allin" base (full stack, multiplier ignored). Placed in the column
@@ -67,6 +77,10 @@
         } else if (prevShowBet !== SHOW_BET_BUTTONS) {
             rebuildBetColumns(); // toggle flipped -> add or tear down the columns
         }
+        // Opt-out: only an explicit `false` turns the bet readout off.
+        BET_READOUT = !(s && s.betReadout === false);
+        const bw = parseInt(s && s.betWindow, 10);
+        BET_WINDOW = (isFinite(bw) && bw >= 1) ? Math.min(bw, BET_HISTORY_MAX) : 3;
         // If the editor is open, mirror external changes (e.g. from the popup);
         // the guard skips re-rendering for edits the modal itself just made.
         const editor = document.getElementById("gpe-bet-editor");
@@ -885,7 +899,7 @@
         // bets/raises/calls are postflop counts (for aggression factor).
         const per = {};
         const get = (n) => (per[n] = per[n] ||
-            { vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdown: 0, sdWin: 0 });
+            { vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdown: 0, sdWin: 0, betAmt: 0 });
         let preflop = true;
         for (const line of lines) {
             if (/^Dealing (?:flop|turn|river)/i.test(line)) { preflop = false; continue; }
@@ -896,9 +910,10 @@
                 if (preflop) s.vpip = 1; else s.calls++;
                 continue;
             }
-            if ((m = line.match(/^(.+?) (bets|raises) \$[\d,]+$/i))) {
+            if ((m = line.match(/^(.+?) (bets|raises) \$([\d,]+)$/i))) {
                 const s = get(m[1].trim());
                 const isRaise = /raises/i.test(m[2]);
+                s.betAmt += parseInt(m[3].replace(/,/g, ""), 10) || 0;
                 if (preflop) { s.vpip = 1; if (isRaise) s.pfr = 1; }
                 else if (isRaise) s.raises++;
                 else s.bets++;
@@ -915,7 +930,8 @@
         for (const n of names) {
             const h = per[n];
             const t = playerStats[n] ||
-                { hands: 0, vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdowns: 0, sdWins: 0 };
+                { hands: 0, vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdowns: 0, sdWins: 0, betAmts: [] };
+            if (!Array.isArray(t.betAmts)) t.betAmts = []; // migrate older saved stats
             t.hands++;
             t.vpip += h.vpip;
             t.pfr += h.pfr;
@@ -924,6 +940,9 @@
             t.calls += h.calls;
             t.showdowns += h.showdown;
             t.sdWins += h.sdWin;
+            // Rolling per-hand bet/raise total (calls excluded), newest last.
+            t.betAmts.push(h.betAmt);
+            if (t.betAmts.length > BET_HISTORY_MAX) t.betAmts = t.betAmts.slice(-BET_HISTORY_MAX);
             playerStats[n] = t;
         }
         savePlayerStats();
@@ -1092,6 +1111,70 @@
         if (tip && ![...statBadges.values()].some((b) => b.matches(":hover"))) hideBadgeTip();
     }
 
+    // ---------- per-player bet readout (swaps the seat "Level" stat) ----------
+    // Sum of the amounts a player bet/raised (calls never counted) over their
+    // last BET_WINDOW recorded hands. Null until we've seen at least one hand.
+    function betReadoutFor(name) {
+        const t = playerStats[name];
+        if (!t || !Array.isArray(t.betAmts) || !t.betAmts.length) return null;
+        const recent = t.betAmts.slice(-BET_WINDOW);
+        const total = recent.reduce((a, b) => a + (b || 0), 0);
+        return { total, hands: recent.length };
+    }
+
+    function fmtMoney(n) { return "$" + (n || 0).toLocaleString("en-US"); }
+
+    // Rewrite each visible seat's "Level" stat row in place to show the bet
+    // readout (and restore "Level" when the feature is off). GWT re-renders the
+    // panel freely, so this runs every poll and is idempotent: the row is found
+    // by its label ("Level"), and a data-marker lets us keep managing it after
+    // our own overwrite. We stash the original level value so a later toggle-off
+    // can put it back even if GWT hasn't repainted the seat since.
+    function applyBetReadout() {
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            let row = null;
+            for (const r of p.querySelectorAll(".iogc-PlayerStatsPanel")) {
+                const lab = r.querySelector(".gwt-InlineLabel");
+                if (lab && (lab.dataset.gpeLevel === "1" || lab.textContent.trim() === "Level")) {
+                    row = r; break;
+                }
+            }
+            if (!row) continue;
+            const val = row.querySelector(".iogc-PlayerPanel-stat");
+            const lab = row.querySelector(".gwt-InlineLabel");
+            if (!val || !lab) continue;
+
+            if (!BET_READOUT) {
+                if (lab.dataset.gpeLevel === "1") { // ours — restore the site's readout
+                    if (val.dataset.gpeOrig != null) val.textContent = val.dataset.gpeOrig;
+                    lab.textContent = "Level";
+                    delete lab.dataset.gpeLevel;
+                    delete val.dataset.gpeOrig;
+                    row.classList.remove("gpe-bet-readout");
+                    row.removeAttribute("title");
+                }
+                continue;
+            }
+
+            if (lab.dataset.gpeLevel !== "1") { // first touch (fresh/native row): remember the level
+                val.dataset.gpeOrig = val.textContent;
+                lab.dataset.gpeLevel = "1";
+                row.classList.add("gpe-bet-readout");
+            }
+            const name = getSeatName(p);
+            const rd = betReadoutFor(name);
+            const valText = rd ? fmtMoney(rd.total) : "$0";
+            const labText = "Bet " + BET_WINDOW + "h";
+            if (val.textContent !== valText) val.textContent = valText;
+            if (lab.textContent !== labText) lab.textContent = labText;
+            const title = rd
+                ? name + " bet/raised " + fmtMoney(rd.total) + " over last " + rd.hands +
+                    " hand" + (rd.hands === 1 ? "" : "s")
+                : (name || "seat") + " — no bets recorded yet";
+            if (row.getAttribute("title") !== title) row.setAttribute("title", title);
+        }
+    }
+
     // ---------- end-of-hand watcher (auto-share + harvest, once per hand) ----------
     let sharedThisHand = false;
     let harvestedThisHand = false;
@@ -1184,6 +1267,9 @@
         ["gpe-hotkeys", "keyboard shortcuts", "hotkeys", () => HOTKEYS,
             "F = fold · C = check/call · 1–9 = bet-size buttons · ↑/↓ = ±1 big blind"],
         ["gpe-bet-buttons", "bet buttons", "showBetButtons", () => SHOW_BET_BUTTONS],
+        ["gpe-bet-readout", "bet readout", "betReadout", () => BET_READOUT,
+            "Replaces each player's \"Level\" with the total they've bet/raised " +
+            "(calls not counted) over their last N hands. Set N below."],
     ];
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
@@ -1193,6 +1279,9 @@
             const box = document.getElementById(id);
             if (box) box.checked = current();
         }
+        // Mirror the bet-window number (skip while it's being edited).
+        const num = document.getElementById("gpe-bet-window");
+        if (num && document.activeElement !== num) num.value = String(BET_WINDOW);
     }
 
     const SIDE_TAB_ORDER = ["site", "tools", "roster"];
@@ -1277,6 +1366,32 @@
                     e.preventDefault(); e.stopPropagation(); openBetEditor();
                 });
                 row.appendChild(edit);
+            }
+            // The bet-readout option gets an inline "last N hands" number input.
+            if (id === "gpe-bet-readout") {
+                const num = document.createElement("input");
+                num.type = "number";
+                num.id = "gpe-bet-window";
+                num.className = "gpe-side-num";
+                num.min = "1";
+                num.max = String(BET_HISTORY_MAX);
+                num.step = "1";
+                num.value = String(BET_WINDOW);
+                // It's a labelable control inside the row <label>, so clicks land
+                // on it (not the checkbox); stop propagation to be safe.
+                num.addEventListener("click", (e) => e.stopPropagation());
+                num.addEventListener("change", () => {
+                    let v = parseInt(num.value, 10);
+                    if (!isFinite(v) || v < 1) v = 3;
+                    v = Math.min(v, BET_HISTORY_MAX);
+                    num.value = String(v);
+                    saveSetting("betWindow", v);
+                });
+                const hint = document.createElement("span");
+                hint.className = "gpe-side-numhint";
+                hint.textContent = "hands";
+                row.appendChild(num);
+                row.appendChild(hint);
             }
             pane.appendChild(row);
         }
@@ -1969,7 +2084,7 @@
     });
 
     // ---------- boot ----------
-    setInterval(() => { updateStatBadges(); tagTurnHighlights(); }, 300); // track avatars + turn highlight live
+    setInterval(() => { updateStatBadges(); tagTurnHighlights(); applyBetReadout(); }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();
