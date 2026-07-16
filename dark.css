@@ -328,6 +328,19 @@ html.gpe-dark .gpe-side-options .gpe-side-num {
     border-color: #44516a;
 }
 html.gpe-dark .gpe-side-options .gpe-side-numhint { color: #7f8b9c; }
+/* bets leaderboard */
+html.gpe-dark .gpe-side-bets { color: #b9c2cf; }
+html.gpe-dark .gpe-bets-head { color: #8a97ab; }
+html.gpe-dark .gpe-bets-head::after { background: rgba(255, 255, 255, 0.12); }
+html.gpe-dark .gpe-bets-num {
+    background: #262e3b;
+    color: #d2d8e2;
+    border-color: #44516a;
+}
+html.gpe-dark .gpe-bets-empty { color: #6e7c92; }
+html.gpe-dark .gpe-bets-row:hover { background: rgba(255, 255, 255, 0.06); }
+html.gpe-dark .gpe-bets-name { color: #e6ebf2; }
+html.gpe-dark .gpe-bets-val { color: #cdd5e0; }
 /* bet-button editor modal */
 html.gpe-dark .gpe-modal { background: #1f2530; color: #d2d8e2; }
 html.gpe-dark .gpe-modal-head button { color: #93a0b4; }

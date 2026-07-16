@@ -22,8 +22,8 @@
     // Per-player bet readout: swap each seat's "Level" stat for the total the
     // player has bet/raised (calls excluded) over their last BET_WINDOW hands.
     let BET_READOUT = true;      // opt-out, like the bet buttons
-    let BET_WINDOW = 3;          // how many recent hands to sum (1..BET_HISTORY_MAX)
-    const BET_HISTORY_MAX = 100; // per-player rolling history kept (>= max window)
+    let BET_WINDOW = 3;          // how many of the kept hands to SUM for display (1..BET_HISTORY_MAX)
+    const BET_HISTORY_MAX = 20;  // per-player hands always kept in history (the display window can't exceed this)
 
     // User-defined bet-sizing buttons: multiplier × base ("blind"/"pot"), or
     // the "allin" base (full stack, multiplier ignored). Placed in the column
@@ -147,12 +147,12 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
-    document.querySelectorAll(".gpe-tools-active, .gpe-tab-tools, .gpe-tab-roster").forEach((el) =>
-        el.classList.remove("gpe-tools-active", "gpe-tab-tools", "gpe-tab-roster"));
+    document.querySelectorAll(".gpe-tools-active, .gpe-tab-tools, .gpe-tab-roster, .gpe-tab-bets").forEach((el) =>
+        el.classList.remove("gpe-tools-active", "gpe-tab-tools", "gpe-tab-roster", "gpe-tab-bets"));
 
     // ---------- helpers: name -> avatar ----------
     function getSeatName(panel) {
@@ -681,11 +681,32 @@
         return c[0].toUpperCase() + (SUIT_GLYPH[suit] || suit);
     }
 
-    // New format, e.g. "shows cards: A♠, 7♣ [k4a2]". The player's name comes
-    // from GPokr's own bold prefix, so we don't repeat it here.
-    function encodeHand(cards, gameId) {
+    function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+    // English name of the best 5-card hand from my hole cards plus whatever
+    // board (flop/turn/river) was dealt this hand, e.g. "Two pair, aces and
+    // sevens". Null if the odds module is missing. Read at end of hand, so
+    // parseBoard() reflects the full board that was shown.
+    function handLabelFor(cards) {
+        if (!window.GPE_ODDS) return null;
+        try {
+            const label = window.GPE_ODDS.handLabel(cards, parseBoard());
+            return label ? cap(label) : null;
+        } catch (e) { return null; }
+    }
+
+    // e.g. "shows cards: A♠, 7♣ [k4a2] — Two pair, aces and sevens". The
+    // player's name comes from GPokr's own bold prefix, so we don't repeat it
+    // here. The made-hand name is appended after the token as human-readable
+    // text (everyone reads it in chat); it's outside the verification token, so
+    // receivers just parse it back off — see decodeHand. Note: this trailing
+    // text means clients on the older build (whose decoder anchors the token at
+    // end-of-line) won't render the shared cards — a deliberate trade-off.
+    function encodeHand(cards, gameId, label) {
         const pretty = cards.map(fmtCardPretty).join(", ");
-        return "shows cards: " + pretty + " [" + handToken(getMyName(), gameId, cardBody(cards)) + "]";
+        let msg = "shows cards: " + pretty + " [" + handToken(getMyName(), gameId, cardBody(cards)) + "]";
+        if (label) msg += " — " + label;
+        return msg;
     }
 
     // Map a symbol back to its suit letter (reverse of SUIT_GLYPH).
@@ -700,16 +721,25 @@
 
     // Returns { cards, gameId|null, fmt } or null. `sender` is the chat <b> name
     // and `ids` are the receiver's [current, previous] game ids for verification.
+    // Trim the human-readable hand name to plain text (defence-in-depth: the
+    // overlay uses textContent, so this only caps length / strips stray brackets).
+    function sanitizeLabel(s) {
+        if (!s) return null;
+        s = s.replace(/[\[\]\r\n]/g, "").trim();
+        return s ? s.slice(0, 48) : null;
+    }
+
     function decodeHand(text, sender, ids) {
-        // New format: name + game-id bound token.
-        let m = text.match(/^shows cards:\s*(.+?)\s*\[([0-9a-z]+)\]\s*$/i);
+        // New format: name + game-id bound token, with an optional trailing
+        // "— <hand name>" (human-readable, outside the token).
+        let m = text.match(/^shows cards:\s*(.+?)\s*\[([0-9a-z]+)\](?:\s*[—-]\s*(.+?))?\s*$/i);
         if (m) {
             const cards = m[1].split(",").map(parseCard);
             if (cards.length && cards.every(Boolean)) {
                 const body = cardBody(cards);
                 for (const id of (ids || [])) {
                     if (id != null && handToken(sender, id, body) === m[2].toLowerCase()) {
-                        return { cards, gameId: id, fmt: "v2" };
+                        return { cards, gameId: id, fmt: "v2", label: sanitizeLabel(m[3]) };
                     }
                 }
             }
@@ -741,8 +771,17 @@
         return div;
     }
 
+    // A small caption pinned under the shared cards, naming the made hand.
+    function appendHandLabel(wrap, label) {
+        if (!label) return;
+        const capEl = document.createElement("div");
+        capEl.className = "gpe-hand-label";
+        capEl.textContent = label;
+        wrap.appendChild(capEl);
+    }
+
     const handOverlays = new Map(); // player name -> overlay
-    function showHandForName(name, cards) {
+    function showHandForName(name, cards, label) {
         if (!name || !cards || !cards.length) return;
         const prev = handOverlays.get(name);
         if (prev && prev.isConnected) prev.remove();
@@ -751,6 +790,7 @@
         wrap.style.position = "fixed";
         wrap.style.transform = "translate(-50%, -50%)";
         cards.forEach((c) => wrap.appendChild(makeCardEl(c)));
+        appendHandLabel(wrap, label);
         document.body.appendChild(wrap);
         handOverlays.set(name, wrap);
 
@@ -796,7 +836,7 @@
     // Render my hand locally only (no chat) — anchored to my own avatar by name,
     // exactly like a received share. (Anchoring to the hole-card <img>s broke at
     // hand end, when GWT hides/recycles them for the next hand.)
-    function showHandLocal(cards) {
+    function showHandLocal(cards, label) {
         if (!cards || !cards.length) return;
         let wrap = document.getElementById("gpe-local-hand");
         if (wrap) wrap.remove();
@@ -804,6 +844,7 @@
         wrap.id = "gpe-local-hand";
         wrap.className = "gpe-hand-wrap";
         cards.forEach((c) => wrap.appendChild(makeCardEl(c)));
+        appendHandLabel(wrap, label);
         document.body.appendChild(wrap);
 
         anchorToAvatar(wrap, () => findAvatarByName(getMyName()), HAND_MS);
@@ -836,7 +877,7 @@
         if (dec) { renderDecoded(name, dec); return; }
         // Looks like a new-format share but didn't verify yet — usually because
         // our hand-id knowledge lags the sender. Retry as the id catches up.
-        if (name !== getMyName() && /^shows cards:\s*.+\[[0-9a-z]+\]\s*$/i.test(text)) {
+        if (name !== getMyName() && /^shows cards:\s*.+\[[0-9a-z]+\](?:\s*[—-]\s*.+)?\s*$/i.test(text)) {
             stashPendingShare(name, text);
             return;
         }
@@ -894,28 +935,85 @@
         } catch (e) {}
     }
 
+    // Betting streets stored as integers: index into STREETS. `street` on an
+    // action is 0=preflop, 1=flop, 2=turn, 3=river (null if unknown/legacy).
+    const STREETS = ["preflop", "flop", "turn", "river"];
+    function streetToInt(v) {
+        if (typeof v === "number") return v;
+        const i = STREETS.indexOf(v);
+        return i >= 0 ? i : null;
+    }
+    const STAT_VERSION = 3;
+
+    // A fresh per-player stats record. `betHands` is a rolling window of the
+    // last BET_HISTORY_MAX hands; each entry is { table:<name>, actions:[...] },
+    // where an action is { amount:Number, type:"bet"|"raise", street:0..3 }
+    // (see STREETS). Calls/checks/folds/blinds are not recorded. The table name
+    // keeps the readout scoped to the current table so moving tables (or a
+    // tournament re-seat) resets the count.
+    function freshStat() {
+        return { hands: 0, vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0,
+            showdowns: 0, sdWins: 0, betHands: [], _v: STAT_VERSION };
+    }
+
+    // Bring an older saved record up to the current shape (idempotent; `_v`
+    // marks the version already applied). Handles every past shape: the earliest
+    // `betAmts` (flat per-hand totals), the interim `betHands` of bare action-
+    // arrays, and the previous {table, actions} with string streets. Legacy
+    // hands that never knew their table get table:null (they won't match any
+    // current table, so they don't count — the right behaviour, since we can't
+    // attribute them after the fact); string streets are normalised to ints.
+    function normActions(arr) {
+        return (Array.isArray(arr) ? arr : []).map((a) => ({
+            amount: (a && a.amount) || 0,
+            type: (a && a.type) || "unknown",
+            street: streetToInt(a && a.street),
+        }));
+    }
+    function migrateStat(t) {
+        if (t._v === STAT_VERSION) return t;
+        if (Array.isArray(t.betHands)) {
+            t.betHands = t.betHands.map((e) =>
+                (e && !Array.isArray(e) && Array.isArray(e.actions))
+                    ? { table: e.table != null ? e.table : null, actions: normActions(e.actions) }
+                    : { table: null, actions: normActions(e) });
+        } else {
+            t.betHands = Array.isArray(t.betAmts)
+                ? t.betAmts.map((n) => ({ table: null,
+                    actions: n > 0 ? [{ amount: n, type: "unknown", street: null }] : [] }))
+                : [];
+        }
+        if (t.betHands.length > BET_HISTORY_MAX) t.betHands = t.betHands.slice(-BET_HISTORY_MAX);
+        delete t.betAmts;
+        t._v = STAT_VERSION;
+        return t;
+    }
+
     function updatePlayerStats(lines) {
         // Per-hand tallies: vpip/pfr/showdown/sdWin are 0/1 flags,
-        // bets/raises/calls are postflop counts (for aggression factor).
+        // bets/raises/calls are postflop counts (for aggression factor),
+        // actions is the ordered list of this hand's bets/raises.
         const per = {};
         const get = (n) => (per[n] = per[n] ||
-            { vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdown: 0, sdWin: 0, betAmt: 0 });
-        let preflop = true;
+            { vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdown: 0, sdWin: 0, actions: [] });
+        let street = 0; // 0=preflop, 1=flop, 2=turn, 3=river (index into STREETS)
         for (const line of lines) {
-            if (/^Dealing (?:flop|turn|river)/i.test(line)) { preflop = false; continue; }
+            let dm = line.match(/^Dealing (flop|turn|river)/i);
+            if (dm) { street = STREETS.indexOf(dm[1].toLowerCase()); continue; }
             let m;
             if ((m = line.match(/^(.+?) (?:folds|checks)$/i))) { get(m[1].trim()); continue; }
             if ((m = line.match(/^(.+?) calls$/i))) {
                 const s = get(m[1].trim());
-                if (preflop) s.vpip = 1; else s.calls++;
+                if (street === 0) s.vpip = 1; else s.calls++;
                 continue;
             }
             if ((m = line.match(/^(.+?) (bets|raises) \$([\d,]+)$/i))) {
                 const s = get(m[1].trim());
-                const isRaise = /raises/i.test(m[2]);
-                s.betAmt += parseInt(m[3].replace(/,/g, ""), 10) || 0;
-                if (preflop) { s.vpip = 1; if (isRaise) s.pfr = 1; }
-                else if (isRaise) s.raises++;
+                const type = /raises/i.test(m[2]) ? "raise" : "bet";
+                const amount = parseInt(m[3].replace(/,/g, ""), 10) || 0;
+                s.actions.push({ amount, type, street });
+                if (street === 0) { s.vpip = 1; if (type === "raise") s.pfr = 1; }
+                else if (type === "raise") s.raises++;
                 else s.bets++;
                 continue;
             }
@@ -929,9 +1027,7 @@
         if (!names.length) return;
         for (const n of names) {
             const h = per[n];
-            const t = playerStats[n] ||
-                { hands: 0, vpip: 0, pfr: 0, bets: 0, raises: 0, calls: 0, showdowns: 0, sdWins: 0, betAmts: [] };
-            if (!Array.isArray(t.betAmts)) t.betAmts = []; // migrate older saved stats
+            const t = migrateStat(playerStats[n] || freshStat());
             t.hands++;
             t.vpip += h.vpip;
             t.pfr += h.pfr;
@@ -940,9 +1036,10 @@
             t.calls += h.calls;
             t.showdowns += h.showdown;
             t.sdWins += h.sdWin;
-            // Rolling per-hand bet/raise total (calls excluded), newest last.
-            t.betAmts.push(h.betAmt);
-            if (t.betAmts.length > BET_HISTORY_MAX) t.betAmts = t.betAmts.slice(-BET_HISTORY_MAX);
+            // Append this hand's bets/raises tagged with the table it was played
+            // at, then keep only the last N hands.
+            t.betHands.push({ table: currentTableName(), actions: h.actions });
+            if (t.betHands.length > BET_HISTORY_MAX) t.betHands = t.betHands.slice(-BET_HISTORY_MAX);
             playerStats[n] = t;
         }
         savePlayerStats();
@@ -1116,9 +1213,17 @@
     // last BET_WINDOW recorded hands. Null until we've seen at least one hand.
     function betReadoutFor(name) {
         const t = playerStats[name];
-        if (!t || !Array.isArray(t.betAmts) || !t.betAmts.length) return null;
-        const recent = t.betAmts.slice(-BET_WINDOW);
-        const total = recent.reduce((a, b) => a + (b || 0), 0);
+        if (!t) return null;
+        migrateStat(t); // tolerate records saved before the structured shape
+        // Only hands played at the current table count — moving tables (or a
+        // tournament re-seat onto a new table name) resets the window.
+        const cur = currentTableName();
+        if (!cur) return null;
+        const here = t.betHands.filter((h) => h.table === cur);
+        if (!here.length) return null;
+        const recent = here.slice(-BET_WINDOW); // last N of this table's hands
+        const total = recent.reduce((sum, hand) =>
+            sum + hand.actions.reduce((a, act) => a + (act.amount || 0), 0), 0);
         return { total, hands: recent.length };
     }
 
@@ -1208,7 +1313,8 @@
     function renderDecoded(sender, dec) {
         const bucket = dec.gameId == null ? "v1" : dec.gameId;
         const member = dec.gameId == null ? sender + "|" + cardBody(dec.cards) : sender;
-        if (sender !== getMyName() && !alreadyShown(bucket, member)) showHandForName(sender, dec.cards);
+        if (sender !== getMyName() && !alreadyShown(bucket, member))
+            showHandForName(sender, dec.cards, dec.label || handLabelFor(dec.cards));
     }
 
     // A share can reach the chat before this client has registered the hand's
@@ -1256,7 +1362,7 @@
     // panel's content freely, so installation is idempotent and re-checked on
     // every poll, and the site's own children are hidden via CSS while "tools"
     // is active (moving GWT's nodes would fight its renderer).
-    let sideTab = "site"; // "site" | "tools" | "roster"
+    let sideTab = "site"; // "site" | "tools" | "roster" | "bets"
 
     // [checkbox id, label, settings key, current value]
     const SIDE_OPTIONS = [
@@ -1279,17 +1385,38 @@
             const box = document.getElementById(id);
             if (box) box.checked = current();
         }
-        // Mirror the bet-window number (skip while it's being edited).
-        const num = document.getElementById("gpe-bet-window");
-        if (num && document.activeElement !== num) num.value = String(BET_WINDOW);
+        syncBetWindowInputs();
     }
 
-    const SIDE_TAB_ORDER = ["site", "tools", "roster"];
+    // The hand-count lives in two places (tools tab + bets tab); keep both in
+    // step, skipping whichever is being edited so the caret doesn't jump.
+    function syncBetWindowInputs() {
+        for (const id of ["gpe-bet-window", "gpe-bets-window"]) {
+            const el = document.getElementById(id);
+            if (el && document.activeElement !== el) el.value = String(BET_WINDOW);
+        }
+    }
+
+    // Apply a new hand-count everywhere: seat cards, the bets list, both inputs,
+    // and persistent storage (which also mirrors it to the popup).
+    function setBetWindow(v) {
+        v = parseInt(v, 10);
+        if (!isFinite(v) || v < 1) v = 3;
+        v = Math.min(v, BET_HISTORY_MAX);
+        BET_WINDOW = v;
+        syncBetWindowInputs();
+        saveSetting("betWindow", v);
+        renderBetsList();
+    }
+
+    const SIDE_TAB_ORDER = ["site", "tools", "roster", "bets"];
     function applySideTabState() {
         const inner = document.querySelector(".iogc-LoginPanel .iogc-SidePanel-inner");
         if (!inner) return;
         inner.classList.toggle("gpe-tab-tools", sideTab === "tools");
         inner.classList.toggle("gpe-tab-roster", sideTab === "roster");
+        inner.classList.toggle("gpe-tab-bets", sideTab === "bets");
+        if (sideTab === "bets") renderBetsList();
         const tabs = inner.querySelector(":scope > .gpe-side-tabs");
         if (!tabs) return;
         Array.from(tabs.children).forEach((b, i) =>
@@ -1328,7 +1455,7 @@
 
         const tabs = document.createElement("div");
         tabs.className = "gpe-side-tabs";
-        [["gpokr", "site"], ["tools", "tools"], ["table", "roster"]].forEach(([label, tab]) => {
+        [["gpokr", "site"], ["tools", "tools"], ["table", "roster"], ["bets", "bets"]].forEach(([label, tab]) => {
             const b = document.createElement("button");
             b.type = "button";
             b.textContent = label;
@@ -1380,13 +1507,7 @@
                 // It's a labelable control inside the row <label>, so clicks land
                 // on it (not the checkbox); stop propagation to be safe.
                 num.addEventListener("click", (e) => e.stopPropagation());
-                num.addEventListener("change", () => {
-                    let v = parseInt(num.value, 10);
-                    if (!isFinite(v) || v < 1) v = 3;
-                    v = Math.min(v, BET_HISTORY_MAX);
-                    num.value = String(v);
-                    saveSetting("betWindow", v);
-                });
+                num.addEventListener("change", () => setBetWindow(num.value));
                 const hint = document.createElement("span");
                 hint.className = "gpe-side-numhint";
                 hint.textContent = "hands";
@@ -1403,12 +1524,82 @@
         roster.id = "gpe-roster";
         rosterPane.appendChild(roster);
 
+        // "bets" leaderboard: its own tab pane. A persistent header carries an
+        // inline hand-count input (mirrors the tools tab); only the list below
+        // re-renders, so editing the count doesn't blur the field.
+        const betsPane = document.createElement("div");
+        betsPane.className = "gpe-side-bets";
+        const betsHead = document.createElement("div");
+        betsHead.className = "gpe-bets-head";
+        betsHead.appendChild(document.createTextNode("last "));
+        const betsNum = document.createElement("input");
+        betsNum.type = "number";
+        betsNum.id = "gpe-bets-window";
+        betsNum.className = "gpe-bets-num";
+        betsNum.min = "1";
+        betsNum.max = String(BET_HISTORY_MAX);
+        betsNum.step = "1";
+        betsNum.value = String(BET_WINDOW);
+        betsNum.addEventListener("change", () => setBetWindow(betsNum.value));
+        betsHead.appendChild(betsNum);
+        betsHead.appendChild(document.createTextNode(" hands"));
+        const betsList = document.createElement("div");
+        betsList.id = "gpe-bets-list";
+        betsPane.appendChild(betsHead);
+        betsPane.appendChild(betsList);
+
         inner.prepend(tabs);
         inner.appendChild(pane);
         inner.appendChild(rosterPane);
+        inner.appendChild(betsPane);
         syncSideOptionsUI();
         applySideTabState();
         renderRoster();
+    }
+
+    // Seated players ranked by how much they've bet/raised over the last
+    // BET_WINDOW hands — a plain name + amount list, largest first.
+    function renderBetsList() {
+        const list = document.getElementById("gpe-bets-list");
+        if (!list) return;
+        const rows = [];
+        const seen = new Set();
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            const name = getSeatName(p);
+            if (!name || seen.has(name)) continue;
+            if (p.getBoundingClientRect().width === 0) continue; // visible seats only
+            seen.add(name);
+            const rd = betReadoutFor(name);
+            rows.push({ name, total: rd ? rd.total : 0 });
+        }
+        rows.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
+        // Skip the DOM churn (this runs on every poll) when nothing changed.
+        const sig = BET_WINDOW + "|" + rows.map((r) => r.name + ":" + r.total).join(",");
+        if (list._gpeSig === sig) return;
+        list._gpeSig = sig;
+
+        list.textContent = "";
+        if (!rows.length) {
+            const empty = document.createElement("div");
+            empty.className = "gpe-bets-empty";
+            empty.textContent = "No players seated.";
+            list.appendChild(empty);
+            return;
+        }
+        rows.forEach((r) => {
+            const row = document.createElement("div");
+            row.className = "gpe-bets-row";
+            const nm = document.createElement("span");
+            nm.className = "gpe-bets-name";
+            nm.textContent = r.name;
+            const val = document.createElement("span");
+            val.className = "gpe-bets-val";
+            val.textContent = fmtMoney(r.total);
+            row.appendChild(nm);
+            row.appendChild(val);
+            list.appendChild(row);
+        });
     }
 
     // ---------- who's here roster ----------
@@ -1680,9 +1871,10 @@
             if (hand && (gameId || LOCAL_TEST)) {
                 const cards = hand.map((c) => c[0].toUpperCase() + c[1].toLowerCase());
                 sharedThisHand = true; // one share per hand; mid-hand sharing is impossible
-                if (LOCAL_TEST) showHandLocal(cards);
+                const label = handLabelFor(cards); // best hand vs the board that was shown
+                if (LOCAL_TEST) showHandLocal(cards, label);
                 else if (SHARE_HAND || shareNextHand) {
-                    sendMessage(encodeHand(cards, gameId));
+                    sendMessage(encodeHand(cards, gameId, label));
                     if (shareNextHand) setShareNextHand(false); // consume the one-shot
                 }
             }
@@ -1737,13 +1929,27 @@
     }
 
     // My chip stack, from my (visible) seat panel.
+    // A seat's chip stack, read from its "Chips" stat row specifically. (Not
+    // parseMoney(panel.textContent): the bet-readout swaps the "Level" row for a
+    // "$" amount, which would otherwise be the first dollar value matched.)
+    function seatChips(panel) {
+        for (const row of panel.querySelectorAll(".iogc-PlayerStatsPanel")) {
+            const lab = row.querySelector(".gwt-InlineLabel");
+            if (lab && lab.textContent.trim() === "Chips") {
+                const val = row.querySelector(".iogc-PlayerPanel-stat");
+                if (val) return parseMoney(val.textContent);
+            }
+        }
+        return 0;
+    }
+
     function myStack() {
         const me = getMyName();
         if (!me) return 0;
         for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
             if (getSeatName(p) !== me) continue;
             if (p.getBoundingClientRect().width === 0) continue;
-            const v = parseMoney(p.textContent);
+            const v = seatChips(p);
             if (v) return v;
         }
         return 0;
