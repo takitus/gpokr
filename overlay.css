@@ -492,7 +492,8 @@
     font-size: 13px;
     padding: 0 3px;
 }
-#gpe-bet-add {
+#gpe-bet-add,
+#gpe-chat-add {
     width: 100%;
     margin-top: 6px;
     padding: 4px 0;
@@ -502,8 +503,56 @@
     cursor: pointer;
     font: 12px Arial, sans-serif;
 }
-#gpe-bet-add:hover { background: #f0f0f0; }
+#gpe-bet-add:hover,
+#gpe-chat-add:hover { background: #f0f0f0; }
 .gpe-modal-hint { font-size: 11px; color: #888; margin-top: 8px; }
+
+/* ---- Quick-chat buttons (chat-tools row) + editor ---- */
+#gpe-chat-tools { flex-wrap: wrap; }
+#gpe-chat-btns {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    min-width: 0;
+}
+.gpe-chat-btn,
+.gpe-chat-edit {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 4px 8px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+.gpe-chat-edit { padding: 4px 7px; color: #666; }
+.gpe-chat-btn:hover,
+.gpe-chat-edit:hover { background: #f0f0f0; }
+/* editor rows: a name (label) + message input per button (reuses .gpe-bet-erow layout) */
+.gpe-chat-erow .gpe-chat-name,
+.gpe-chat-erow .gpe-chat-text {
+    box-sizing: border-box;
+    padding: 3px 5px;
+    border: 1px solid #c9c9c9;
+    border-radius: 4px;
+    font: 12px Arial, sans-serif;
+}
+.gpe-chat-erow .gpe-chat-name { width: 64px; flex: none; }
+.gpe-chat-erow .gpe-chat-text { flex: 1; min-width: 0; }
+.gpe-chat-erow.gpe-locked .gpe-chat-name,
+.gpe-chat-erow.gpe-locked .gpe-chat-text {
+    background: #f4f4f4;
+    color: #666;
+    cursor: default;
+}
 
 /* "extension updated, reload" notice for orphaned tabs */
 #gpe-reload-banner {

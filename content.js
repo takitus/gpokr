@@ -3,9 +3,9 @@
 
     const EMOTES = [
         // general reactions
-        "🙂","🙁","😀","😅","😂","🤣","😉","😡","😭","😎","😍","🤔","🫡","🔥","💩","👏","💀","🤑","🤫",
+        "🙂","🙁","😀","😅","😂","🤣","😉","😡","😭","😎","😍","🤔","🫡","👋","👎","🔥","💩","👏","🤞","💀","🤑","🤫","👀","🙄",
         // poker flavor: cards & suits, chips & money, luck, and table reactions
-        "🃏","♠️","♥️","♦️","♣️","💰","💵","💸","🪙","🎰","🎲","🏆","👑","🥳","🎁","🤝","🍀","🤞","🥶","🤯","🤡",
+        "🃏","♠️","♥️","♦️","♣️","💰","💵","💸","🛥️","🎰","🎲","🏆","👑","🎁","🍀","🥶","🤯","🤡",
     ];
 
     const DISPLAY_MS = 2500;
@@ -37,6 +37,37 @@
         { mult: 1, base: "pot", pos: "bottom" },
     ];
     let BET_CONFIG = DEFAULT_BET_BTNS;
+
+    // Quick-chat buttons under the chat input (right of "share hand"). The
+    // defaults are built-in and can't be edited/removed; users add their own via
+    // the editor modal (stored in settings.chatButtons). "[playername]" in a
+    // template is replaced on click with the last player to leave/bust.
+    // One pinned, uneditable button, always first. Its short `name` keeps the
+    // long "[playername]" template from bloating the row. The rest are seeded
+    // defaults the user can rename, reorder, or remove entirely.
+    const PINNED_CHAT_BTN = { name: "gg", text: "gg [playername]" };
+    const DEFAULT_CHAT_BTNS = [
+        { name: "nh", text: "nh [lastwinner]" },
+        { name: "ty", text: "ty" },
+        { name: "wp", text: "wp" },
+    ];
+    let CHAT_CONFIG = DEFAULT_CHAT_BTNS.map((b) => ({ ...b }));
+    let lastDeparted = "";       // last player to finish the tournament (for [playername])
+    let lastDepartureLine = "";  // the log line that set it (so we only advance on new ones)
+    let lastWinner = "";         // winner of the most recent hand (for [lastwinner])
+    let lastWinnerLine = "";
+
+    // Each button is { name, text }; the caption falls back to text when name is
+    // blank. A non-array (never configured) seeds the removable defaults; an
+    // explicit [] stays empty. Strings are tolerated (name defaults to the text).
+    function sanitizeChatConfig(list) {
+        if (!Array.isArray(list)) return DEFAULT_CHAT_BTNS.map((b) => ({ ...b }));
+        return list
+            .map((b) => (typeof b === "string" ? { name: "", text: b } : (b || {})))
+            .map((b) => ({ name: (b.name || "").trim(), text: (b.text || "").trim() }))
+            .filter((b) => b.text)
+            .slice(0, 40);
+    }
 
     // Defaults only when nothing was ever saved; an explicitly emptied list
     // stays empty. Bad entries are dropped. `mult` is ignored for the "allin"
@@ -88,6 +119,11 @@
             JSON.stringify(cfg) !== JSON.stringify(betEditorList)) {
             betEditorList = cfg.map((c) => ({ mult: c.mult, base: c.base, pos: c.pos }));
             renderBetEditorRows();
+        }
+        const chatCfg = sanitizeChatConfig(s && s.chatButtons);
+        if (JSON.stringify(chatCfg) !== JSON.stringify(CHAT_CONFIG)) {
+            CHAT_CONFIG = chatCfg;
+            renderChatButtons();
         }
         syncShareToggleUI();
         syncSideOptionsUI();
@@ -147,7 +183,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -220,8 +256,24 @@
         }, DISPLAY_MS);
     }
 
+    // Match the first emoji in a message — ANY emoji, not just the picker set.
+    // RGI_Emoji (v flag) captures whole sequences (ZWJ joins, flags, skin
+    // tones); fall back to Extended_Pictographic + modifiers where v isn't
+    // supported. Built with new RegExp so an unsupported flag throws a catchable
+    // runtime error rather than a parse-time syntax error. (Share messages are
+    // handled and returned before this runs, so their ♠♥♦♣ never reach here.)
+    let EMOJI_RE = null;
+    try { EMOJI_RE = new RegExp("\\p{RGI_Emoji}", "v"); }
+    catch (e1) {
+        try {
+            EMOJI_RE = new RegExp(
+                "\\p{Extended_Pictographic}(?:[\\u{1F3FB}-\\u{1F3FF}]|\\uFE0F|\\u200D\\p{Extended_Pictographic})*", "u");
+        } catch (e2) { EMOJI_RE = null; }
+    }
+
     function firstEmoteIn(text) {
-        for (const e of EMOTES) if (text.includes(e)) return e;
+        if (EMOJI_RE) { const m = text.match(EMOJI_RE); if (m) return m[0]; }
+        for (const e of EMOTES) if (text.includes(e)) return e; // last-ditch: picker set
         return null;
     }
 
@@ -1850,6 +1902,8 @@
         updateOddsHud();
         addBetSizeButtons();
         trackRoster();
+        scanDepartures();
+        scanWinner();
 
         const ended = handHasEnded();
         if (!ended && lastEnded) { sharedThisHand = false; harvestedThisHand = false; } // new hand began -> reset guards
@@ -2191,6 +2245,233 @@
         if (backdrop) backdrop.style.display = "none";
     }
 
+    // ---------- UI: quick-chat buttons ----------
+    // Full text of each game-log line, read from the gwt-HTML rows rather than
+    // logLines() — logLines() keeps only childless leaves, so a line whose player
+    // name is a profile link (e.g. tournament finishes) is dropped. textContent
+    // here includes linked/bold names.
+    function logRowTexts() {
+        return Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML"))
+            .map((e) => e.textContent.trim()).filter(Boolean);
+    }
+
+    // Bottom-most line matching `re` (capture group 1 = name); advances the
+    // tracker only when that line is a new one, so it survives the line later
+    // scrolling out of the log.
+    function scanLastName(re, prevLine, set) {
+        const rows = logRowTexts();
+        for (let i = rows.length - 1; i >= 0; i--) {
+            const m = rows[i].match(re);
+            if (m) { if (rows[i] !== prevLine) set(rows[i], m[1].trim()); return; }
+        }
+    }
+
+    // [playername] = last player to finish the tournament ("NAME finishes the
+    // tournament Nth"). Only that line counts.
+    function scanDepartures() {
+        scanLastName(/^(.+?) finishes the tournament \d+(?:st|nd|rd|th)$/i,
+            lastDepartureLine, (line, name) => { lastDepartureLine = line; lastDeparted = name; });
+    }
+
+    // [lastwinner] = winner of the most recent hand ("NAME wins main|side pot $N").
+    function scanWinner() {
+        scanLastName(/^(.+?) wins (?:main|side) pot \$[\d,]+/i,
+            lastWinnerLine, (line, name) => { lastWinnerLine = line; lastWinner = name; });
+    }
+
+    // Fill the tokens, collapsing the space they leave when unknown
+    // ("gg [playername]" -> "gg").
+    function chatButtonMessage(template) {
+        return template
+            .replace(/\[playername\]/gi, lastDeparted || "")
+            .replace(/\[lastwinner\]/gi, lastWinner || "")
+            .replace(/\s+/g, " ").trim();
+    }
+
+    function renderChatButtons() {
+        const wrap = document.getElementById("gpe-chat-btns");
+        if (!wrap) return;
+        wrap.textContent = "";
+        [PINNED_CHAT_BTN].concat(CHAT_CONFIG).forEach((b) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "gpe-chat-btn";
+            btn.textContent = b.name || b.text;      // caption defaults to the message
+            // Show what it actually sends when the label differs or a token is used.
+            if ((b.name && b.name !== b.text) || /\[(playername|lastwinner)\]/i.test(b.text)) {
+                btn.title = "sends: " + b.text;
+            }
+            btn.addEventListener("click", () => {
+                const msg = chatButtonMessage(b.text);
+                if (msg) sendMessage(msg);
+            });
+            wrap.appendChild(btn);
+        });
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "gpe-chat-edit";
+        edit.textContent = "✎";
+        edit.title = "edit chat buttons";
+        edit.addEventListener("click", openChatEditor);
+        wrap.appendChild(edit);
+    }
+
+    // ---------- UI: quick-chat editor (modal, mirrors the bet-button editor) ----------
+    let chatEditorList = null;  // working copy of the user's buttons while open
+    let chatEditorDrag = null;
+
+    function saveChatButtons() {
+        saveSetting("chatButtons", chatEditorList
+            .map((b) => ({ name: b.name.trim(), text: b.text.trim() }))
+            .filter((b) => b.text));
+    }
+    function commitChatEditor() { // for structural changes (add/remove/reorder)
+        saveChatButtons();
+        renderChatEditorRows();
+    }
+
+    // name (short caption) + message inputs; live-update without re-rendering so
+    // focus is kept, persist on blur/enter.
+    function chatEditorInputs(row, b) {
+        const name = document.createElement("input");
+        name.type = "text";
+        name.className = "gpe-chat-name";
+        name.value = b.name;
+        name.placeholder = "name";
+        name.title = "button label (defaults to the message)";
+        const txt = document.createElement("input");
+        txt.type = "text";
+        txt.className = "gpe-chat-text";
+        txt.value = b.text;
+        txt.placeholder = "message (use [playername])";
+        name.addEventListener("input", () => { b.name = name.value; });
+        name.addEventListener("change", saveChatButtons);
+        txt.addEventListener("input", () => { b.text = txt.value; });
+        txt.addEventListener("change", saveChatButtons);
+        row.append(name, txt);
+    }
+
+    function renderChatEditorRows() {
+        const wrap = document.getElementById("gpe-chat-editor-rows");
+        if (!wrap) return;
+        wrap.textContent = "";
+
+        // The pinned button: shown for context, locked.
+        const pin = document.createElement("div");
+        pin.className = "gpe-bet-erow gpe-chat-erow gpe-locked";
+        const lock = document.createElement("span");
+        lock.className = "gpe-drag";
+        lock.textContent = "🔒";
+        lock.title = "built-in — can't be removed";
+        const pName = document.createElement("input");
+        pName.type = "text"; pName.className = "gpe-chat-name"; pName.value = PINNED_CHAT_BTN.name; pName.disabled = true;
+        const pText = document.createElement("input");
+        pText.type = "text"; pText.className = "gpe-chat-text"; pText.value = PINNED_CHAT_BTN.text; pText.disabled = true;
+        pin.append(lock, pName, pText);
+        wrap.appendChild(pin);
+
+        // The user's own buttons: editable, draggable, removable.
+        chatEditorList.forEach((b, i) => {
+            const row = document.createElement("div");
+            row.className = "gpe-bet-erow gpe-chat-erow";
+
+            const handle = document.createElement("span");
+            handle.className = "gpe-drag";
+            handle.textContent = "⠿";
+            handle.title = "drag to reorder";
+            handle.addEventListener("mousedown", () => { row.draggable = true; });
+            row.addEventListener("dragstart", (e) => {
+                chatEditorDrag = i;
+                row.classList.add("gpe-dragging");
+                e.dataTransfer.effectAllowed = "move";
+            });
+            row.addEventListener("dragend", () => {
+                row.draggable = false;
+                row.classList.remove("gpe-dragging");
+                chatEditorDrag = null;
+            });
+            row.addEventListener("dragover", (e) => {
+                e.preventDefault();
+                if (chatEditorDrag !== null && chatEditorDrag !== i) row.classList.add("gpe-dragover");
+            });
+            row.addEventListener("dragleave", () => row.classList.remove("gpe-dragover"));
+            row.addEventListener("drop", (e) => {
+                e.preventDefault();
+                row.classList.remove("gpe-dragover");
+                if (chatEditorDrag === null || chatEditorDrag === i) return;
+                const moved = chatEditorList.splice(chatEditorDrag, 1)[0];
+                chatEditorList.splice(i, 0, moved);
+                chatEditorDrag = null;
+                commitChatEditor();
+            });
+
+            row.appendChild(handle);
+            chatEditorInputs(row, b);
+
+            const del = document.createElement("button");
+            del.className = "gpe-del";
+            del.type = "button";
+            del.textContent = "✕";
+            del.title = "remove";
+            del.addEventListener("click", () => { chatEditorList.splice(i, 1); commitChatEditor(); });
+            row.appendChild(del);
+
+            wrap.appendChild(row);
+        });
+    }
+
+    function buildChatEditor() {
+        const backdrop = document.createElement("div");
+        backdrop.id = "gpe-chat-editor";
+        backdrop.className = "gpe-modal-backdrop";
+        backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeChatEditor(); });
+
+        const modal = document.createElement("div");
+        modal.className = "gpe-modal";
+
+        const head = document.createElement("div");
+        head.className = "gpe-modal-head";
+        head.appendChild(document.createTextNode("Chat buttons"));
+        const close = document.createElement("button");
+        close.type = "button";
+        close.textContent = "✕";
+        close.title = "close";
+        close.addEventListener("click", closeChatEditor);
+        head.appendChild(close);
+
+        const rows = document.createElement("div");
+        rows.id = "gpe-chat-editor-rows";
+
+        const add = document.createElement("button");
+        add.id = "gpe-chat-add";
+        add.type = "button";
+        add.textContent = "+ Add button";
+        add.addEventListener("click", () => { chatEditorList.push({ name: "", text: "" }); commitChatEditor(); });
+
+        const hint = document.createElement("div");
+        hint.className = "gpe-modal-hint";
+        hint.textContent = "Name is the button label (defaults to the message). The message is " +
+            "what gets posted — use [playername] (last to finish the tournament) or " +
+            "[lastwinner] (winner of the last hand). The 🔒 button can't be removed; drag ⠿ to reorder your own.";
+
+        modal.append(head, rows, add, hint);
+        backdrop.appendChild(modal);
+        document.body.appendChild(backdrop);
+        return backdrop;
+    }
+
+    function openChatEditor() {
+        chatEditorList = CHAT_CONFIG.map((b) => ({ ...b }));
+        const backdrop = document.getElementById("gpe-chat-editor") || buildChatEditor();
+        backdrop.style.display = "flex";
+        renderChatEditorRows();
+    }
+
+    function closeChatEditor() {
+        const backdrop = document.getElementById("gpe-chat-editor");
+        if (backdrop) backdrop.style.display = "none";
+    }
+
     // ---------- UI: emote picker ----------
     function addPicker() {
         const input = getChatInput();
@@ -2242,7 +2523,32 @@
         tools.id = "gpe-chat-tools";
         tools.appendChild(btn);
         tools.appendChild(shareToggle);
-        input.insertAdjacentElement("afterend", tools);
+        // Quick-chat buttons live to the right of "share hand".
+        const chatBtns = document.createElement("div");
+        chatBtns.id = "gpe-chat-btns";
+        tools.appendChild(chatBtns);
+
+        // The chat input sits in a 2-cell row: [ input | Send ]. Placing our
+        // tools inside the input's cell makes the Send cell stretch tall (its
+        // lower half wasted). Instead give the tools their own full-width row
+        // (colspan across both cells) beneath it, so the buttons reclaim the
+        // space under Send. Falls back to inline placement if the layout differs.
+        const cell = input.closest("td");
+        const row = cell && cell.closest("tr");
+        if (row && cell.parentElement === row) {
+            const stale = document.getElementById("gpe-chat-tools-row");
+            if (stale) stale.remove();
+            const toolRow = document.createElement("tr");
+            toolRow.id = "gpe-chat-tools-row";
+            const toolCell = document.createElement("td");
+            toolCell.colSpan = row.children.length; // span input + Send columns
+            toolCell.appendChild(tools);
+            toolRow.appendChild(toolCell);
+            row.insertAdjacentElement("afterend", toolRow);
+        } else {
+            input.insertAdjacentElement("afterend", tools);
+        }
+        renderChatButtons();
         syncShareToggleUI();
         document.body.appendChild(panel);
     }

@@ -49,7 +49,17 @@ Two button columns float flush against the bet input (visible only when it's you
 Your stack is recorded after every hand. The popup's **Session** section shows net profit/loss, hands played, a sparkline of your stack over time, and a **Reset session** button.
 
 ### Emotes
-A 😀 button next to the chat input opens a 16-emoji picker. Sent emotes (from anyone using the extension — they're plain chat messages) animate over the sender's avatar.
+A 😀 button next to the chat input opens an emoji picker. **Any** emoji in a chat message — whether sent from the picker or typed directly, and whether or not it's in the picker — animates over the sender's avatar for anyone running the extension.
+
+### Quick-chat buttons
+A row of one-tap chat buttons sits under the chat input (right of *share hand*), for canned messages like `gg`, `nh`, `ty`, `wp`. Two template tokens are filled in on click:
+
+- **`[playername]`** — the last player to finish the tournament (`NAME finishes the tournament Nth`)
+- **`[lastwinner]`** — the winner of the last hand (`NAME wins main/side pot $N`)
+
+So `gg [playername]` posts `gg Behr Necessities`, and `nh [lastwinner]` posts `nh musser` (either collapses to just `gg`/`nh` before one is known).
+
+Edit them with the **✎** button: each has a short **name** (the label, defaults to the message) and a **message** (what's posted). Add, rename, drag ⠿ to reorder, or ✕ to remove your own; the pinned `gg [playername]` button 🔒 is always present. Buttons are stored in your settings.
 
 ### Hand sharing
 Show your hole cards to other extension users after a hand ends. The extension posts a legible chat line — e.g. `shows cards: A♠, 7♣ [k4a2]` (your name comes from GPokr's own prefix) — rendered as card images over your avatar for anyone running the extension:

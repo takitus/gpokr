@@ -345,19 +345,35 @@ html.gpe-dark .gpe-bets-val { color: #cdd5e0; }
 html.gpe-dark .gpe-modal { background: #1f2530; color: #d2d8e2; }
 html.gpe-dark .gpe-modal-head button { color: #93a0b4; }
 html.gpe-dark .gpe-bet-erow input[type=number],
-html.gpe-dark .gpe-bet-erow select {
+html.gpe-dark .gpe-bet-erow select,
+html.gpe-dark .gpe-chat-erow .gpe-chat-name,
+html.gpe-dark .gpe-chat-erow .gpe-chat-text {
     background: #262e3b;
     color: #d2d8e2;
     border-color: #44516a;
 }
+html.gpe-dark .gpe-chat-erow.gpe-locked .gpe-chat-name,
+html.gpe-dark .gpe-chat-erow.gpe-locked .gpe-chat-text { background: #202834; color: #8a97ab; }
 html.gpe-dark .gpe-bet-erow .gpe-del { color: #e07b6e; }
-html.gpe-dark #gpe-bet-add {
+html.gpe-dark #gpe-bet-add,
+html.gpe-dark #gpe-chat-add {
     background: #2a3342;
     color: #d2d8e2;
     border-color: #45526b;
 }
-html.gpe-dark #gpe-bet-add:hover { background: #344056; }
+html.gpe-dark #gpe-bet-add:hover,
+html.gpe-dark #gpe-chat-add:hover { background: #344056; }
 html.gpe-dark .gpe-modal-hint { color: #93a0b4; }
+/* quick-chat buttons in the chat row */
+html.gpe-dark .gpe-chat-btn,
+html.gpe-dark .gpe-chat-edit {
+    background: #232c3a;
+    color: #d2d8e2;
+    border-color: #3c4a61;
+}
+html.gpe-dark .gpe-chat-edit { color: #93a0b4; }
+html.gpe-dark .gpe-chat-btn:hover,
+html.gpe-dark .gpe-chat-edit:hover { background: #2c3645; }
 
 /* side-panel tools tab */
 html.gpe-dark #gpe-roster { color: #b9c2cf; }
