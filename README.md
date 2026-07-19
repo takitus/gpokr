@@ -51,6 +51,9 @@ Your stack is recorded after every hand. The popup's **Session** section shows n
 ### Emotes
 A 😀 button next to the chat input opens an emoji picker. **Any** emoji in a chat message — whether sent from the picker or typed directly, and whether or not it's in the picker — animates over the sender's avatar for anyone running the extension.
 
+### Clickable chat links
+URLs posted in chat (`http(s)://…` or `www.…`) are auto-detected and turned into clickable links (opened in a new tab, http/https only). GPokr renders chat as plain text otherwise.
+
 ### Quick-chat buttons
 A row of one-tap chat buttons sits under the chat input (right of *share hand*), for canned messages like `gg`, `nh`, `ty`, `wp`. Two template tokens are filled in on click:
 
