@@ -507,6 +507,10 @@
 #gpe-chat-add:hover { background: #f0f0f0; }
 .gpe-modal-hint { font-size: 11px; color: #888; margin-top: 8px; }
 
+/* ---- Auto-linked URLs in chat ---- */
+.gpe-chat-link { color: #1a6fd4; text-decoration: underline; word-break: break-all; }
+.gpe-chat-link:hover { color: #0d5bbf; }
+
 /* ---- Quick-chat buttons (chat-tools row) + editor ---- */
 #gpe-chat-tools { flex-wrap: wrap; }
 #gpe-chat-btns {

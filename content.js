@@ -909,6 +909,60 @@
         }, HAND_MS);
     }
 
+    // ---------- chat link detection ----------
+    // GWT renders chat as plain text; turn any http(s):// or www. URL into a
+    // real link. Replaces only matched substrings in text nodes (sender <b> and
+    // existing anchors are skipped), so message text and downstream parsing are
+    // unchanged (textContent still reads the same).
+    const CHAT_URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>()]+/gi;
+
+    function linkifyTextNode(t) {
+        const text = t.nodeValue;
+        let m, last = 0, frag = null;
+        CHAT_URL_RE.lastIndex = 0;
+        while ((m = CHAT_URL_RE.exec(text))) {
+            let raw = m[0];
+            const trail = raw.match(/[.,!?;:'")\]}>]+$/); // don't swallow trailing punctuation
+            const trailing = trail ? trail[0] : "";
+            if (trailing) raw = raw.slice(0, -trailing.length);
+            const href = /^www\./i.test(raw) ? "https://" + raw : raw;
+            let ok = false;
+            try { const u = new URL(href); ok = (u.protocol === "http:" || u.protocol === "https:"); } catch (e) {}
+            if (!ok) continue; // leave junk as plain text
+            if (!frag) frag = document.createDocumentFragment();
+            frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+            const a = document.createElement("a");
+            a.href = href;
+            a.textContent = raw;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer nofollow";
+            a.className = "gpe-chat-link";
+            frag.appendChild(a);
+            if (trailing) frag.appendChild(document.createTextNode(trailing));
+            last = m.index + m[0].length;
+        }
+        if (frag) {
+            frag.appendChild(document.createTextNode(text.slice(last)));
+            t.parentNode.replaceChild(frag, t);
+        }
+    }
+
+    function linkifyChat(node, skipEl) {
+        if (node._gpeLinked) return;
+        node._gpeLinked = true;
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+            acceptNode(t) {
+                if (skipEl && skipEl.contains(t)) return NodeFilter.FILTER_REJECT;   // sender name
+                if (t.parentNode && t.parentNode.nodeName === "A") return NodeFilter.FILTER_REJECT;
+                return /\b(?:https?:\/\/|www\.)/i.test(t.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+            },
+        });
+        const targets = [];
+        let n;
+        while ((n = walker.nextNode())) targets.push(n);
+        targets.forEach(linkifyTextNode);
+    }
+
     // ---------- incoming chat handling ----------
     function handleChatMessage(node) {
         const nameEl = node.querySelector("b");
@@ -920,6 +974,7 @@
         }
         const name = nameEl.textContent.trim();
         notePresence(name, true); // chatting proves presence
+        linkifyChat(node, nameEl); // make URLs clickable (leaves textContent intact)
         const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
 
         // Verify against the sender's name (blocks copy-paste onto another
