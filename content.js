@@ -413,7 +413,7 @@
     function handHasEnded() {
         const scope = currentHandScope();
         if (scope.some((t) => /\bshows \[/i.test(t))) return true;
-        if (scope.some((t) => /wins (main|side) pot/i.test(t))) return true;
+        if (scope.some((t) => /wins main pot/i.test(t))) return true;
         return false;
     }
 

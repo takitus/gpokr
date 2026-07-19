@@ -1,0 +1,45 @@
+GPokr Tools adds the quality-of-life features gpokr.com always needed — built by a player, for players.
+
+🌙 DARK MODE
+A complete hand-tuned dark theme for the entire site: the table (with custom dark felt artwork), lobby, leaderboard, forum, profiles, and dialogs. One checkbox, instant, no page reload.
+
+😀 EMOTES & HAND SHARING
+Send emoji reactions that pop over your avatar — any emoji, whether you pick it or type it — and optionally reveal your hole cards to other extension users after a hand ends: once, always, or never. Your choice. Shared hands are tamper-checked, so a copied reveal can't be passed off as someone else's.
+
+💬 QUICK-CHAT BUTTONS
+One-tap buttons under the chat box for the things you say every hand — gg, nh, ty, wp. Two smart tokens fill themselves in on click: [playername] becomes the last player to finish the tournament, and [lastwinner] becomes the winner of the last hand — so "gg [playername]" posts "gg Behr Necessities". Rename, reorder, add, or remove your own in a quick editor.
+
+📊 LIVE ODDS HUD
+See your hand the way the math sees it, updated as the action unfolds:
+• Win equity simulated against the live opponents at your table
+• Your made hand, named ("two pair, aces and fours")
+• Draw outs and the odds of hitting by the river
+• Pot odds with a clear CALL / MARGINAL / FOLD read when facing a bet
+Equity even adapts to each opponent's real playing style once enough hands are observed.
+
+👤 OPPONENT STATS & NOTES
+Every hand at your table feeds per-player statistics — how loose they play (VPIP), how often they raise (PFR), postflop aggression, showdowns won. A small badge above each avatar shows the numbers; hover for the plain-English breakdown; click to save a private note ("only raises with the nuts"). Each seat can also show how much that player has bet or raised over their last few hands, right on their panel.
+
+👀 WHO'S AT THE TABLE
+A live roster of everyone at your table, players and railbirds alike, split into who's playing and who's watching. Watcher totals are verified against GPokr's own table data, and anyone it can't name yet is shown honestly as "unknown (N)". Click any name to open their profile, or tap the star to follow them — the same follow list GPokr uses, right from the roster.
+
+🎯 BET-SIZING BUTTONS
+One-click bet amounts that float right at the bet box: all-in, blind multiples, and pot fractions. Fully customizable — define your own buttons (any multiplier × blind or pot, plus all-in), drag to reorder, place them above or below the field, and turn the whole set on or off.
+
+📈 SESSION TRACKER
+Your stack is recorded after every hand. Open the popup for your session profit/loss and a sparkline of your run.
+
+⌨️ KEYBOARD SHORTCUTS (optional, off by default)
+F to fold, C to check/call, number keys to fill your bet-size buttons, and the arrow keys to nudge your bet up or down by a blind. Never fires while you're typing in chat.
+
+———
+
+PRIVACY
+Your settings, statistics, notes, and session history stay on your computer in local browser storage — never collected, transmitted, or shared. There are no third-party servers, no analytics, and no accounts. The only network requests the extension makes are to GPokr's own site, for features you trigger: reading the public table and watcher list, reading your follow list, and following a player when you tap their star. The extension requires only the "storage" permission and runs only on gpokr.com.
+
+FAIR PLAY
+GPokr Tools displays information derived from what is already visible on your screen (the game log and table). It never acts for you — no auto-fold, no auto-bet, no automated play of any kind.
+
+This is an unofficial fan project and is not affiliated with or endorsed by GPokr.
+
+Found a bug or have a feature idea? Post in the GPokr forum thread — the extension is actively updated based on player feedback.
