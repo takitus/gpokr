@@ -304,6 +304,12 @@ html.gpe-dark .gpe-bet-col button {
 }
 html.gpe-dark .gpe-bet-col button:hover { background: #344056; }
 
+/* emote shown over an avatar: dark chip instead of the light one */
+html.gpe-dark .gpe-emote-overlay {
+    background: rgba(28, 34, 45, 0.92);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
 /* emote picker + inline toggles */
 html.gpe-dark #gpe-picker-btn,
 html.gpe-dark #gpe-picker-panel {
