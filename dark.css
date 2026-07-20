@@ -316,6 +316,8 @@ html.gpe-dark .gpe-log-cards {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 html.gpe-dark .gpe-log-cards .gpe-log-slot { border-color: rgba(255, 255, 255, 0.22); }
+html.gpe-dark .gpe-log-detail { border-top-color: rgba(255, 255, 255, 0.15); }
+html.gpe-dark .gpe-log-toggle:hover { background: rgba(255, 255, 255, 0.12); }
 
 /* emote picker + inline toggles */
 html.gpe-dark #gpe-picker-btn,

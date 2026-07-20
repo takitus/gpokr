@@ -61,19 +61,76 @@
     color: #c81818;
 }
 
-/* ---- End-of-hand card summary in the game log (3 columns: You / Board / Winner) ---- */
+/* ---- End-of-hand card summary in the game log (header + You/Board/Winner + detail) ---- */
 .gpe-log-cards {
     display: flex;
+    flex-direction: column; /* header, then card row, then the expandable detail */
     width: auto; /* span the full width of the log/text area */
     box-sizing: border-box;
-    align-items: flex-start;
-    gap: 14px;
+    gap: 5px;
     padding: 6px 9px;
     margin: 3px 8px 3px 0; /* add a right gap to match the log's left indent */
     background: rgba(0, 0, 0, 0.05);
     border-radius: 9px !important;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
+.gpe-log-win {
+    font: bold 12px/1.3 Arial, sans-serif;
+} /* "Name wins $x with <hand>" header; color inherits from the log */
+.gpe-log-cardrow {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+}
+.gpe-log-toggle {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 39px; /* line up with the card rows in the other columns */
+    font-size: 15px;
+    line-height: 1;
+    border-radius: 5px;
+    opacity: 0.7;
+}
+.gpe-log-toggle:hover { opacity: 1; background: rgba(0, 0, 0, 0.08); }
+/* per-player betting breakdown (grid: name | cards | pre | flop | turn | river | total) */
+.gpe-log-detail[hidden] { display: none; } /* explicit display:grid below would defeat the `hidden` attr otherwise */
+.gpe-log-detail {
+    display: grid;
+    grid-template-columns: 78px auto repeat(5, minmax(32px, max-content));
+    width: fit-content; /* hug the columns instead of stretching across the log */
+    max-width: 100%;    /* never widen the log; scroll if somehow too wide */
+    overflow-x: auto;
+    gap: 1px 6px;
+    align-items: center;
+    font: 11px/1.3 Arial, sans-serif;
+    margin-top: 2px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(0, 0, 0, 0.12);
+}
+.gpe-log-drow { display: contents; } /* let each cell participate in the parent grid */
+.gpe-log-dhead > span { font-weight: bold; opacity: 0.75; }
+.gpe-log-dname { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
+.gpe-log-dname-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* '...' long names */
+.gpe-log-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto; /* never shrink; the name text ellipsizes instead */
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #d8b23a;
+    color: #1a1a1a;
+    font: bold 9px/1 Arial, sans-serif;
+} /* small dealer-button badge after a name */
+.gpe-log-dcards { display: inline-flex; gap: 2px; }
+.gpe-log-dnum { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.gpe-log-dtot { font-weight: bold; }
+.gpe-log-detail .gpe-shared-card { width: 22px; height: 29px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
 .gpe-log-col {
     display: flex;
     flex-direction: column;
@@ -84,7 +141,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 120px; /* cap long player names so a column can't blow out the width */
+    max-width: 62px; /* = two cards' width (2*30 + 2 gap): a long winner name ellipsizes
+                        to the cards' width instead of widening the column */
 } /* color inherits from the log panel, so it reads in light and dark */
 .gpe-log-cards-group {
     display: inline-flex;

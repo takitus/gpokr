@@ -19,6 +19,7 @@
     let HOTKEYS = false;
     let DARK_MODE = false;
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
+    let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
     // Per-player bet readout: swap each seat's "Level" stat for the total the
     // player has bet/raised (calls excluded) over their last BET_WINDOW hands.
     let BET_READOUT = true;      // opt-out, like the bet buttons
@@ -100,6 +101,7 @@
         // Opt-out: only an explicit `false` turns the bet buttons off.
         const prevShowBet = SHOW_BET_BUTTONS;
         SHOW_BET_BUTTONS = !(s && s.showBetButtons === false);
+        HAND_SUMMARY = !(s && s.handSummary === false); // opt-out
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
@@ -182,7 +184,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -380,6 +382,39 @@
         return lastStart >= 0 ? lines.slice(lastStart) : lines;
     }
 
+    // The visible log is a rolling ~100-line window, so on long/multi-way hands
+    // early streets are trimmed before the hand ends. We accumulate the full
+    // current hand across polls by OVERLAP-MERGING the DOM's current-hand slice
+    // into handScopeBuf: only the genuinely-new tail is appended. This is immune
+    // to the log re-rendering the same rows (which doubled an append-on-mutation
+    // approach). Read via fullHandScope().
+    let handScopeBuf = [];
+    function domHandScope() {
+        const rows = Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML:not(.gpe-log-cards)"))
+            .map((r) => r.textContent.trim()).filter(Boolean);
+        let start = -1;
+        for (let i = rows.length - 1; i >= 0; i--) if (/^Starting Hand/i.test(rows[i])) { start = i; break; }
+        return start >= 0 ? rows.slice(start) : rows;
+    }
+    function updateHandScope() {
+        const dom = domHandScope();
+        if (!dom.length) return;
+        const buf = handScopeBuf;
+        if (!buf.length) { handScopeBuf = dom.slice(); return; }
+        // Largest k where buf's last k lines equal dom's first k lines (the overlap
+        // between what we've kept and the current window).
+        const eq = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+        let k = Math.min(buf.length, dom.length);
+        while (k > 0 && !eq(buf.slice(buf.length - k), dom.slice(0, k))) k--;
+        if (k === 0) handScopeBuf = dom.slice();          // no overlap -> new hand: replace
+        else handScopeBuf = buf.concat(dom.slice(k));     // append only the new tail
+    }
+    // Complete current-hand scope: the accumulated buffer when available, else
+    // the (possibly trimmed) DOM slice.
+    function fullHandScope() {
+        return handScopeBuf.length ? handScopeBuf : domHandScope();
+    }
+
     // Unique per-hand id, read from the end-of-hand log line
     // "Replay: <a href=.../games/<ID>>". Public and identical for every seat, so
     // sharer and receiver derive the same value. Returns null until the current
@@ -387,7 +422,7 @@
     // that logLines() drops — we read these rows directly and scope to the
     // stretch after the last "Starting Hand").
     function currentGameId() {
-        const rows = Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML"));
+        const rows = Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML:not(.gpe-log-cards)"));
         let lastStart = -1;
         for (let i = rows.length - 1; i >= 0; i--) {
             if (/Starting Hand/i.test(rows[i].textContent)) { lastStart = i; break; }
@@ -833,65 +868,253 @@
 
     // Winner of the just-ended hand and, if they showed, their cards — both from
     // the current hand's log ("NAME wins main|side pot $N", "NAME shows [..]").
-    function currentHandWinner() {
-        const scope = currentHandScope();
-        let winner = "";
-        for (const line of scope) {
-            const m = line.match(/^(.+?) wins main pot \$[\d,]+/i);
-            if (m) { winner = m[1].trim(); break; }
-        }
-        if (!winner) return null;
-        let cards = null;
-        for (const line of scope) {
-            const m = line.match(/^(.+?) shows \[([^,\]]+),\s*([^\]]+)\]/i);
-            if (m && m[1].trim() === winner) { cards = [normCard(m[2]), normCard(m[3])]; break; }
-        }
-        return { winner, cards };
+
+    // name -> seat index (from iogc-PlayerPanelN); button seat from gpokr-Dealer-N.
+    function seatNameMap() {
+        const map = {};
+        document.querySelectorAll('table[class*="iogc-PlayerPanel"]').forEach((p) => {
+            if (p.getBoundingClientRect().width === 0) return;
+            const m = (typeof p.className === "string" ? p.className : "").match(/iogc-PlayerPanel(\d+)/);
+            const nm = p.querySelector(".iogc-PlayerPanel-name");
+            const name = nm && nm.textContent.trim();
+            if (m && name) map[name] = parseInt(m[1], 10);
+        });
+        return map;
+    }
+    function buttonSeatIndex() {
+        const d = document.querySelector('[class*="gpokr-Dealer-"]');
+        const m = d && (typeof d.className === "string" ? d.className : "").match(/gpokr-Dealer-(\d+)/);
+        return m ? parseInt(m[1], 10) : null;
+    }
+    // {sb, bb} from the status label "$25 / $50" (first is small, second big).
+    function parseBlinds() {
+        const el = document.querySelector(".iogc-GameWindow-status");
+        const m = el && el.textContent.match(/\$\s*([\d,]+)\s*\/\s*\$\s*([\d,]+)/);
+        const n = (s) => parseInt(String(s).replace(/[^\d]/g, ""), 10) || 0;
+        return m ? { sb: n(m[1]), bb: n(m[2]) } : { sb: 0, bb: 0 };
     }
 
-    // Build the just-ended hand's summary as three stacked columns —
-    // You / Board / 🏆 winner — each a label above its cards. Returns the
-    // element (or null); read while the hand is still in scope. Local view only.
-    function buildHandSummaryRow() {
-        const mine = (readMyHand() || []).map(normCard);
-        const board = parseBoard();
-        const win = currentHandWinner();
-        if (!mine.length && !board.length && !win) return null; // nothing to show
-
-        const row = document.createElement("div");
-        row.className = "gpe-log-cards gwt-HTML";
-        const emptySlot = () => {
-            const s = document.createElement("span");
-            s.className = "gpe-shared-card gpe-log-slot"; // holds a card's space when empty
-            return s;
+    // Full breakdown of the just-ended hand for the expandable detail table.
+    // Bet amounts are reconstructed: bets/raises carry amounts in the log, calls
+    // don't (inferred as the current amount-to-match), and blinds aren't logged
+    // (seeded to SB/BB = the occupied seats clockwise after the button). Assumes
+    // "raises $N" is the raise-TO total. -> approximate, but sums to the pot.
+    function parseHandDetail() {
+        const scope = fullHandScope(); // complete hand, even if the DOM log trimmed early lines
+        const num = (s) => parseInt(String(s).replace(/,/g, ""), 10) || 0;
+        const seatOf = seatNameMap();
+        const P = {}, order = [];
+        const rec = (n) => {
+            if (!P[n]) { P[n] = { name: n, streets: [0, 0, 0, 0], foldStreet: null, cards: null }; order.push(n); }
+            return P[n];
         };
-        // `slots` fixes the number of card positions so every hand lines up;
-        // missing cards render as empty placeholders.
-        const col = (label, cards, slots) => {
-            const c = document.createElement("div");
-            c.className = "gpe-log-col";
-            const head = document.createElement("div");
-            head.className = "gpe-log-colhead";
-            head.textContent = label;
-            head.title = label; // full name on hover if the header is truncated
-            c.appendChild(head);
-            const g = document.createElement("div");
-            g.className = "gpe-log-cards-group";
-            const n = Math.max(slots, (cards || []).length);
-            for (let i = 0; i < n; i++) {
-                g.appendChild(cards && cards[i] ? makeCardEl(cards[i]) : emptySlot());
+
+        // Pass 1: who was dealt in (anyone who acted).
+        const actionRe = /^(.+?) (?:folds|checks|calls|bets \$[\d,]+|raises \$[\d,]+|shows \[)/i;
+        for (const line of scope) { const m = line.match(actionRe); if (m) rec(m[1].trim()); }
+        if (!order.length) return null;
+
+        // Blinds: SB = first occupied seat clockwise after the button, BB = next.
+        const { sb, bb } = parseBlinds();
+        const btnSeat = buttonSeatIndex();
+        let sbName = null, bbName = null, btnName = null;
+        const seated = order.filter((n) => seatOf[n] != null).sort((a, b) => seatOf[a] - seatOf[b]);
+        if (btnSeat != null && seated.length) {
+            btnName = seated.find((n) => seatOf[n] === btnSeat) || null;
+            let fa = seated.findIndex((n) => seatOf[n] > btnSeat);
+            if (fa < 0) fa = 0; // wrap past the highest seat
+            const rot = seated.slice(fa).concat(seated.slice(0, fa)); // clockwise after the button
+            if (seated.length === 2 && btnName) { sbName = btnName; bbName = rot.find((n) => n !== btnName) || null; }
+            else { sbName = rot[0] || null; bbName = rot[1] || null; }
+        }
+
+        // Pass 2: reconstruct per-street contributions.
+        let street = 0, toMatch = 0;
+        const streetIn = {};
+        const lastAgg = [null, null, null, null]; // last bettor/raiser per street (uncalled bets return to them)
+        if (bb) {
+            toMatch = bb;
+            if (sbName) { rec(sbName).streets[0] += sb; streetIn[sbName] = sb; }
+            if (bbName) { rec(bbName).streets[0] += bb; streetIn[bbName] = bb; }
+        }
+        let winner = "", winAmt = 0, winHand = "";
+        for (const line of scope) {
+            let m;
+            if ((m = line.match(/^Dealing (flop|turn|river)/i))) {
+                street = ["flop", "turn", "river"].indexOf(m[1].toLowerCase()) + 1;
+                toMatch = 0; for (const k in streetIn) delete streetIn[k];
+                continue;
             }
-            c.appendChild(g);
-            row.appendChild(c);
-        };
+            if ((m = line.match(/^(.+?) folds$/i))) { const r = rec(m[1].trim()); if (r.foldStreet == null) r.foldStreet = street; continue; }
+            if (/ checks$/i.test(line)) continue;
+            if ((m = line.match(/^(.+?) calls$/i))) {
+                const n = m[1].trim(), add = Math.max(0, toMatch - (streetIn[n] || 0));
+                streetIn[n] = (streetIn[n] || 0) + add; rec(n).streets[street] += add; continue;
+            }
+            if ((m = line.match(/^(.+?) (?:bets|raises) \$([\d,]+)$/i))) {
+                const n = m[1].trim(), to = num(m[2]), add = Math.max(0, to - (streetIn[n] || 0));
+                streetIn[n] = to; toMatch = Math.max(toMatch, to); rec(n).streets[street] += add;
+                lastAgg[street] = n; continue;
+            }
+            if ((m = line.match(/^(.+?) shows \[([^,\]]+),\s*([^\]]+)\]/i))) { rec(m[1].trim()).cards = [normCard(m[2]), normCard(m[3])]; continue; }
+            if ((m = line.match(/^(.+?) wins (?:main|side) pot \$([\d,]+)/i))) { const n = m[1].trim(); if (!winner) winner = n; winAmt += num(m[2]); }
+        }
+        // Winner's made-hand name from their "shows [..] for <hand>" line.
+        if (winner) {
+            for (const line of scope) {
+                const m = line.match(/^(.+?) shows \[[^\]]*\] for (.+)$/i);
+                if (m && m[1].trim() === winner) { winHand = m[2].trim(); break; }
+            }
+        }
 
-        // Always render all three columns with fixed slots so the layout is
-        // identical every hand — empty slots hold the space when you weren't
-        // dealt in, the board didn't fully run out, or there was no showdown.
+        // Return uncalled bets: the last aggressor on a street only contributes up
+        // to the most any other player put in that street; the excess is returned
+        // (not in the pot). Blinds/limps never trigger this (no aggressor).
+        for (let s = 0; s < 4; s++) {
+            const agg = lastAgg[s];
+            if (!agg) continue;
+            let otherMax = 0;
+            for (const n of order) if (n !== agg && P[n].streets[s] > otherMax) otherMax = P[n].streets[s];
+            if (P[agg].streets[s] > otherMax) P[agg].streets[s] = otherMax;
+        }
+
+        // Board + my hole cards, from the same complete scope.
+        const board = [];
+        for (const line of scope) {
+            const m = line.match(/Dealing (?:flop|turn|river):\s*\[([^\]]+)\]/i);
+            if (m) m[1].split(",").forEach((c) => board.push(normCard(c)));
+        }
+        let myCards = null;
+        const pocket = scope.find((t) => /pocket cards/i.test(t));
+        if (pocket) { const m = pocket.match(/\[([^,]+),\s*([^\]]+)\]/); if (m) myCards = [normCard(m[1]), normCard(m[2])]; }
+
+        const players = order.map((n) => ({
+            name: n, cards: P[n].cards, foldStreet: P[n].foldStreet, streets: P[n].streets,
+            total: P[n].streets.reduce((a, b) => a + b, 0), isButton: n === btnName,
+        })).sort((a, b) => (seatOf[a.name] != null ? seatOf[a.name] : 99) - (seatOf[b.name] != null ? seatOf[b.name] : 99));
+
+        return { winner, winAmt, winHand, players, board, myCards: myCards ? myCards.slice(0, 2) : null };
+    }
+
+    const STREET_LABELS = ["Pre", "Flop", "Turn", "River"];
+
+    // The collapsible per-player betting table (hidden until the arrow is clicked).
+    function buildHandDetailTable(detail) {
+        const wrap = document.createElement("div");
+        wrap.className = "gpe-log-detail";
+        wrap.hidden = true;
+        const cell = (txt, cls) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = txt; return s; };
+
+        const head = document.createElement("div");
+        head.className = "gpe-log-drow gpe-log-dhead";
+        head.appendChild(cell(""));       // name column
+        head.appendChild(cell("Cards"));
+        STREET_LABELS.concat(["Total"]).forEach((t) => head.appendChild(cell(t, "gpe-log-dnum"))); // money cols right-aligned
+        wrap.appendChild(head);
+
+        detail.players.forEach((p) => {
+            const row = document.createElement("div");
+            row.className = "gpe-log-drow";
+            const nameCell = document.createElement("span");
+            nameCell.className = "gpe-log-dname";
+            const nameText = document.createElement("span");
+            nameText.className = "gpe-log-dname-text";
+            nameText.textContent = p.name;
+            nameText.title = p.name; // full name on hover when truncated
+            nameCell.appendChild(nameText);
+            if (p.isButton) {
+                const b = document.createElement("span");
+                b.className = "gpe-log-btn"; b.textContent = "D"; b.title = "dealer button";
+                nameCell.appendChild(b);
+            }
+            row.appendChild(nameCell);
+
+            // Always two card positions; empty placeholders when not shown.
+            const cards = document.createElement("span");
+            cards.className = "gpe-log-dcards";
+            for (let i = 0; i < 2; i++) {
+                if (p.cards && p.cards[i]) cards.appendChild(makeCardEl(p.cards[i]));
+                else { const slot = document.createElement("span"); slot.className = "gpe-shared-card gpe-log-slot"; cards.appendChild(slot); }
+            }
+            row.appendChild(cards);
+
+            for (let s = 0; s < 4; s++) {
+                const parts = [];
+                if (p.streets[s] > 0) parts.push("$" + p.streets[s].toLocaleString());
+                if (p.foldStreet === s) parts.push("🏳️");
+                row.appendChild(cell(parts.join(" ") || "·", "gpe-log-dnum"));
+            }
+            row.appendChild(cell("$" + p.total.toLocaleString(), "gpe-log-dnum gpe-log-dtot"));
+            wrap.appendChild(row);
+        });
+        return wrap;
+    }
+
+    // Build the just-ended hand's summary: a "winner wins $x with <hand>" header,
+    // the You / Board / 🏆 winner card columns, an arrow that expands a per-player
+    // betting breakdown. Returns the element (or null). Local view only.
+    function buildHandSummaryRow() {
+        const detail = parseHandDetail();
+        // Prefer the detail's complete-scope reads (survive log trimming); fall back otherwise.
+        const mine = (detail && detail.myCards) ? detail.myCards : (readMyHand() || []).map(normCard);
+        const board = detail ? detail.board : parseBoard();
+        const win = detail && detail.winner ? detail : null;
+        if (!mine.length && !board.length && !win) return null; // nothing to show
+        const winnerCards = win ? ((win.players.find((p) => p.name === win.winner) || {}).cards) : null;
+
+        const panel = document.createElement("div");
+        panel.className = "gpe-log-cards gwt-HTML";
+
+        if (win) {
+            const h = document.createElement("div");
+            h.className = "gpe-log-win";
+            h.textContent = win.winner + " wins $" + win.winAmt.toLocaleString() + (win.winHand ? " with " + win.winHand : "");
+            panel.appendChild(h);
+        }
+
+        const cardRow = document.createElement("div");
+        cardRow.className = "gpe-log-cardrow";
+        const emptySlot = () => { const s = document.createElement("span"); s.className = "gpe-shared-card gpe-log-slot"; return s; };
+        const col = (label, cards, slots) => {
+            const c = document.createElement("div"); c.className = "gpe-log-col";
+            const head = document.createElement("div"); head.className = "gpe-log-colhead"; head.textContent = label; head.title = label; c.appendChild(head);
+            const g = document.createElement("div"); g.className = "gpe-log-cards-group";
+            const n = Math.max(slots, (cards || []).length);
+            for (let i = 0; i < n; i++) g.appendChild(cards && cards[i] ? makeCardEl(cards[i]) : emptySlot());
+            c.appendChild(g); cardRow.appendChild(c);
+        };
         col("You", mine, 2);
         col("Board", board, 5);
-        col(win ? "🏆 " + win.winner : "🏆", win && win.cards, 2);
-        return row;
+        col(win ? "🏆 " + win.winner : "🏆", winnerCards, 2);
+
+        // A "more" column after the winner, matching the other headers, whose
+        // button expands the per-player detail. Collapsed by default.
+        let detailEl = null;
+        if (detail && detail.players.length) {
+            detailEl = buildHandDetailTable(detail); // hidden initially (see CSS [hidden])
+            const moreCol = document.createElement("div");
+            moreCol.className = "gpe-log-col gpe-log-morecol";
+            const moreHead = document.createElement("div");
+            moreHead.className = "gpe-log-colhead";
+            moreHead.textContent = "more";
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "gpe-log-toggle";
+            toggle.textContent = "▸";
+            toggle.title = "show per-player betting";
+            toggle.addEventListener("click", (e) => {
+                e.preventDefault();
+                const open = detailEl.hasAttribute("hidden");
+                if (open) detailEl.removeAttribute("hidden"); else detailEl.setAttribute("hidden", "");
+                toggle.textContent = open ? "▾" : "▸";
+            });
+            moreCol.appendChild(moreHead);
+            moreCol.appendChild(toggle);
+            cardRow.appendChild(moreCol);
+        }
+        panel.appendChild(cardRow);
+        if (detailEl) panel.appendChild(detailEl);
+        return panel;
     }
 
     // The finished-hand summary, captured at hand end and dropped into the log
@@ -1571,7 +1794,8 @@
         ["gpe-show-odds", "odds HUD", "showOdds", () => SHOW_ODDS],
         ["gpe-show-stats", "player stats", "showStats", () => SHOW_STATS],
         ["gpe-dark-mode", "dark mode", "darkMode", () => DARK_MODE],
-        ["gpe-always-share", "always show cards", "shareHand", () => SHARE_HAND],
+        ["gpe-hand-summary", "hand summary", "handSummary", () => HAND_SUMMARY,
+            "recap panel in the game log at the end of each hand"],
         ["gpe-hotkeys", "keyboard shortcuts", "hotkeys", () => HOTKEYS,
             "F = fold · C = check/call · 1–9 = bet-size buttons · ↑/↓ = ±1 big blind"],
         ["gpe-bet-buttons", "bet buttons", "showBetButtons", () => SHOW_BET_BUTTONS],
@@ -2046,6 +2270,7 @@
     }
 
     function pollHandState() {
+        updateHandScope(); // accumulate the full hand across polls (survives log trimming)
         learnMyCards();
         learnBoardCards();
         learnShowdownCards();
@@ -2070,7 +2295,7 @@
             harvestHand(currentHandScope());
         }
 
-        if (ended && !loggedCardsThisHand) {
+        if (ended && !loggedCardsThisHand && HAND_SUMMARY) {
             loggedCardsThisHand = true;
             pendingLogSummary = buildHandSummaryRow(); // captured now; inserted when the next hand starts
         }
@@ -2409,7 +2634,7 @@
     // name is a profile link (e.g. tournament finishes) is dropped. textContent
     // here includes linked/bold names.
     function logRowTexts() {
-        return Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML"))
+        return Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML:not(.gpe-log-cards)"))
             .map((e) => e.textContent.trim()).filter(Boolean);
     }
 

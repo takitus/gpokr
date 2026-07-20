@@ -73,6 +73,11 @@ Show your hole cards to other extension users after a hand ends. The extension p
 
 The trailing `[checksum]` binds the reveal to your name and the hand's unique id (from the hand's replay link), so a copied-and-pasted line won't render on someone else's avatar and an old reveal can't be replayed; each reveal shows at most once per hand. The older `[gh:…]` token is still understood for backward compatibility.
 
+### End-of-hand summary
+When a hand ends, a compact panel is dropped into the game log (replacing the hand-divider) with a header — `Name wins $X with <hand>` — and three card columns: **You** (your hole cards), **Board**, and the **🏆 winner**. A **more** arrow expands a per-player breakdown: each player's cards (if shown), a dealer-button badge, and their bet totals by street (Pre / Flop / Turn / River / Total) with a 🏳️ marking where they folded.
+
+Betting is reconstructed from the log (which omits call amounts and blinds): calls are inferred as the amount-to-match, blinds are seeded to the SB/BB seats (the occupied seats clockwise of the button), and an uncalled bet is returned to its bettor — so the per-player totals sum to the pot. The full hand is accumulated across the log's rolling window, so long/multi-way hands aren't truncated. Local view only — nothing is sent to chat. Toggle it with **hand summary** in the tools tab.
+
 ### Card-image learning
 The site renders cards as inline images. The extension learns which image is which card from your own hands, the board, and showdowns — used to render shared hands as real card images (text fallback until learned). The popup shows progress (n / 52) and supports **Copy JSON** / **Import** to share a learned set between machines.
 

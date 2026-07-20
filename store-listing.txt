@@ -9,6 +9,9 @@ Send emoji reactions that pop over your avatar — any emoji, whether you pick i
 💬 QUICK-CHAT BUTTONS & CLICKABLE LINKS
 One-tap buttons under the chat box for the things you say every hand — gg, nh, ty, wp. Two smart tokens fill themselves in on click: [playername] becomes the last player to finish the tournament, and [lastwinner] becomes the winner of the last hand — so "gg [playername]" posts "gg Behr Necessities". Rename, reorder, add, or remove your own in a quick editor. And any link someone posts in chat becomes clickable — no more copy-pasting URLs.
 
+🃏 END-OF-HAND SUMMARY
+Every finished hand drops a tidy recap into the game log: who won, how much, and with what — plus your hole cards, the board, and the winner's cards at a glance. Expand it for a full per-player breakdown: each player's cards, who had the button, and how much everyone put in on each street (with a flag showing where they folded).
+
 📊 LIVE ODDS HUD
 See your hand the way the math sees it, updated as the action unfolds:
 • Win equity simulated against the live opponents at your table
