@@ -832,6 +832,95 @@
         wrap.appendChild(capEl);
     }
 
+    // Winner of the just-ended hand and, if they showed, their cards — both from
+    // the current hand's log ("NAME wins main|side pot $N", "NAME shows [..]").
+    function currentHandWinner() {
+        const scope = currentHandScope();
+        let winner = "";
+        for (const line of scope) {
+            const m = line.match(/^(.+?) wins (?:main|side) pot \$[\d,]+/i);
+            if (m) { winner = m[1].trim(); break; }
+        }
+        if (!winner) return null;
+        let cards = null;
+        for (const line of scope) {
+            const m = line.match(/^(.+?) shows \[([^,\]]+),\s*([^\]]+)\]/i);
+            if (m && m[1].trim() === winner) { cards = [normCard(m[2]), normCard(m[3])]; break; }
+        }
+        return { winner, cards };
+    }
+
+    // Build the just-ended hand's summary as three stacked columns —
+    // You / Board / 🏆 winner — each a label above its cards. Returns the
+    // element (or null); read while the hand is still in scope. Local view only.
+    function buildHandSummaryRow() {
+        const mine = (readMyHand() || []).map(normCard);
+        const board = parseBoard();
+        const win = currentHandWinner();
+        if (!mine.length && !board.length && !win) return null; // nothing to show
+
+        const row = document.createElement("div");
+        row.className = "gpe-log-cards gwt-HTML";
+        const emptySlot = () => {
+            const s = document.createElement("span");
+            s.className = "gpe-shared-card gpe-log-slot"; // holds a card's space when empty
+            return s;
+        };
+        // `slots` fixes the number of card positions so every hand lines up;
+        // missing cards render as empty placeholders.
+        const col = (label, cards, slots) => {
+            const c = document.createElement("div");
+            c.className = "gpe-log-col";
+            const head = document.createElement("div");
+            head.className = "gpe-log-colhead";
+            head.textContent = label;
+            head.title = label; // full name on hover if the header is truncated
+            c.appendChild(head);
+            const g = document.createElement("div");
+            g.className = "gpe-log-cards-group";
+            const n = Math.max(slots, (cards || []).length);
+            for (let i = 0; i < n; i++) {
+                g.appendChild(cards && cards[i] ? makeCardEl(cards[i]) : emptySlot());
+            }
+            c.appendChild(g);
+            row.appendChild(c);
+        };
+
+        // Always render all three columns with fixed slots so the layout is
+        // identical every hand — empty slots hold the space when you weren't
+        // dealt in, the board didn't fully run out, or there was no showdown.
+        col("You", mine, 2);
+        col("Board", board, 5);
+        col(win ? "🏆 " + win.winner : "🏆", win && win.cards, 2);
+        return row;
+    }
+
+    // The finished-hand summary, captured at hand end and dropped into the log
+    // when the next hand starts. The log draws a ".seperator" line between hands;
+    // we replace the most recent one with the summary panel so it sits exactly at
+    // the hand boundary (and doubles as the divider). Older summaries stay put, so
+    // you can scroll back. Falls back to inserting before the new "Starting Hand".
+    let pendingLogSummary = null;
+    function flushPendingLogSummary() {
+        if (!pendingLogSummary) return;
+        const container = document.querySelector(".iogc-MessagePanel-messages");
+        if (!container) { pendingLogSummary = null; return; }
+        const seps = container.querySelectorAll(".seperator");
+        const lastSep = seps.length ? seps[seps.length - 1] : null;
+        if (lastSep && lastSep.parentNode) {
+            lastSep.parentNode.replaceChild(pendingLogSummary, lastSep);
+        } else {
+            const rows = Array.from(container.querySelectorAll("div.gwt-HTML"));
+            let anchor = null;
+            for (let i = rows.length - 1; i >= 0; i--) {
+                if (/Starting Hand/i.test(rows[i].textContent)) { anchor = rows[i]; break; }
+            }
+            if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(pendingLogSummary, anchor);
+            else container.appendChild(pendingLogSummary);
+        }
+        pendingLogSummary = null;
+    }
+
     const handOverlays = new Map(); // player name -> overlay
     function showHandForName(name, cards, label) {
         if (!name || !cards || !cards.length) return;
@@ -1390,6 +1479,7 @@
     // ---------- end-of-hand watcher (auto-share + harvest, once per hand) ----------
     let sharedThisHand = false;
     let harvestedThisHand = false;
+    let loggedCardsThisHand = false;
     let lastEnded = false;
     let curGameId = null;   // most recent completed hand's id (from the Replay line)
     let prevGameId = null;  // the one before it — a one-hand grace for verification
@@ -1961,7 +2051,10 @@
         scanWinner();
 
         const ended = handHasEnded();
-        if (!ended && lastEnded) { sharedThisHand = false; harvestedThisHand = false; } // new hand began -> reset guards
+        if (!ended && lastEnded) {
+            sharedThisHand = false; harvestedThisHand = false; loggedCardsThisHand = false; // new hand began -> reset guards
+            flushPendingLogSummary(); // drop the finished hand's cards in before this new hand
+        }
         lastEnded = ended;
 
         noteGameId(currentGameId()); // track the current/previous hand id for verification
@@ -1970,6 +2063,11 @@
         if (ended && !harvestedThisHand) {
             harvestedThisHand = true;
             harvestHand(currentHandScope());
+        }
+
+        if (ended && !loggedCardsThisHand) {
+            loggedCardsThisHand = true;
+            pendingLogSummary = buildHandSummaryRow(); // captured now; inserted when the next hand starts
         }
 
         if (ended && !sharedThisHand && (SHARE_HAND || shareNextHand || LOCAL_TEST)) {
@@ -2310,14 +2408,20 @@
             .map((e) => e.textContent.trim()).filter(Boolean);
     }
 
-    // Bottom-most line matching `re` (capture group 1 = name); advances the
-    // tracker only when that line is a new one, so it survives the line later
-    // scrolling out of the log.
+    // Bottom-most line matching `re` (capture group 1 = name) whose name isn't
+    // mine — the quick-chat tokens must always refer to someone else, never the
+    // logged-in player. Advances the tracker only when that line is a new one,
+    // so it survives the line later scrolling out of the log.
     function scanLastName(re, prevLine, set) {
+        const me = getMyName();
         const rows = logRowTexts();
         for (let i = rows.length - 1; i >= 0; i--) {
             const m = rows[i].match(re);
-            if (m) { if (rows[i] !== prevLine) set(rows[i], m[1].trim()); return; }
+            if (!m) continue;
+            const name = m[1].trim();
+            if (me && name === me) continue; // skip myself; look further back for someone else
+            if (rows[i] !== prevLine) set(rows[i], name);
+            return;
         }
     }
 
