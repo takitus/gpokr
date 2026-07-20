@@ -42,12 +42,11 @@
     // defaults are built-in and can't be edited/removed; users add their own via
     // the editor modal (stored in settings.chatButtons). "[playername]" in a
     // template is replaced on click with the last player to leave/bust.
-    // One pinned, uneditable button, always first. Its short `name` keeps the
-    // long "[playername]" template from bloating the row. The rest are seeded
-    // defaults the user can rename, reorder, or remove entirely.
-    const PINNED_CHAT_BTN = { name: "gg", text: "gg [playername]" };
+    // All buttons are seeded defaults the user can rename, reorder, or remove
+    // entirely. Short `name`s keep long "[..]" templates from bloating the row.
     const DEFAULT_CHAT_BTNS = [
-        { name: "nh", text: "nh [lastwinner]" },
+        { name: "gg*", text: "gg [playername]" },
+        { name: "nh*", text: "nh [lastwinner]" },
         { name: "ty", text: "ty" },
         { name: "wp", text: "wp" },
     ];
@@ -917,6 +916,12 @@
             }
             if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(pendingLogSummary, anchor);
             else container.appendChild(pendingLogSummary);
+        }
+        // The panel is taller than the separator it replaced, so re-scroll to the
+        // bottom (the log's scroller may be the container or an ancestor).
+        let sc = container;
+        for (let i = 0; sc && sc !== document.body && i < 6; i++, sc = sc.parentElement) {
+            if (sc.scrollHeight - sc.clientHeight > 1) { sc.scrollTop = sc.scrollHeight; break; }
         }
         pendingLogSummary = null;
     }
@@ -2451,7 +2456,7 @@
         const wrap = document.getElementById("gpe-chat-btns");
         if (!wrap) return;
         wrap.textContent = "";
-        [PINNED_CHAT_BTN].concat(CHAT_CONFIG).forEach((b) => {
+        CHAT_CONFIG.forEach((b) => {
             const btn = document.createElement("button");
             btn.type = "button";
             btn.className = "gpe-chat-btn";
@@ -2515,21 +2520,7 @@
         if (!wrap) return;
         wrap.textContent = "";
 
-        // The pinned button: shown for context, locked.
-        const pin = document.createElement("div");
-        pin.className = "gpe-bet-erow gpe-chat-erow gpe-locked";
-        const lock = document.createElement("span");
-        lock.className = "gpe-drag";
-        lock.textContent = "🔒";
-        lock.title = "built-in — can't be removed";
-        const pName = document.createElement("input");
-        pName.type = "text"; pName.className = "gpe-chat-name"; pName.value = PINNED_CHAT_BTN.name; pName.disabled = true;
-        const pText = document.createElement("input");
-        pText.type = "text"; pText.className = "gpe-chat-text"; pText.value = PINNED_CHAT_BTN.text; pText.disabled = true;
-        pin.append(lock, pName, pText);
-        wrap.appendChild(pin);
-
-        // The user's own buttons: editable, draggable, removable.
+        // Every button is editable, draggable, and removable.
         chatEditorList.forEach((b, i) => {
             const row = document.createElement("div");
             row.className = "gpe-bet-erow gpe-chat-erow";
@@ -2611,7 +2602,7 @@
         hint.className = "gpe-modal-hint";
         hint.textContent = "Name is the button label (defaults to the message). The message is " +
             "what gets posted — use [playername] (last to finish the tournament) or " +
-            "[lastwinner] (winner of the last hand). The 🔒 button can't be removed; drag ⠿ to reorder your own.";
+            "[lastwinner] (winner of the last hand). Add, rename, remove, or drag ⠿ to reorder.";
 
         modal.append(head, rows, add, hint);
         backdrop.appendChild(modal);
