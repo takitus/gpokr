@@ -838,7 +838,7 @@
         const scope = currentHandScope();
         let winner = "";
         for (const line of scope) {
-            const m = line.match(/^(.+?) wins (?:main|side) pot \$[\d,]+/i);
+            const m = line.match(/^(.+?) wins main pot \$[\d,]+/i);
             if (m) { winner = m[1].trim(); break; }
         }
         if (!winner) return null;
