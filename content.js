@@ -147,12 +147,12 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, .gpe-side-study"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
-    document.querySelectorAll(".gpe-tools-active, .gpe-tab-tools, .gpe-tab-roster, .gpe-tab-bets").forEach((el) =>
-        el.classList.remove("gpe-tools-active", "gpe-tab-tools", "gpe-tab-roster", "gpe-tab-bets"));
+    document.querySelectorAll(".gpe-tools-active, .gpe-tab-tools, .gpe-tab-roster, .gpe-tab-bets, .gpe-tab-study").forEach((el) =>
+        el.classList.remove("gpe-tools-active", "gpe-tab-tools", "gpe-tab-roster", "gpe-tab-bets", "gpe-tab-study"));
 
     // ---------- helpers: name -> avatar ----------
     function getSeatName(panel) {
@@ -241,6 +241,18 @@
         if (EXT_STORE) { try { EXT_STORE.set({ [PLAYER_STATS_KEY]: playerStats }); } catch (e) {} }
     }
 
+    // Research log: one append-only record per hand we're dealt into, capturing
+    // the quality of the cards we were given (preflop strength + how well they
+    // fit the board that came) alongside our prior actions and chip state — the
+    // raw material for testing whether the deal depends on past betting/stacks.
+    // Per-hand facts only; lags/windows are derived at analysis time.
+    const RESEARCH_KEY = "gpe_research_log";
+    const RESEARCH_MAX = 5000;
+    let researchLog = [];
+    function saveResearch() {
+        if (EXT_STORE) { try { EXT_STORE.set({ [RESEARCH_KEY]: researchLog }); } catch (e) {} }
+    }
+
     // Free-text per-player notes (declared here: initStorage() runs at boot
     // and reads this key, so it must exist before that call).
     const NOTES_KEY = "gpe_player_notes";
@@ -278,7 +290,7 @@
             cardStore = legacyLocalStorageCardStore();
             return;
         }
-        EXT_STORE.get(["gpe_settings", CARD_STORE_KEY, PLAYER_STATS_KEY, NOTES_KEY], (res) => {
+        EXT_STORE.get(["gpe_settings", CARD_STORE_KEY, PLAYER_STATS_KEY, NOTES_KEY, RESEARCH_KEY], (res) => {
             if (res.gpe_settings) {
                 const s = res.gpe_settings;
                 if (!s.betAllInMigrated) { migrateAllIn(s); EXT_STORE.set({ gpe_settings: s }); }
@@ -291,6 +303,7 @@
             }
             playerStats = res[PLAYER_STATS_KEY] || {};
             playerNotes = res[NOTES_KEY] || {};
+            if (Array.isArray(res[RESEARCH_KEY])) researchLog = res[RESEARCH_KEY];
             let stored = res[CARD_STORE_KEY];
             if (!stored) {
                 stored = legacyLocalStorageCardStore();
@@ -307,6 +320,7 @@
             if (changes[CARD_STORE_KEY]) cardStore = changes[CARD_STORE_KEY].newValue || {};
             if (changes[PLAYER_STATS_KEY]) playerStats = changes[PLAYER_STATS_KEY].newValue || {};
             if (changes[NOTES_KEY]) playerNotes = changes[NOTES_KEY].newValue || {};
+            if (changes[RESEARCH_KEY]) researchLog = changes[RESEARCH_KEY].newValue || [];
         });
     }
     initStorage();
@@ -912,8 +926,92 @@
     // "NAME wins main|side pot $N", "NAME shows [..] for <hand>".
     // Names may contain spaces. Blinds are never logged.
     function harvestHand(lines) {
-        updatePlayerStats(lines);
+        const per = updatePlayerStats(lines);
         recordSessionPoint();
+        recordResearchPoint(lines, per);
+    }
+
+    // Append one research record for the hand we just played (skipped if we
+    // weren't dealt in or the odds module is unavailable). Captures the quality
+    // of our cards (preflop strength + fit to the board), our actions this hand,
+    // and our chip state at the deal — see RESEARCH_KEY.
+    function recordResearchPoint(lines, per) {
+        const O = window.GPE_ODDS;
+        if (!O) return;
+        const me = getMyName();
+        if (!me) return;
+        const hole = readMyHand(); // ["Qc","7c"] only when we were dealt in
+        if (!hole || hole.length < 2) return;
+        const h = hole.map(normCard);
+        let holeStrength = null;
+        try {
+            // holePercentile is inverted (0 = strongest); flip so higher = better.
+            holeStrength = 1 - O.holePercentile(O.cardToInt(h[0]), O.cardToInt(h[1]));
+        } catch (e) { return; }
+        const board = parseBoard();
+        let boardFit = null, madeCat = null;
+        if (board.length >= 3) {
+            try {
+                boardFit = boardFitPctile(h, board);
+                madeCat = O.evaluateBest(h.concat(board).map(O.cardToInt)) >>> 20; // 0..8
+            } catch (e) { boardFit = null; }
+        }
+        const mine = (per && per[me]) || { actions: [], vpip: 0, pfr: 0, showdown: 0 };
+        const acts = mine.actions || [];
+        const sumType = (tp) => acts.filter((a) => a.type === tp).reduce((s, a) => s + (a.amount || 0), 0);
+        const byStreet = [0, 0, 0, 0];
+        acts.forEach((a) => { if (a.street != null) byStreet[a.street] += (a.amount || 0); });
+        const won = lines.some((l) => l.indexOf(me + " wins ") === 0) ? 1 : 0;
+
+        // Cross-player: everyone whose cards were shown at showdown, with their
+        // card quality for this board and their prior aggression / stack at the
+        // deal. Lets us ask "did the bigger prior-bettor get the better cards?"
+        // NOTE: shown hands are selection-biased (winners show, losers muck).
+        const showdown = [];
+        for (const line of lines) {
+            const sm = line.match(/^(.+?) shows \[([^\]]+)\]/i);
+            if (!sm) continue;
+            const nm = sm[1].trim();
+            const cs = sm[2].split(",").map((x) => normCard(x.trim())).filter(Boolean);
+            if (cs.length < 2) continue;
+            let hs = null, bf = null;
+            try { hs = 1 - O.holePercentile(O.cardToInt(cs[0]), O.cardToInt(cs[1])); } catch (e) {}
+            if (board.length >= 3) { try { bf = boardFitPctile(cs, board); } catch (e) {} }
+            const pj = (per && per[nm]) || { actions: [] };
+            const betThis = (pj.actions || []).reduce((a, x) => a + (x.amount || 0), 0);
+            showdown.push({
+                name: nm, isMe: nm === me ? 1 : 0,
+                hole: cs, holeStrength: hs, boardFit: bf,
+                betThis: betThis,
+                priorAggr: handStartPriorAggr[nm] || 0,
+                stack: handStartStackByName[nm] || 0,
+            });
+        }
+
+        researchLog.push({
+            t: Date.now(),
+            gameId: currentGameId(),
+            table: handStartTable || currentTableName(),
+            hole: h,
+            holeStrength: holeStrength,          // preflop starting strength (0..1)
+            boardLen: board.length,
+            board: board.slice(),
+            boardFit: boardFit,                  // fit to the board that came (0..1) — the key metric
+            madeCat: madeCat,                    // made-hand category 0..8 (null if no board)
+            myBet: sumType("bet"),
+            myRaise: sumType("raise"),
+            myActs: acts.length,
+            byStreet: byStreet,                  // $ (bet+raise) per street [pf, flop, turn, river]
+            stack: handStartStack || myStack(),  // chips at the deal
+            stackRank: handStartRank || myStackRank(),
+            vpip: mine.vpip ? 1 : 0,
+            pfr: mine.pfr ? 1 : 0,
+            sawShowdown: mine.showdown ? 1 : 0,
+            won: won,
+            showdown: showdown.length ? showdown : undefined, // shown players (cross-player test)
+        });
+        if (researchLog.length > RESEARCH_MAX) researchLog = researchLog.slice(-RESEARCH_MAX);
+        saveResearch();
     }
 
     // ---------- session tracker (my stack after each hand) ----------
@@ -1024,7 +1122,7 @@
             }
         }
         const names = Object.keys(per);
-        if (!names.length) return;
+        if (!names.length) return per;
         for (const n of names) {
             const h = per[n];
             const t = migrateStat(playerStats[n] || freshStat());
@@ -1043,6 +1141,7 @@
             playerStats[n] = t;
         }
         savePlayerStats();
+        return per;
     }
 
     // ---------- player notes ----------
@@ -1284,6 +1383,40 @@
     let sharedThisHand = false;
     let harvestedThisHand = false;
     let lastEnded = false;
+    // Chip state captured at the start of each hand (before this hand's action),
+    // for the research log — the stack/rank/table that were true when dealt.
+    let handStartStack = 0, handStartRank = 0, handStartTable = "";
+    // Per-seated-player snapshots at the deal, for the cross-player test: prior
+    // aggression (previous hands, this table — before the current hand is added)
+    // and chip stack, keyed by name.
+    let handStartPriorAggr = {}, handStartStackByName = {};
+
+    // Sum of a player's bet+raise over their last K recorded hands at `table`.
+    function priorAggrSum(name, table, K) {
+        const t = playerStats[name];
+        if (!t) return 0;
+        migrateStat(t);
+        const here = t.betHands.filter((h) => h.table === table).slice(-K);
+        return here.reduce((s, h) => s + h.actions.reduce((a, x) => a + (x.amount || 0), 0), 0);
+    }
+
+    // Snapshot deal-time state for every visible seat (called at hand start,
+    // before this hand's actions have been recorded into betHands).
+    function snapshotDealState() {
+        handStartStack = myStack();
+        handStartRank = myStackRank();
+        handStartTable = currentTableName();
+        handStartPriorAggr = {};
+        handStartStackByName = {};
+        const seen = new Set();
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            const name = getSeatName(p);
+            if (!name || seen.has(name) || p.getBoundingClientRect().width === 0) continue;
+            seen.add(name);
+            handStartPriorAggr[name] = priorAggrSum(name, handStartTable, RESEARCH_LAG);
+            handStartStackByName[name] = seatChips(p);
+        }
+    }
     let curGameId = null;   // most recent completed hand's id (from the Replay line)
     let prevGameId = null;  // the one before it — a one-hand grace for verification
 
@@ -1409,14 +1542,16 @@
         renderBetsList();
     }
 
-    const SIDE_TAB_ORDER = ["site", "tools", "roster", "bets"];
+    const SIDE_TAB_ORDER = ["site", "tools", "roster", "bets", "study"];
     function applySideTabState() {
         const inner = document.querySelector(".iogc-LoginPanel .iogc-SidePanel-inner");
         if (!inner) return;
         inner.classList.toggle("gpe-tab-tools", sideTab === "tools");
         inner.classList.toggle("gpe-tab-roster", sideTab === "roster");
         inner.classList.toggle("gpe-tab-bets", sideTab === "bets");
+        inner.classList.toggle("gpe-tab-study", sideTab === "study");
         if (sideTab === "bets") renderBetsList();
+        if (sideTab === "study") renderStudy();
         const tabs = inner.querySelector(":scope > .gpe-side-tabs");
         if (!tabs) return;
         Array.from(tabs.children).forEach((b, i) =>
@@ -1455,7 +1590,7 @@
 
         const tabs = document.createElement("div");
         tabs.className = "gpe-side-tabs";
-        [["gpokr", "site"], ["tools", "tools"], ["table", "roster"], ["bets", "bets"]].forEach(([label, tab]) => {
+        [["gpokr", "site"], ["tools", "tools"], ["table", "roster"], ["bets", "bets"], ["study", "study"]].forEach(([label, tab]) => {
             const b = document.createElement("button");
             b.type = "button";
             b.textContent = label;
@@ -1548,10 +1683,18 @@
         betsPane.appendChild(betsHead);
         betsPane.appendChild(betsList);
 
+        // "study" research/analysis tab
+        const studyPane = document.createElement("div");
+        studyPane.className = "gpe-side-study";
+        const study = document.createElement("div");
+        study.id = "gpe-study";
+        studyPane.appendChild(study);
+
         inner.prepend(tabs);
         inner.appendChild(pane);
         inner.appendChild(rosterPane);
         inner.appendChild(betsPane);
+        inner.appendChild(studyPane);
         syncSideOptionsUI();
         applySideTabState();
         renderRoster();
@@ -1600,6 +1743,281 @@
             row.appendChild(val);
             list.appendChild(row);
         });
+    }
+
+    // ---------- research: is the deal independent of the past? ----------
+    // Pure stats over researchLog. The theory predicts card quality (holeStrength
+    // / boardFit) rises with prior betting or chip stack; under a fair deal every
+    // correlation is ~0. We report Spearman rho + a permutation p (assumption-
+    // free) for the primary relationship, plus a feature x metric rho table.
+    const RESEARCH_LAG = 5; // prior-hand window used for the live readout
+
+    function rankArray(a) { // fractional ranks (average ties)
+        const idx = a.map((v, i) => [v, i]).sort((x, y) => x[0] - y[0]);
+        const r = new Array(a.length);
+        for (let i = 0; i < idx.length;) {
+            let j = i;
+            while (j < idx.length && idx[j][0] === idx[i][0]) j++;
+            const avg = (i + j - 1) / 2 + 1;
+            for (let k = i; k < j; k++) r[idx[k][1]] = avg;
+            i = j;
+        }
+        return r;
+    }
+    function pearson(a, b) {
+        const n = a.length;
+        if (n < 3) return null;
+        let sa = 0, sb = 0;
+        for (let i = 0; i < n; i++) { sa += a[i]; sb += b[i]; }
+        const ma = sa / n, mb = sb / n;
+        let num = 0, da = 0, db = 0;
+        for (let i = 0; i < n; i++) {
+            const x = a[i] - ma, y = b[i] - mb;
+            num += x * y; da += x * x; db += y * y;
+        }
+        return da && db ? num / Math.sqrt(da * db) : 0;
+    }
+    function spearman(xs, ys) { return pearson(rankArray(xs), rankArray(ys)); }
+
+    // Two-sided permutation p: how often a reshuffle beats the observed |rho|.
+    function permutationP(xs, ys, iters) {
+        const rx = rankArray(xs), ry = rankArray(ys);
+        const obs = Math.abs(pearson(rx, ry));
+        const shuf = ry.slice();
+        let ge = 0;
+        for (let it = 0; it < iters; it++) {
+            for (let i = shuf.length - 1; i > 0; i--) { // Fisher-Yates
+                const j = Math.floor(Math.random() * (i + 1));
+                const tmp = shuf[i]; shuf[i] = shuf[j]; shuf[j] = tmp;
+            }
+            if (Math.abs(pearson(rx, shuf)) >= obs - 1e-12) ge++;
+        }
+        return (ge + 1) / (iters + 1);
+    }
+
+    // Turn the raw log into feature rows: each hand's card-quality metrics plus
+    // deal-time predictors, including prior-hand aggression at the SAME table.
+    function researchRows() {
+        const out = [];
+        for (let i = 0; i < researchLog.length; i++) {
+            const r = researchLog[i];
+            let priorAggr = 0, priorN = 0;
+            for (let j = i - 1; j >= 0 && researchLog[j].table === r.table && priorN < RESEARCH_LAG; j--) {
+                priorAggr += (researchLog[j].myBet || 0) + (researchLog[j].myRaise || 0);
+                priorN++;
+            }
+            out.push({
+                holeStrength: r.holeStrength,
+                boardFit: r.boardFit,
+                priorAggr, priorN,
+                stack: r.stack || 0,
+                stackRank: r.stackRank || 0,
+            });
+        }
+        return out;
+    }
+
+    // rho for one predictor vs one card-quality metric over the usable rows.
+    function corrOf(rows, xKey, yKey, needPrior) {
+        const xs = [], ys = [];
+        for (const r of rows) {
+            if (needPrior && r.priorN < 1) continue;
+            if (r[yKey] == null) continue;
+            xs.push(r[xKey]); ys.push(r[yKey]);
+        }
+        if (xs.length < 5) return { n: xs.length, rho: null };
+        return { n: xs.length, rho: spearman(xs, ys) };
+    }
+
+    function computeStudy() {
+        const rows = researchRows();
+        const withBoard = rows.filter((r) => r.boardFit != null).length;
+        // Predictor x metric grid (rho only; the primary also gets a permutation p).
+        const grid = [
+            ["prior bet/raise", "priorAggr", true],
+            ["chip stack", "stack", false],
+            ["chip rank", "stackRank", false],
+        ].map(([label, key, needPrior]) => ({
+            label,
+            hole: corrOf(rows, key, "holeStrength", needPrior),
+            board: corrOf(rows, key, "boardFit", needPrior),
+        }));
+        // Headline tests of the actual hypothesis — prior betting predicts being
+        // dealt good cards. Two forms, each with a permutation p (assumption-
+        // free): raw dealt-card quality (holeStrength, the most direct + fully
+        // observed) and fit to the board that came (boardFit). Cached by sig.
+        function permPrimary(yKey) {
+            const xs = [], ys = [];
+            for (const r of rows) {
+                if (r.priorN < 1 || r[yKey] == null) continue;
+                xs.push(r.priorAggr); ys.push(r[yKey]);
+            }
+            if (xs.length < 20) return { n: xs.length, rho: null, p: null };
+            return { n: xs.length, rho: spearman(xs, ys), p: permutationP(xs, ys, 3000) };
+        }
+        const primaryHole = permPrimary("holeStrength");
+        const primaryBoard = permPrimary("boardFit");
+        // Cross-player: within each showdown, is the bigger prior-bettor also the
+        // one with the better cards for that board? Pool all within-hand pairs
+        // and measure concordance (fair deal -> ~50%).
+        let conc = 0, disc = 0, sdHands = 0;
+        for (const r of researchLog) {
+            const sd = r.showdown;
+            if (!Array.isArray(sd)) continue;
+            const parts = sd.filter((x) => x.boardFit != null && x.priorAggr != null);
+            if (parts.length < 2) continue;
+            sdHands++;
+            for (let i = 0; i < parts.length; i++) {
+                for (let j = i + 1; j < parts.length; j++) {
+                    const a = parts[i], b = parts[j];
+                    if (a.priorAggr === b.priorAggr || a.boardFit === b.boardFit) continue;
+                    if ((a.priorAggr > b.priorAggr) === (a.boardFit > b.boardFit)) conc++; else disc++;
+                }
+            }
+        }
+        const pairs = conc + disc;
+        const cross = {
+            hands: sdHands, pairs,
+            frac: pairs ? conc / pairs : null,
+            z: pairs ? (conc - pairs / 2) / Math.sqrt(pairs / 4) : null,
+        };
+        return { total: rows.length, withBoard, grid, primaryHole, primaryBoard, cross };
+    }
+
+    // Flatten the log to CSV (one row per hand) for offline analysis.
+    function researchCsv() {
+        const cols = ["t", "table", "gameId", "hole", "holeStrength", "boardLen",
+            "board", "boardFit", "madeCat", "myBet", "myRaise", "myActs",
+            "bet_pf", "bet_flop", "bet_turn", "bet_river", "stack", "stackRank",
+            "vpip", "pfr", "sawShowdown", "won", "nShown"];
+        const esc = (v) => {
+            const s = v == null ? "" : String(v);
+            return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+        };
+        const lines = [cols.join(",")];
+        for (const r of researchLog) {
+            const bs = r.byStreet || [0, 0, 0, 0];
+            lines.push([r.t, r.table, r.gameId, (r.hole || []).join(" "), r.holeStrength,
+                r.boardLen, (r.board || []).join(" "), r.boardFit, r.madeCat,
+                r.myBet, r.myRaise, r.myActs, bs[0], bs[1], bs[2], bs[3],
+                r.stack, r.stackRank, r.vpip, r.pfr, r.sawShowdown, r.won,
+                (r.showdown || []).length].map(esc).join(","));
+        }
+        return lines.join("\n");
+    }
+
+    function downloadText(filename, text, mime) {
+        const blob = new Blob([text], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 200);
+    }
+
+    let studyClearArmed = false;
+    function renderStudy() {
+        const box = document.getElementById("gpe-study");
+        if (!box) return;
+        const s = computeStudy();
+        const sig = s.total + "|" + s.withBoard + "|" + (s.primaryHole && s.primaryHole.rho) +
+            "|" + (s.primaryBoard && s.primaryBoard.rho) + "|" + (s.cross && s.cross.pairs);
+        if (box._gpeSig === sig) return;
+        box._gpeSig = sig;
+        box.textContent = "";
+
+        const fmtRho = (c) => c.rho == null ? "—" : (c.rho >= 0 ? "+" : "") + c.rho.toFixed(3);
+        const head = document.createElement("div");
+        head.className = "gpe-study-head";
+        head.textContent = "deal-fairness test";
+        box.appendChild(head);
+
+        const nline = document.createElement("div");
+        nline.className = "gpe-study-n";
+        nline.textContent = s.total + " hands logged · " + s.withBoard + " with a board";
+        box.appendChild(nline);
+
+        if (s.total < 30) {
+            const note = document.createElement("div");
+            note.className = "gpe-study-note";
+            note.textContent = "Play more hands — a fair-deal test needs a few hundred+ before it means much.";
+            box.appendChild(note);
+        }
+
+        // Headline tests of the hypothesis: does prior betting predict good cards?
+        const primLine = (label, res, needWord) => {
+            const el = document.createElement("div");
+            el.className = "gpe-study-primary";
+            if (res.rho == null) {
+                el.textContent = label + ": need more " + needWord;
+            } else {
+                const flag = res.p < 0.01 ? " ⚠" : "";
+                el.textContent = label + ":  ρ=" + (res.rho >= 0 ? "+" : "") +
+                    res.rho.toFixed(3) + "  p=" + res.p.toFixed(3) + flag;
+            }
+            box.appendChild(el);
+        };
+        primLine("prior bet → dealt cards", s.primaryHole, "hands");
+        primLine("prior bet → board fit", s.primaryBoard, "boards");
+
+        // rho grid
+        const tbl = document.createElement("div");
+        tbl.className = "gpe-study-grid";
+        const hdr = document.createElement("div");
+        hdr.className = "gpe-study-row gpe-study-grid-head";
+        hdr.innerHTML = "<span></span><span>hole</span><span>board</span>";
+        tbl.appendChild(hdr);
+        for (const g of s.grid) {
+            const row = document.createElement("div");
+            row.className = "gpe-study-row";
+            const a = document.createElement("span"); a.textContent = g.label;
+            const b = document.createElement("span"); b.textContent = fmtRho(g.hole);
+            const c = document.createElement("span"); c.textContent = fmtRho(g.board);
+            row.appendChild(a); row.appendChild(b); row.appendChild(c);
+            tbl.appendChild(row);
+        }
+        box.appendChild(tbl);
+
+        // cross-player concordance
+        const cross = document.createElement("div");
+        cross.className = "gpe-study-primary";
+        if (!s.cross.pairs) {
+            cross.textContent = "cross-player: no multi-way showdowns yet";
+        } else {
+            const flag = Math.abs(s.cross.z) > 2.58 ? " ⚠" : "";
+            cross.textContent = "cross-player: bigger prior-bettor got better cards " +
+                Math.round(s.cross.frac * 100) + "% (" + s.cross.pairs + " pairs, " +
+                s.cross.hands + " showdowns)" + flag;
+        }
+        box.appendChild(cross);
+
+        const hint = document.createElement("div");
+        hint.className = "gpe-study-note";
+        hint.textContent = "ρ≈0 and cross-player≈50% = deal independent of the past (expected if fair). Export for the full test.";
+        box.appendChild(hint);
+
+        // buttons
+        const btns = document.createElement("div");
+        btns.className = "gpe-study-btns";
+        const csvBtn = document.createElement("button");
+        csvBtn.type = "button"; csvBtn.textContent = "CSV"; csvBtn.title = "Export the research log as CSV";
+        csvBtn.addEventListener("click", () => downloadText("gpokr-research.csv", researchCsv(), "text/csv"));
+        const jsonBtn = document.createElement("button");
+        jsonBtn.type = "button"; jsonBtn.textContent = "JSON"; jsonBtn.title = "Export the research log as JSON";
+        jsonBtn.addEventListener("click", () => downloadText("gpokr-research.json", JSON.stringify(researchLog), "application/json"));
+        const clrBtn = document.createElement("button");
+        clrBtn.type = "button";
+        clrBtn.className = "gpe-study-clear";
+        clrBtn.textContent = studyClearArmed ? "sure?" : "Clear";
+        clrBtn.addEventListener("click", () => {
+            if (!studyClearArmed) { studyClearArmed = true; clrBtn.textContent = "sure?"; return; }
+            researchLog = []; saveResearch(); studyClearArmed = false;
+            box._gpeSig = null; renderStudy();
+        });
+        btns.appendChild(csvBtn); btns.appendChild(jsonBtn); btns.appendChild(clrBtn);
+        box.appendChild(btns);
     }
 
     // ---------- who's here roster ----------
@@ -1852,7 +2270,10 @@
         trackRoster();
 
         const ended = handHasEnded();
-        if (!ended && lastEnded) { sharedThisHand = false; harvestedThisHand = false; } // new hand began -> reset guards
+        if (!ended && lastEnded) { // new hand began -> reset guards, snapshot deal-time state
+            sharedThisHand = false; harvestedThisHand = false;
+            snapshotDealState();
+        }
         lastEnded = ended;
 
         noteGameId(currentGameId()); // track the current/previous hand id for verification
@@ -1953,6 +2374,51 @@
             if (v) return v;
         }
         return 0;
+    }
+
+    // My chip rank among seated players (1 = most chips). 0 if not seated.
+    function myStackRank() {
+        const me = getMyName();
+        if (!me) return 0;
+        let mine = null;
+        const stacks = [];
+        const seen = new Set();
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            const name = getSeatName(p);
+            if (!name || seen.has(name) || p.getBoundingClientRect().width === 0) continue;
+            seen.add(name);
+            const c = seatChips(p);
+            stacks.push(c);
+            if (name === me) mine = c;
+        }
+        if (mine == null) return 0;
+        return 1 + stacks.filter((s) => s > mine).length;
+    }
+
+    // How well a two-card holding fits a given board: the percentile of its best
+    // made hand against ALL possible two-card holdings on that same board
+    // (0..1, higher = stronger; ties split). Under a fair deal this is uniform
+    // regardless of the past, so it's the core "were the dealt cards good for
+    // what came?" measure. Needs GPE_ODDS and a board of >=3 cards.
+    function boardFitPctile(holeStrs, boardStrs) {
+        const O = window.GPE_ODDS;
+        if (!O || !holeStrs || holeStrs.length < 2 || !boardStrs || boardStrs.length < 3) return null;
+        const board = boardStrs.map(O.cardToInt);
+        const hole = holeStrs.map(O.cardToInt);
+        if (board.some((c) => c == null) || hole.some((c) => c == null)) return null;
+        const used = new Set(hole.concat(board));
+        const my = O.evaluateBest(hole.concat(board));
+        const deck = [];
+        for (let c = 0; c < 52; c++) if (!used.has(c)) deck.push(c);
+        let win = 0, tie = 0, tot = 0;
+        for (let a = 0; a < deck.length; a++) {
+            for (let b = a + 1; b < deck.length; b++) {
+                const sc = O.evaluateBest([deck[a], deck[b]].concat(board));
+                if (sc < my) win++; else if (sc === my) tie++;
+                tot++;
+            }
+        }
+        return tot ? (win + tie / 2) / tot : null;
     }
 
     // Raise-to = call amount + fraction of the pot after calling.

@@ -302,17 +302,70 @@
 }
 /* While a plugin tab is active, hide the site's own panel content. CSS-only:
    moving or removing GWT's nodes would fight its renderer. */
-.iogc-SidePanel-inner.gpe-tab-tools > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster):not(.gpe-side-bets),
-.iogc-SidePanel-inner.gpe-tab-roster > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster):not(.gpe-side-bets),
-.iogc-SidePanel-inner.gpe-tab-bets > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster):not(.gpe-side-bets) {
+.iogc-SidePanel-inner.gpe-tab-tools > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster):not(.gpe-side-bets):not(.gpe-side-study),
+.iogc-SidePanel-inner.gpe-tab-roster > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster):not(.gpe-side-bets):not(.gpe-side-study),
+.iogc-SidePanel-inner.gpe-tab-bets > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster):not(.gpe-side-bets):not(.gpe-side-study),
+.iogc-SidePanel-inner.gpe-tab-study > :not(.gpe-side-tabs):not(.gpe-side-options):not(.gpe-side-roster):not(.gpe-side-bets):not(.gpe-side-study) {
     display: none !important;
 }
 .gpe-side-options,
 .gpe-side-roster,
-.gpe-side-bets { display: none; }
+.gpe-side-bets,
+.gpe-side-study { display: none; }
 .iogc-SidePanel-inner.gpe-tab-tools > .gpe-side-options { display: block; }
 .iogc-SidePanel-inner.gpe-tab-roster > .gpe-side-roster { display: block; }
 .iogc-SidePanel-inner.gpe-tab-bets > .gpe-side-bets { display: block; }
+.iogc-SidePanel-inner.gpe-tab-study > .gpe-side-study { display: block; }
+
+/* study/research tab: fairness-test readout */
+.gpe-side-study { font: 9px/1.45 Arial, sans-serif; color: #444; }
+.gpe-study-head {
+    font: bold 8px/1 Arial, sans-serif;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #778;
+    margin: 2px 0 6px;
+}
+/* the site sets font-size on descendant divs, so set it explicitly on each
+   study element (inheritance from .gpe-side-study alone is overridden). */
+.gpe-study-n { font-size: 9px; color: #556; margin-bottom: 6px; }
+.gpe-study-note { font-size: 9px; color: #9aa3af; font-style: italic; margin: 6px 0; }
+.gpe-study-primary {
+    font-size: 9px;
+    font-weight: bold;
+    color: #223;
+    padding: 4px 5px;
+    margin: 4px 0;
+    background: rgba(76, 154, 255, 0.10);
+    border-radius: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.gpe-study-grid { margin: 6px 0; }
+.gpe-study-row {
+    display: flex;
+    align-items: baseline;
+    padding: 1px 3px;
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+}
+.gpe-study-row > span:first-child { flex: 1; color: #223; }
+.gpe-study-row > span:not(:first-child) { width: 40px; text-align: right; color: #445; }
+.gpe-study-grid-head > span { color: #99a; font-size: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+.gpe-study-btns { display: flex; gap: 4px; margin-top: 8px; }
+.gpe-study-btns button {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
+    font: 9px/1 Arial, sans-serif;
+    padding: 4px 7px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    color: #333;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.gpe-study-btns button:hover { background: #f0f0f0; }
+.gpe-study-btns .gpe-study-clear { margin-left: auto; color: #a33; }
 
 /* bets leaderboard: a plain ranked list of players by bet/raise total.
    Sized to match the table (roster) tab. */
