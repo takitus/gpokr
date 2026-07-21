@@ -130,7 +130,17 @@
 .gpe-log-dcards { display: inline-flex; gap: 2px; }
 .gpe-log-dnum { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .gpe-log-dtot { font-weight: bold; }
-.gpe-log-detail .gpe-shared-card { width: 22px; height: 29px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+/* Detail cards are cropped to their TOP HALF (rank/suit corner) so each row is
+   half as tall and the breakdown is compact. */
+.gpe-log-detail .gpe-shared-card {
+    width: 22px;
+    height: 15px !important; /* ~half of the 29px full height; only the top shows */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    border-radius: 3px 3px 0 0; /* bottom looks cut off */
+    overflow: hidden;
+}
+.gpe-log-detail img.gpe-shared-card { object-fit: cover; object-position: top; } /* keep the top of the card image */
+.gpe-log-detail .gpe-text-card { align-items: flex-start; font-size: 11px; line-height: 14px; } /* glyph at the top */
 .gpe-log-col {
     display: flex;
     flex-direction: column;
