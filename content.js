@@ -221,12 +221,14 @@
         const setOpacity = (p, v) =>
             p.querySelectorAll("img.iogc-PlayerPanel-avatar").forEach((av) => { av.style.opacity = v; });
         if (handHasEnded()) { panels.forEach((p) => setOpacity(p, "")); return; }
+        const me = getMyName();
         const folded = new Set();
         for (const line of fullHandScope()) {
             const m = line.match(/^(.+?) folds$/i);
             if (m) folded.add(m[1].trim());
         }
-        panels.forEach((p) => setOpacity(p, folded.has(getSeatName(p)) ? "0.5" : ""));
+        // Never dim my own seat — only other folded players.
+        panels.forEach((p) => { const n = getSeatName(p); setOpacity(p, (n && n !== me && folded.has(n)) ? "0.5" : ""); });
     }
 
     // Position a fixed overlay over a player's avatar; never modifies the avatar's DOM.
