@@ -213,6 +213,22 @@
         return hidden;
     }
 
+    // Dim folded players' avatars to 50% during a hand; restore everyone when the
+    // hand ends. Re-applied each fast poll so it survives GWT re-renders. Uses the
+    // accumulated hand scope so a fold trimmed from the visible log still counts.
+    function applyFoldDimming() {
+        const panels = document.querySelectorAll('table[class*="iogc-PlayerPanel"]');
+        const setOpacity = (p, v) =>
+            p.querySelectorAll("img.iogc-PlayerPanel-avatar").forEach((av) => { av.style.opacity = v; });
+        if (handHasEnded()) { panels.forEach((p) => setOpacity(p, "")); return; }
+        const folded = new Set();
+        for (const line of fullHandScope()) {
+            const m = line.match(/^(.+?) folds$/i);
+            if (m) folded.add(m[1].trim());
+        }
+        panels.forEach((p) => setOpacity(p, folded.has(getSeatName(p)) ? "0.5" : ""));
+    }
+
     // Position a fixed overlay over a player's avatar; never modifies the avatar's DOM.
     // Takes a resolver, not an element: GWT recycles seat panels between hands, so a
     // captured element can drift to another player. Re-resolve by name on every tick.
@@ -2662,9 +2678,10 @@
             lastDepartureLine, (line, name) => { lastDepartureLine = line; lastDeparted = name; });
     }
 
-    // [lastwinner] = winner of the most recent hand ("NAME wins main|side pot $N").
+    // [lastwinner] = main-pot winner of the most recent hand. Only the MAIN pot
+    // counts (a side-pot line would otherwise win as the bottom-most match).
     function scanWinner() {
-        scanLastName(/^(.+?) wins (?:main|side) pot \$[\d,]+/i,
+        scanLastName(/^(.+?) wins main pot \$[\d,]+/i,
             lastWinnerLine, (line, name) => { lastWinnerLine = line; lastWinner = name; });
     }
 
@@ -2971,7 +2988,7 @@
     });
 
     // ---------- boot ----------
-    setInterval(() => { updateStatBadges(); tagTurnHighlights(); applyBetReadout(); }, 300); // track avatars + turn highlight live
+    setInterval(() => { updateStatBadges(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming(); }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();
