@@ -184,7 +184,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -1575,7 +1575,10 @@
         const t = playerStats[name];
         if (!t || !t.hands) return null;
         const pct = (x) => Math.round((x / t.hands) * 100);
-        return pct(t.vpip) + "/" + pct(t.pfr) + " (" + t.hands + ")";
+        // Third stat is showdown win rate (won / went to showdown); "–" until
+        // we've seen one, so it never reads as a real 0%.
+        const sd = t.showdowns ? Math.round((t.sdWins / t.showdowns) * 100) + "%" : "–";
+        return pct(t.vpip) + "/" + pct(t.pfr) + "/" + sd;
     }
 
     // Hover tooltip: spell the numbers out in plain English.
@@ -1637,14 +1640,14 @@
     }
 
     // One pass: create/update a badge over each visible seat, drop the rest.
-    // Badges show when stats are enabled, or minimally (just 📝) for players
-    // with a note even when they're off. Clicking a badge opens the editor.
+    // Badges show only when stats are enabled. Clicking a badge opens the
+    // note/nickname editor.
     function updateStatBadges() {
         const wanted = new Set();
         for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
             const name = getSeatName(p);
             if (!name || wanted.has(name)) continue;
-            if (!SHOW_STATS && !playerNotes[name] && !playerNicks[name]) continue;
+            if (!SHOW_STATS) continue;
             const av = p.querySelector("img.iogc-PlayerPanel-avatar");
             if (!av) continue;
             const r = av.getBoundingClientRect();
@@ -1663,16 +1666,16 @@
                 document.body.appendChild(badge);
                 statBadges.set(name, badge);
             }
-            const stats = SHOW_STATS ? badgeTextFor(name) : null;
-            const parts = [];
-            if (SHOW_STATS) parts.push(stats || "–/– (0)");
-            if (playerNicks[name]) parts.push("🏷");
-            if (playerNotes[name]) parts.push("📝");
-            const text = parts.join(" ");
+            // Topper is stats-only now: no nickname/note markers (a home for
+            // those indicators is TBD). We only get here when SHOW_STATS is on.
+            const text = badgeTextFor(name) || "–/–/–";
             if (badge.textContent !== text) badge.textContent = text; // don't churn the DOM every tick
-            // sit just above the avatar's top-left corner
+            // Same width as the avatar, sitting flush on its top edge (no
+            // overlap) so it reads as a tab without covering the avatar's
+            // rounded top corners.
             badge.style.left = r.left + "px";
-            badge.style.top = r.top - 2 + "px";
+            badge.style.width = r.width + "px";
+            badge.style.top = r.top + "px";
         }
         for (const [name, el] of statBadges) {
             if (!wanted.has(name)) { el.remove(); statBadges.delete(name); }
@@ -1680,6 +1683,107 @@
         // drop an orphaned tooltip if its badge went away under the cursor
         const tip = document.getElementById("gpe-stat-tip");
         if (tip && ![...statBadges.values()].some((b) => b.matches(":hover"))) hideBadgeTip();
+    }
+
+    // ---------- hover topper: nickname + note + edit, over the name/chips panel ----------
+    // A second tab in the same style as the stats badge. It's hidden until the
+    // seat's name/chips panel is hovered, then slides up flush above it. One
+    // shared element serves whichever seat is currently hovered.
+    let hoverTopperEl = null;   // the single reused tab
+    let hoverTopperName = null; // whose content it's currently showing
+    let hoverHideTimer = null;
+
+    function ensureHoverTopper() {
+        if (hoverTopperEl && hoverTopperEl.isConnected) return hoverTopperEl;
+        const el = document.createElement("div");
+        el.id = "gpe-hover-topper";
+        el.className = "gpe-hover-topper";
+        // Hovering the tab itself keeps it open (it sits just outside the panel).
+        el.addEventListener("mouseenter", () => clearTimeout(hoverHideTimer));
+        el.addEventListener("mouseleave", scheduleHideHoverTopper);
+        document.body.appendChild(el);
+        hoverTopperEl = el;
+        hoverTopperName = null; // fresh element -> force a re-render of its content
+        return el;
+    }
+
+    function renderHoverTopper(name) {
+        const el = hoverTopperEl;
+        el.textContent = "";
+        const nick = document.createElement("span");
+        nick.className = "gpe-ht-nick";
+        if (playerNicks[name]) {
+            nick.textContent = playerNicks[name];
+        } else {
+            nick.textContent = "no nickname";
+            nick.classList.add("gpe-ht-empty");
+        }
+        el.appendChild(nick);
+        if (playerNotes[name]) {
+            const note = document.createElement("span");
+            note.className = "gpe-ht-note";
+            note.textContent = "📝";
+            note.title = playerNotes[name];
+            el.appendChild(note);
+        }
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "gpe-ht-edit";
+        edit.textContent = "✎";
+        edit.title = "edit nickname & notes";
+        edit.addEventListener("click", () => openNoteEditor(name, el.getBoundingClientRect()));
+        el.appendChild(edit);
+    }
+
+    // Anchor over the name element (falls back to the whole panel) so the tab
+    // hugs the name/chips row rather than the avatar's stats badge.
+    function positionHoverTopper(panel) {
+        const anchor = panel.querySelector(".iogc-PlayerPanel-name") || panel;
+        const r = anchor.getBoundingClientRect();
+        if (r.width === 0) return false;
+        const el = hoverTopperEl;
+        el.style.left = r.left + "px";
+        el.style.width = r.width + "px";
+        el.style.top = r.top + "px"; // translateY(-100%) lifts it above this edge
+        return true;
+    }
+
+    function showHoverTopper(name, panel) {
+        clearTimeout(hoverHideTimer);
+        const el = ensureHoverTopper();
+        if (hoverTopperName !== name) { hoverTopperName = name; renderHoverTopper(name); }
+        el._gpePanel = panel;
+        if (!positionHoverTopper(panel)) return;
+        requestAnimationFrame(() => el.classList.add("gpe-show"));
+    }
+
+    function hideHoverTopper() {
+        if (hoverTopperEl) hoverTopperEl.classList.remove("gpe-show");
+    }
+
+    // Small grace period so moving between the panel and the tab doesn't flicker.
+    function scheduleHideHoverTopper() {
+        clearTimeout(hoverHideTimer);
+        hoverHideTimer = setTimeout(hideHoverTopper, 140);
+    }
+
+    // Wire hover listeners onto each seat panel (once per DOM node — GWT
+    // re-renders make fresh nodes, which get re-wired) and keep a shown tab
+    // glued to its panel as the layout reflows.
+    function updateHoverToppers() {
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            if (p._gpeHoverWired) continue;
+            p._gpeHoverWired = true;
+            p.addEventListener("mouseenter", () => {
+                const name = getSeatName(p);
+                if (name) showHoverTopper(name, p);
+            });
+            p.addEventListener("mouseleave", scheduleHideHoverTopper);
+        }
+        if (hoverTopperEl && hoverTopperEl.classList.contains("gpe-show") && hoverTopperEl._gpePanel) {
+            if (!hoverTopperEl._gpePanel.isConnected) hideHoverTopper();
+            else positionHoverTopper(hoverTopperEl._gpePanel);
+        }
     }
 
     // ---------- per-player bet readout (swaps the seat "Level" stat) ----------
@@ -3022,7 +3126,7 @@
     });
 
     // ---------- boot ----------
-    setInterval(() => { updateStatBadges(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming(); }, 300); // track avatars + turn highlight live
+    setInterval(() => { updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming(); }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();

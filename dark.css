@@ -264,13 +264,22 @@ html.gpe-dark .gpe-odds-marginal { color: #ffd966; }
 html.gpe-dark .gpe-odds-bad,
 html.gpe-dark .gpe-odds-fold { color: #ff7b6b; }
 
-/* stat badges + tooltip */
-html.gpe-dark .gpe-stat-badge {
-    background: rgba(30, 37, 48, 0.8);
+/* stat badges + hover topper + tooltip */
+html.gpe-dark .gpe-stat-badge,
+html.gpe-dark .gpe-hover-topper {
+    background: rgba(30, 37, 48, 0.94);
     color: #b9c2cf;
     border-color: #3c4a61;
+    border-bottom: none;
+    box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.35);
 }
 html.gpe-dark .gpe-stat-badge:hover { background: #232c3a; color: #fff; }
+html.gpe-dark .gpe-hover-topper .gpe-ht-edit {
+    color: #93a0b4;
+    border-color: #45526b;
+    background: rgba(20, 26, 34, 0.6);
+}
+html.gpe-dark .gpe-hover-topper .gpe-ht-edit:hover { background: #2c3645; color: #fff; }
 html.gpe-dark #gpe-stat-tip {
     background: #232c3a;
     color: #cfd6e0;
