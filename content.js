@@ -317,6 +317,12 @@
     const NOTES_KEY = "gpe_player_notes";
     let playerNotes = {}; // name -> free text
 
+    // Per-player nicknames. When a chat button token resolves to a player who
+    // has one, the nickname is posted instead of their handle (so "gg" can
+    // address them how you'd actually address them).
+    const NICKS_KEY = "gpe_player_nicknames";
+    let playerNicks = {}; // name -> nickname
+
     let cardStore = {};
     function loadCardStore() { return cardStore; }
     function saveCardStore(store) {
@@ -349,7 +355,7 @@
             cardStore = legacyLocalStorageCardStore();
             return;
         }
-        EXT_STORE.get(["gpe_settings", CARD_STORE_KEY, PLAYER_STATS_KEY, NOTES_KEY], (res) => {
+        EXT_STORE.get(["gpe_settings", CARD_STORE_KEY, PLAYER_STATS_KEY, NOTES_KEY, NICKS_KEY], (res) => {
             if (res.gpe_settings) {
                 const s = res.gpe_settings;
                 if (!s.betAllInMigrated) { migrateAllIn(s); EXT_STORE.set({ gpe_settings: s }); }
@@ -362,6 +368,7 @@
             }
             playerStats = res[PLAYER_STATS_KEY] || {};
             playerNotes = res[NOTES_KEY] || {};
+            playerNicks = res[NICKS_KEY] || {};
             let stored = res[CARD_STORE_KEY];
             if (!stored) {
                 stored = legacyLocalStorageCardStore();
@@ -378,6 +385,7 @@
             if (changes[CARD_STORE_KEY]) cardStore = changes[CARD_STORE_KEY].newValue || {};
             if (changes[PLAYER_STATS_KEY]) playerStats = changes[PLAYER_STATS_KEY].newValue || {};
             if (changes[NOTES_KEY]) playerNotes = changes[NOTES_KEY].newValue || {};
+            if (changes[NICKS_KEY]) { playerNicks = changes[NICKS_KEY].newValue || {}; updateStatBadges(); }
         });
     }
     initStorage();
@@ -1496,6 +1504,20 @@
         updateStatBadges();
     }
 
+    function saveNick(name, nick) {
+        nick = (nick || "").trim();
+        if (nick) playerNicks[name] = nick;
+        else delete playerNicks[name];
+        if (EXT_STORE) { try { EXT_STORE.set({ [NICKS_KEY]: playerNicks }); } catch (e) {} }
+        updateStatBadges();
+    }
+
+    // How to address a player in auto-chat: their nickname if we have one,
+    // otherwise their handle. Blank in -> blank out (unknown token).
+    function displayName(name) {
+        return (name && playerNicks[name]) || name || "";
+    }
+
     // One editor at a time, anchored under the clicked badge.
     function openNoteEditor(name, anchorRect) {
         const existing = document.getElementById("gpe-note-editor");
@@ -1512,6 +1534,13 @@
         head.className = "gpe-note-head";
         head.textContent = name;
 
+        const nick = document.createElement("input");
+        nick.type = "text";
+        nick.className = "gpe-note-nick";
+        nick.value = playerNicks[name] || "";
+        nick.placeholder = "nickname (used in chat)";
+        nick.title = "how chat buttons like gg/nh address this player";
+
         const box = document.createElement("textarea");
         box.value = playerNotes[name] || "";
         box.placeholder = "notes on " + name + "…";
@@ -1521,15 +1550,16 @@
         const save = document.createElement("button");
         save.type = "button";
         save.textContent = "Save";
-        save.addEventListener("click", () => { saveNote(name, box.value); ed.remove(); });
+        save.addEventListener("click", () => { saveNick(name, nick.value); saveNote(name, box.value); ed.remove(); });
         const del = document.createElement("button");
         del.type = "button";
         del.textContent = "Delete";
-        del.addEventListener("click", () => { saveNote(name, ""); ed.remove(); });
+        del.addEventListener("click", () => { saveNick(name, ""); saveNote(name, ""); ed.remove(); });
         row.appendChild(save);
         row.appendChild(del);
 
         ed.appendChild(head);
+        ed.appendChild(nick);
         ed.appendChild(box);
         ed.appendChild(row);
         document.body.appendChild(ed);
@@ -1563,8 +1593,9 @@
         } else {
             lines.push(name + " — no hands observed yet");
         }
+        if (playerNicks[name]) lines.push("🏷 " + playerNicks[name]);
         if (playerNotes[name]) lines.push("📝 " + playerNotes[name]);
-        lines.push("(click to edit note)");
+        lines.push("(click to edit)");
         return lines.join("\n");
     }
 
@@ -1613,7 +1644,7 @@
         for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
             const name = getSeatName(p);
             if (!name || wanted.has(name)) continue;
-            if (!SHOW_STATS && !playerNotes[name]) continue;
+            if (!SHOW_STATS && !playerNotes[name] && !playerNicks[name]) continue;
             const av = p.querySelector("img.iogc-PlayerPanel-avatar");
             if (!av) continue;
             const r = av.getBoundingClientRect();
@@ -1635,6 +1666,7 @@
             const stats = SHOW_STATS ? badgeTextFor(name) : null;
             const parts = [];
             if (SHOW_STATS) parts.push(stats || "–/– (0)");
+            if (playerNicks[name]) parts.push("🏷");
             if (playerNotes[name]) parts.push("📝");
             const text = parts.join(" ");
             if (badge.textContent !== text) badge.textContent = text; // don't churn the DOM every tick
@@ -2691,8 +2723,8 @@
     // ("gg [playername]" -> "gg").
     function chatButtonMessage(template) {
         return template
-            .replace(/\[playername\]/gi, lastDeparted || "")
-            .replace(/\[lastwinner\]/gi, lastWinner || "")
+            .replace(/\[playername\]/gi, displayName(lastDeparted))
+            .replace(/\[lastwinner\]/gi, displayName(lastWinner))
             .replace(/\s+/g, " ").trim();
     }
 

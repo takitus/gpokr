@@ -284,7 +284,8 @@ html.gpe-dark #gpe-note-editor {
     color: #d2d8e2;
     border-color: #3c4a61;
 }
-html.gpe-dark #gpe-note-editor textarea {
+html.gpe-dark #gpe-note-editor textarea,
+html.gpe-dark #gpe-note-editor .gpe-note-nick {
     background: #1b222d !important;
     color: #d2d8e2 !important;
     border-color: #44516a !important;
