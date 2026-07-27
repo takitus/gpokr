@@ -52,8 +52,8 @@
         { name: "wp", text: "wp" },
     ];
     let CHAT_CONFIG = DEFAULT_CHAT_BTNS.map((b) => ({ ...b }));
-    let lastDeparted = "";       // last player to finish the tournament (for [playername])
-    let lastDepartureLine = "";  // the log line that set it (so we only advance on new ones)
+    let lastDeparted = "";       // player who busted in the current/recent hand (for [playername])
+    let departedAgeHands = 0;    // new hands elapsed since that bustout; expires it so gg never names a long-gone finisher
     let lastWinner = "";         // winner of the most recent hand (for [lastwinner])
     let lastWinnerLine = "";
 
@@ -2438,6 +2438,9 @@
         if (!ended && lastEnded) {
             sharedThisHand = false; harvestedThisHand = false; loggedCardsThisHand = false; // new hand began -> reset guards
             flushPendingLogSummary(); // drop the finished hand's cards in before this new hand
+            // Keep [playername] through the bustout hand and one grace hand, then
+            // drop it so "gg" never addresses a player who left several hands ago.
+            if (lastDeparted && ++departedAgeHands > 1) lastDeparted = "";
         }
         lastEnded = ended;
 
@@ -2809,11 +2812,24 @@
         }
     }
 
-    // [playername] = last player to finish the tournament ("NAME finishes the
-    // tournament Nth"). Only that line counts.
+    // [playername] = someone who busted THIS hand ("NAME finishes the tournament
+    // Nth"). Scoped to the current hand (not the whole log window) so a finisher
+    // from many hands ago can't resurface; fullHandScope() survives the visible
+    // log trimming mid-hand and keeps the linked-name row (logLines drops it).
+    // Expiry (a one-hand grace) is handled at the new-hand edge in pollHandState.
     function scanDepartures() {
-        scanLastName(/^(.+?) finishes the tournament \d+(?:st|nd|rd|th)$/i,
-            lastDepartureLine, (line, name) => { lastDepartureLine = line; lastDeparted = name; });
+        const re = /^(.+?) finishes the tournament \d+(?:st|nd|rd|th)$/i;
+        const me = getMyName();
+        const rows = fullHandScope();
+        for (let i = rows.length - 1; i >= 0; i--) {
+            const m = rows[i].match(re);
+            if (!m) continue;
+            const name = m[1].trim();
+            if (me && name === me) continue; // never gg myself; look further back
+            lastDeparted = name;
+            departedAgeHands = 0; // seen in the current hand -> fresh
+            return;
+        }
     }
 
     // [lastwinner] = main-pot winner of the most recent hand. Only the MAIN pot
@@ -3083,6 +3099,33 @@
         document.body.appendChild(panel);
     }
 
+    // Nudge the bet input by `steps` big blinds (may be negative), clamped to
+    // [0, my stack]. Shared by the ↑/↓ hotkeys and the scroll wheel. Returns
+    // true only if it actually changed the field.
+    function nudgeBet(steps) {
+        const inp = document.querySelector("input.gpokr-GameWindow-betInput");
+        if (!inp || inp.getBoundingClientRect().width === 0) return false;
+        const bb = parseBigBlind();
+        if (!bb) return false;
+        const cur = parseInt(String(inp.value).replace(/[^\d]/g, ""), 10) || 0;
+        let next = cur + steps * bb;
+        if (next < 0) next = 0;
+        const stack = myStack();
+        if (stack && next > stack) next = stack; // cap at all-in
+        setBetInput(inp, next);
+        return true;
+    }
+
+    // Scrolling over the focused bet field steps it by ±1 big blind — the same
+    // increment as the native slider beside it and the ↑/↓ hotkeys. Gated on the
+    // field being focused, so it never hijacks ordinary page scrolling; passive
+    // false so we can swallow the scroll once it's ours.
+    document.addEventListener("wheel", (e) => {
+        const inp = document.querySelector("input.gpokr-GameWindow-betInput");
+        if (!inp || document.activeElement !== inp || inp.getBoundingClientRect().width === 0) return;
+        if (nudgeBet(e.deltaY < 0 ? 1 : -1)) e.preventDefault(); // wheel up = raise
+    }, { passive: false });
+
     // ---------- keyboard shortcuts ----------
     // f = fold, c = check/call, 1-9 = fill the nth bet-sizing button's amount
     // (top column first, then bottom — no auto-submit). Gated by the popup's
@@ -3101,17 +3144,7 @@
         // Up/Down nudge the bet field by one big blind (only when it's my turn
         // to bet, i.e. the input is on screen).
         if (k === "arrowup" || k === "arrowdown") {
-            const inp = document.querySelector("input.gpokr-GameWindow-betInput");
-            if (!inp || inp.getBoundingClientRect().width === 0) return;
-            const bb = parseBigBlind();
-            if (!bb) return;
-            const cur = parseInt(String(inp.value).replace(/[^\d]/g, ""), 10) || 0;
-            let next = cur + (k === "arrowup" ? bb : -bb);
-            if (next < 0) next = 0;
-            const stack = myStack();
-            if (stack && next > stack) next = stack; // cap at all-in
-            e.preventDefault();
-            setBetInput(inp, next);
+            if (nudgeBet(k === "arrowup" ? 1 : -1)) e.preventDefault();
             return;
         }
         let btn = null;
