@@ -859,6 +859,25 @@ a.gpe-roster-name:hover { text-decoration: underline; }
     cursor: default;
 }
 
+/* one-click reveal of the just-finished hand (swaps in for the checkbox) */
+.gpe-share-last {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font: 11px/1 Arial, sans-serif;
+    padding: 4px 9px;
+    border: 1px solid #b7c6a6;
+    background: #eef5e6;
+    color: #3f5330;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+.gpe-share-last:hover { background: #e3efd6; }
+.gpe-share-last:disabled { cursor: default; opacity: 0.55; }
+
 /* ---- Bet-sizing columns (float flush against the bet input) ----
    Width is set inline to match the input. Blind buttons (all in / 3x / 2x)
    stack above it with a rounded top; pot-fraction buttons (½ / ⅔ / pot)

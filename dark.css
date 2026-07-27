@@ -339,6 +339,12 @@ html.gpe-dark #gpe-picker-btn:hover { background: #2c3645; }
 html.gpe-dark #gpe-picker-panel button:hover { background: #344056; }
 html.gpe-dark .gpe-toggle { color: #b9c2cf; }
 html.gpe-dark .gpe-toggle:has(input:disabled) { color: #5d6a7e; }
+html.gpe-dark .gpe-share-last {
+    background: #2b3a25;
+    color: #c7dab4;
+    border-color: #465a38;
+}
+html.gpe-dark .gpe-share-last:hover { background: #344729; }
 html.gpe-dark .gpe-side-options .gpe-info { color: #7f8b9c; }
 html.gpe-dark .gpe-side-options .gpe-info:hover { color: #6db0ff; }
 html.gpe-dark .gpe-side-options .gpe-side-edit {

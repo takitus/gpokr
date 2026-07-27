@@ -484,15 +484,28 @@
         return c[0].toUpperCase() + c[1].toLowerCase();
     }
 
-    // Community cards from the log: "Dealing flop: [Ts, 7c, 4d]" / turn / river.
-    // (The 5 board <img> slots exist even face-down, so the log is the reliable source.)
-    function parseBoard() {
-        const board = [];
-        for (const line of currentHandScope()) {
-            const m = line.match(/Dealing (?:flop|turn|river):\s*\[([^\]]+)\]/i);
-            if (m) m[1].split(",").forEach((c) => board.push(normCard(c)));
+    // Community cards for the latest hand in a scope: "Dealing flop: [Ts, 7c, 4d]"
+    // / turn / river. A hand deals flop(3)->turn(1)->river(1) in that order; if a
+    // "Dealing" line arrives out of sequence (a second turn/river, or a flop when
+    // the board isn't empty) the scope has bled into another hand — which happens
+    // transiently when a table switch briefly merges two tables' logs under one
+    // "Starting Hand". We restart from that line so only the most recent hand's
+    // board is kept, and it can never exceed 5 cards (the old bug: 7-card boards).
+    function boardFromScope(scope) {
+        let board = [], stage = 0; // stage: 0 none, 1 flop, 2 turn, 3 river
+        for (const line of scope) {
+            const m = line.match(/Dealing (flop|turn|river):\s*\[([^\]]+)\]/i);
+            if (!m) continue;
+            const want = m[1].toLowerCase() === "flop" ? 1 : m[1].toLowerCase() === "turn" ? 2 : 3;
+            const cards = m[2].split(",").map(normCard);
+            if (want === stage + 1) board = board.concat(cards); // in-order continuation
+            else board = cards.slice();                          // out of order -> new hand: restart
+            stage = want;
         }
         return board.slice(0, 5);
+    }
+    function parseBoard() {
+        return boardFromScope(currentHandScope());
     }
 
     // Visible seated players minus those who folded this hand, minus me.
@@ -1004,12 +1017,10 @@
             if (P[agg].streets[s] > otherMax) P[agg].streets[s] = otherMax;
         }
 
-        // Board + my hole cards, from the same complete scope.
-        const board = [];
-        for (const line of scope) {
-            const m = line.match(/Dealing (?:flop|turn|river):\s*\[([^\]]+)\]/i);
-            if (m) m[1].split(",").forEach((c) => board.push(normCard(c)));
-        }
+        // Board + my hole cards, from the same complete scope. boardFromScope
+        // keeps only the latest hand's streets (and caps at 5) so a table-switch
+        // log merge can't render a 6- or 7-card board.
+        const board = boardFromScope(scope);
         let myCards = null;
         const pocket = scope.find((t) => /pocket cards/i.test(t));
         if (pocket) { const m = pocket.match(/\[([^,]+),\s*([^\]]+)\]/); if (m) myCards = [normCard(m[1]), normCard(m[2])]; }
@@ -1863,8 +1874,24 @@
     let harvestedThisHand = false;
     let loggedCardsThisHand = false;
     let lastEnded = false;
+    // Snapshot of my most-recently-completed hand, for the inline "share last
+    // hand" button (which reveals it during the gap before the next flop).
+    let lastHandCaptured = false;
+    let lastHandShare = null;      // { cards, gameId, label }
+    let sharedLastGameId = null;   // the hand id already revealed (dedupes the click / marks auto-shares)
     let curGameId = null;   // most recent completed hand's id (from the Replay line)
     let prevGameId = null;  // the one before it — a one-hand grace for verification
+
+    // Drop all accumulated per-hand state. Called on a table switch: the new
+    // table's log has nothing to do with the old one, so carrying the scope
+    // buffer or a half-built summary across would merge two tables' hands.
+    function resetHandScope() {
+        handScopeBuf = [];
+        pendingLogSummary = null;
+        loggedCardsThisHand = false; sharedThisHand = false; harvestedThisHand = false;
+        lastHandCaptured = false; lastHandShare = null; sharedLastGameId = null;
+        lastEnded = false;
+    }
 
     // Dedupe received reveals so a repeated paste renders only once.
     // bucket (gameId, or "v1" for legacy) -> Set(member). Pruned to the two live
@@ -1933,6 +1960,38 @@
         if (!box) return;
         box.disabled = SHARE_HAND;
         box.checked = SHARE_HAND ? true : shareNextHand;
+    }
+
+    // The inline "share last hand" button is offered only while revealing the
+    // finished hand is still timely: from the moment a hand ends through the
+    // next hand's pre-flop. Once the flop lands (a live hand past pre-flop) the
+    // "share hand" checkbox takes its place. Needs a captured hand to reveal.
+    function shareLastAvailable() {
+        if (!lastHandShare) return false;
+        if (handHasEnded()) return true;   // the hand just ended -> still in the gap
+        return parseBoard().length < 3;    // otherwise only while the live hand is pre-flop
+    }
+    function updateShareControlUI() {
+        const btn = document.getElementById("gpe-share-last");
+        const toggle = document.getElementById("gpe-share-toggle");
+        if (!btn || !toggle) return;
+        const showBtn = shareLastAvailable();
+        btn.style.display = showBtn ? "" : "none";
+        toggle.style.display = showBtn ? "none" : "";
+        if (showBtn) {
+            const done = sharedLastGameId != null && lastHandShare.gameId === sharedLastGameId;
+            btn.disabled = done;
+            btn.textContent = done ? "hand shared ✓" : "share last hand";
+        }
+    }
+    function shareLastHand() {
+        if (!lastHandShare) return;
+        const { cards, gameId, label } = lastHandShare;
+        if (LOCAL_TEST) showHandLocal(cards, label);
+        else if (gameId) sendMessage(encodeHand(cards, gameId, label));
+        else return; // no id yet -> can't be verified by peers; leave it enabled to retry
+        sharedLastGameId = gameId;
+        updateShareControlUI();
     }
 
     // ---------- UI: side-panel tools tab ----------
@@ -2257,6 +2316,7 @@
             const firstSight = rosterTable === "";
             rosterTable = table;
             presentNames.clear();
+            if (!firstSight) resetHandScope(); // switching tables: don't merge the old table's hand into the new one
             viewerInfo = { table: "", count: -1, listed: null, fetchedAt: 0 }; // re-verify for the new table
             // Seed presence from the chat panel ONLY on the first sighting (a
             // fresh page load, where the panel holds this table's history). On
@@ -2282,6 +2342,7 @@
     // poll; trackRoster then picks up the new table name and re-verifies count.
     window.addEventListener("hashchange", () => {
         presentNames.clear();
+        resetHandScope(); // drop the previous table's accumulated hand the instant we navigate
         viewerInfo = { table: "", count: -1, listed: null, fetchedAt: 0 };
         forceRosterRender();
     });
@@ -2436,7 +2497,7 @@
 
         const ended = handHasEnded();
         if (!ended && lastEnded) {
-            sharedThisHand = false; harvestedThisHand = false; loggedCardsThisHand = false; // new hand began -> reset guards
+            sharedThisHand = false; harvestedThisHand = false; loggedCardsThisHand = false; lastHandCaptured = false; // new hand began -> reset guards
             flushPendingLogSummary(); // drop the finished hand's cards in before this new hand
             // Keep [playername] through the bustout hand and one grace hand, then
             // drop it so "gg" never addresses a player who left several hands ago.
@@ -2457,6 +2518,19 @@
             pendingLogSummary = buildHandSummaryRow(); // captured now; inserted when the next hand starts
         }
 
+        // Snapshot my finished hand for the "share last hand" button, regardless
+        // of the auto-share settings. Retries across polls until the Replay line
+        // gives the id (needed so a peer can verify the reveal).
+        if (ended && !lastHandCaptured) {
+            const hand = readMyHand();
+            const gameId = currentGameId();
+            if (hand && (gameId || LOCAL_TEST)) {
+                lastHandCaptured = true;
+                const cards = hand.map((c) => c[0].toUpperCase() + c[1].toLowerCase());
+                lastHandShare = { cards, gameId, label: handLabelFor(cards) };
+            }
+        }
+
         if (ended && !sharedThisHand && (SHARE_HAND || shareNextHand || LOCAL_TEST)) {
             const hand = readMyHand();
             const gameId = currentGameId();
@@ -2469,10 +2543,13 @@
                 if (LOCAL_TEST) showHandLocal(cards, label);
                 else if (SHARE_HAND || shareNextHand) {
                     sendMessage(encodeHand(cards, gameId, label));
+                    sharedLastGameId = gameId; // auto-shared -> the button shows as done
                     if (shareNextHand) setShareNextHand(false); // consume the one-shot
                 }
             }
         }
+
+        updateShareControlUI(); // swap the button/checkbox for the current game phase
     }
 
     // ---------- sending ----------
@@ -3055,6 +3132,7 @@
         // Inline one-shot "share hand": share at the end of this hand only,
         // then uncheck. (Persistent settings live in the extension popup.)
         const shareToggle = document.createElement("label");
+        shareToggle.id = "gpe-share-toggle";
         shareToggle.className = "gpe-toggle";
         const shareBox = document.createElement("input");
         shareBox.type = "checkbox";
@@ -3063,12 +3141,24 @@
         shareToggle.appendChild(shareBox);
         shareToggle.appendChild(document.createTextNode(" share hand"));
 
+        // Its counterpart: a one-click button to reveal the hand that just
+        // ended, shown (in place of the checkbox) only in the gap before the
+        // next flop. updateShareControlUI() toggles which of the two is visible.
+        const shareLast = document.createElement("button");
+        shareLast.type = "button";
+        shareLast.id = "gpe-share-last";
+        shareLast.className = "gpe-share-last";
+        shareLast.textContent = "share last hand";
+        shareLast.style.display = "none";
+        shareLast.addEventListener("click", shareLastHand);
+
         // One tidy flex row under the chat input for all our controls.
         // (The "odds" toggle moved up to the side panel's tools tab.)
         const tools = document.createElement("div");
         tools.id = "gpe-chat-tools";
         tools.appendChild(btn);
         tools.appendChild(shareToggle);
+        tools.appendChild(shareLast);
         // Quick-chat buttons live to the right of "share hand".
         const chatBtns = document.createElement("div");
         chatBtns.id = "gpe-chat-btns";
@@ -3096,6 +3186,7 @@
         }
         renderChatButtons();
         syncShareToggleUI();
+        updateShareControlUI();
         document.body.appendChild(panel);
     }
 
