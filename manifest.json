@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GPokr Tools",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "description": "Dark mode, odds HUD, player stats & notes, table roster & follow, bet sizing, session tracker, emotes, and hand sharing.",
   "permissions": ["storage"],
   "icons": {

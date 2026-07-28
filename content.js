@@ -94,6 +94,9 @@
         LOCAL_TEST = !!(s && s.localTest);
         SHARE_HAND = !!(s && s.shareHand);
         SHOW_ODDS = !!(s && s.showOdds);
+        const op = s && s.oddsPos;
+        oddsPos = (op && typeof op.left === "number" && typeof op.top === "number")
+            ? { left: op.left, top: op.top } : null;
         SHOW_STATS = !!(s && s.showStats);
         HOTKEYS = !!(s && s.hotkeys);
         DARK_MODE = !!(s && s.darkMode);
@@ -581,6 +584,44 @@
     let oddsDraw = null;
     let oddsLabel = "";
     let boardDeltas = [];
+    // Dragged position (viewport px). null = auto-place (centered on the header).
+    // Persisted as settings.oddsPos so it survives across sessions.
+    let oddsPos = null;
+    let oddsDrag = null; // { hud, offX, offY } while a drag is in progress
+
+    // Keep a position fully within the viewport (so a stale saved spot or a
+    // window resize can't strand the HUD off-screen).
+    function clampToViewport(left, top, w, h) {
+        return {
+            left: Math.min(Math.max(0, left), Math.max(0, window.innerWidth - w)),
+            top: Math.min(Math.max(0, top), Math.max(0, window.innerHeight - h)),
+        };
+    }
+
+    // Drag the HUD with the mouse. mousedown is bound per-HUD (see updateOddsHud);
+    // the move/up listeners are global and bound once (below) so re-creating the
+    // HUD never stacks duplicates.
+    function beginOddsDrag(hud, e) {
+        if (e.button !== 0) return;
+        const r = hud.getBoundingClientRect();
+        oddsDrag = { hud, offX: e.clientX - r.left, offY: e.clientY - r.top };
+        hud.classList.add("gpe-dragging");
+        e.preventDefault(); // no text selection while dragging
+    }
+    window.addEventListener("mousemove", (e) => {
+        if (!oddsDrag) return;
+        const hud = oddsDrag.hud;
+        oddsPos = clampToViewport(e.clientX - oddsDrag.offX, e.clientY - oddsDrag.offY,
+            hud.offsetWidth, hud.offsetHeight);
+        hud.style.left = oddsPos.left + "px";
+        hud.style.top = oddsPos.top + "px";
+    });
+    window.addEventListener("mouseup", () => {
+        if (!oddsDrag) return;
+        oddsDrag.hud.classList.remove("gpe-dragging");
+        oddsDrag = null;
+        saveSetting("oddsPos", oddsPos); // remember it for next session
+    });
 
     // Color classes: green = good, yellow = neutral, red = bad.
     // Hole cards: equity vs the break-even share against this many opponents.
@@ -597,10 +638,17 @@
         return "gpe-odds-neutral";
     }
 
-    // Float over the game window's header bar, horizontally centered on it —
-    // fixed positioning so it never expands the bar's layout.
+    // Position the HUD (fixed, so it never expands any layout). If the user has
+    // dragged it, honor that saved spot (clamped on-screen); otherwise float it
+    // centered over the game window's header bar.
     function placeOddsHud(hud) {
-        if (hud.style.display === "none") return;
+        if (hud.style.display === "none" || oddsDrag) return; // don't fight an active drag
+        if (oddsPos) {
+            const p = clampToViewport(oddsPos.left, oddsPos.top, hud.offsetWidth, hud.offsetHeight);
+            hud.style.left = p.left + "px";
+            hud.style.top = p.top + "px";
+            return;
+        }
         const container = document.querySelector(".iogc-GameWindow-container");
         if (!container) { hud.style.left = "12px"; hud.style.top = "60px"; return; }
         const r = container.getBoundingClientRect();
@@ -646,6 +694,8 @@
         if (!hud) {
             hud = document.createElement("div");
             hud.id = "gpe-odds-hud";
+            hud.title = "drag to reposition";
+            hud.addEventListener("mousedown", (e) => beginOddsDrag(hud, e));
             document.body.appendChild(hud);
             hud._gpeReposition = setInterval(() => placeOddsHud(hud), 200);
         }

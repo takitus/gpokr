@@ -299,8 +299,10 @@
     padding: 6px 11px;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(40, 80, 120, 0.25);
-    pointer-events: none;
+    cursor: move; /* draggable to any position (remembered across sessions) */
+    user-select: none;
 }
+#gpe-odds-hud.gpe-dragging { box-shadow: 0 4px 14px rgba(40, 80, 120, 0.45); opacity: 0.95; }
 #gpe-odds-hud b { color: #16273a; }
 .gpe-odds-title { font-weight: bold; }
 .gpe-odds-street { color: #8aa0b8; font-weight: normal; }
