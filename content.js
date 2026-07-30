@@ -1137,9 +1137,35 @@
         return wrap;
     }
 
+    // Runner-up of a hand I won, so the third column shows someone else's cards
+    // instead of repeating mine. Best shown hand among the other players (by the
+    // evaluator); if nobody showed, whoever stayed in longest. Returns a player
+    // from detail.players, or null.
+    function findRunnerUp(detail, board) {
+        const others = detail.players.filter((p) => p.name !== detail.winner);
+        if (!others.length) return null;
+        const shown = others.filter((p) => p.cards && p.cards.length === 2);
+        const O = window.GPE_ODDS;
+        if (shown.length > 1 && O && board.length >= 3) {
+            let best = null, bestScore = -1;
+            for (const p of shown) {
+                let score;
+                try { score = O.evaluateBest(p.cards.concat(board).map(O.cardToInt)); } catch (e) { continue; }
+                if (score > bestScore) { bestScore = score; best = p; }
+            }
+            if (best) return best;
+        }
+        if (shown.length) return shown[0];
+        // Nobody else showed: whoever folded latest (never folded outranks any fold).
+        const depth = (p) => (p.foldStreet == null ? 9 : p.foldStreet);
+        return others.slice().sort((a, b) => depth(b) - depth(a))[0];
+    }
+
     // Build the just-ended hand's summary: a "winner wins $x with <hand>" header,
     // the You / Board / 🏆 winner card columns, an arrow that expands a per-player
-    // betting breakdown. Returns the element (or null). Local view only.
+    // betting breakdown. When I'm the winner the trophy moves onto my own column
+    // and the third column becomes the runner-up. Returns the element (or null).
+    // Local view only.
     function buildHandSummaryRow() {
         const detail = parseHandDetail();
         // Prefer the detail's complete-scope reads (survive log trimming); fall back otherwise.
@@ -1147,6 +1173,9 @@
         const board = detail ? detail.board : parseBoard();
         const win = detail && detail.winner ? detail : null;
         if (!mine.length && !board.length && !win) return null; // nothing to show
+        const me = getMyName();
+        const iWon = !!(win && me && win.winner === me);
+        const runnerUp = iWon ? findRunnerUp(win, board) : null;
         const winnerCards = win ? ((win.players.find((p) => p.name === win.winner) || {}).cards) : null;
 
         const panel = document.createElement("div");
@@ -1170,9 +1199,10 @@
             for (let i = 0; i < n; i++) g.appendChild(cards && cards[i] ? makeCardEl(cards[i]) : emptySlot());
             c.appendChild(g); cardRow.appendChild(c);
         };
-        col("You", mine, 2);
+        col(iWon ? "🏆 You" : "You", mine, 2);
         col("Board", board, 5);
-        col(win ? "🏆 " + win.winner : "🏆", winnerCards, 2);
+        if (iWon) col(runnerUp ? "🥈 " + runnerUp.name : "🥈", runnerUp ? runnerUp.cards : null, 2);
+        else col(win ? "🏆 " + win.winner : "🏆", winnerCards, 2);
 
         // A "more" column after the winner, matching the other headers, whose
         // button expands the per-player detail. Collapsed by default.

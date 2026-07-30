@@ -1,0 +1,71 @@
+# GitHub Actions workflow for the takitus/gpokr repo
+
+name: Deploy to tools.gpokr.com
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC token for AWS
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from manifest.json
+        id: manifest
+        run: echo "version=$(python3 -c "import json; print(json.load(open('manifest.json'))['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version is already live
+        id: live
+        run: |
+          LIVE="$(curl -fsS https://tools.gpokr.com/current.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' || true)"
+          echo "Live: ${LIVE:-none} | Repo: ${{ steps.manifest.outputs.version }}"
+          if [ "$LIVE" = "${{ steps.manifest.outputs.version }}" ]; then
+            echo "::notice::v$LIVE is already live on tools.gpokr.com — bump the version in manifest.json to deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sanity checks
+        if: steps.live.outputs.skip != 'true'
+        run: |
+          for f in odds.js content.js overlay.css dark.css assets/table.png; do
+            test -s "$f" || { echo "::error::$f missing or empty"; exit 1; }
+          done
+          node --check odds.js
+          node --check content.js
+          grep -qF 'chrome-extension://__MSG_@@extension_id__/assets/table.png' dark.css \
+            || { echo "::error::expected chrome-extension URL not found in dark.css"; exit 1; }
+
+      # The extension-packaged dark-felt URL can't resolve in a web page;
+      # make it relative so it resolves against /<version>/dark.css.
+      - name: Rewrite extension asset URL for web
+        if: steps.live.outputs.skip != 'true'
+        run: sed -i 's|chrome-extension://__MSG_@@extension_id__/assets/table.png|assets/table.png|' dark.css
+
+      - name: Authenticate to AWS (OIDC, no keys)
+        if: steps.live.outputs.skip != 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::069812419770:role/gpokr-tools-github-deploy
+          aws-region: us-east-1
+
+      - name: Publish to S3
+        if: steps.live.outputs.skip != 'true'
+        run: |
+          V="${{ steps.manifest.outputs.version }}"
+          CACHE="public, max-age=31536000, immutable"
+          aws s3 cp odds.js          "s3://tools.gpokr.com/$V/odds.js"          --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          aws s3 cp content.js       "s3://tools.gpokr.com/$V/content.js"       --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          aws s3 cp overlay.css      "s3://tools.gpokr.com/$V/overlay.css"      --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
+          aws s3 cp dark.css         "s3://tools.gpokr.com/$V/dark.css"         --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
+          aws s3 cp assets/table.png "s3://tools.gpokr.com/$V/assets/table.png" --content-type "image/png"                             --cache-control "$CACHE"
+          printf '{"version": "%s", "files": ["odds.js", "content.js", "overlay.css", "dark.css", "assets/table.png"], "syncedAt": "%s"}' \
+            "$V" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > current.json
+          aws s3 cp current.json s3://tools.gpokr.com/current.json --content-type "application/json" --cache-control "public, max-age=300"
+          echo "::notice::Published v$V to https://tools.gpokr.com/"
