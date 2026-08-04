@@ -2979,10 +2979,25 @@
         }
     }
 
-    // [playername] = someone who busted THIS hand ("NAME finishes the tournament
-    // Nth"). Scoped to the current hand (not the whole log window) so a finisher
-    // from many hands ago can't resurface; fullHandScope() survives the visible
-    // log trimming mid-hand and keeps the linked-name row (logLines drops it).
+    // "NAME finishes the tournament Nth" is announced tournament-wide, so it also
+    // names players busting out at OTHER tables — gg'ing them would be nonsense.
+    // "NAME stands up" is table-local: the seat only empties in our own log. So a
+    // finish counts only once we've also seen that player stand up. The stand-up
+    // line can lag the finish by a poll (or land after the next hand starts), so
+    // both the current hand and the visible log window are searched.
+    function sawStandUp(name) {
+        const re = /^(.+?) stands up\b/i;
+        const has = (rows) => rows.some((l) => {
+            const m = l.match(re);
+            return m && m[1].trim() === name;
+        });
+        return has(fullHandScope()) || has(logRowTexts());
+    }
+
+    // [playername] = someone who busted THIS hand at our table (see sawStandUp).
+    // Scoped to the current hand (not the whole log window) so a finisher from
+    // many hands ago can't resurface; fullHandScope() survives the visible log
+    // trimming mid-hand and keeps the linked-name row (logLines drops it).
     // Expiry (a one-hand grace) is handled at the new-hand edge in pollHandState.
     function scanDepartures() {
         const re = /^(.+?) finishes the tournament \d+(?:st|nd|rd|th)$/i;
@@ -2992,7 +3007,8 @@
             const m = rows[i].match(re);
             if (!m) continue;
             const name = m[1].trim();
-            if (me && name === me) continue; // never gg myself; look further back
+            if (me && name === me) continue;   // never gg myself; look further back
+            if (!sawStandUp(name)) continue;   // another table's bustout; keep looking
             lastDeparted = name;
             departedAgeHands = 0; // seen in the current hand -> fresh
             return;
