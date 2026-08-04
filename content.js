@@ -124,6 +124,12 @@
             betEditorList = cfg.map((c) => ({ mult: c.mult, base: c.base, pos: c.pos }));
             renderBetEditorRows();
         }
+        // Rail panels: which are collapsed, and whether Teams is shown at all.
+        SHOW_TEAMS = !(s && s.showTeams === false); // opt-out
+        const collapsed = s && s.sideCollapsed;
+        SIDE_COLLAPSED = (collapsed && typeof collapsed === "object") ? Object.assign({}, collapsed) : {};
+        applySideSections();
+        syncProfileMenu();
         // Lobby sort/filter. Unknown sort keys fall back to the site's own order.
         LOBBY_SORT = LOBBY_SORTS.some(([k]) => k === (s && s.lobbySort)) ? s.lobbySort : "site";
         LOBBY_TIERS = Array.isArray(s && s.lobbyTiers)
@@ -2566,6 +2572,113 @@
         });
     }
 
+    // ---------- sidebar sections: collapse, hover-peek, teams visibility ----------
+    // Each rail panel is a wrapper holding its own titleRow + .iogc-SidePanel-info
+    // + .iogc-SidePanel-inner, so collapsing is just hiding those two content
+    // blocks and leaving the title behind. Because the wrapper contains both the
+    // title and the content, hover-to-peek is pure CSS: :hover on the wrapper
+    // keeps the panel open as the pointer moves down into what it revealed.
+    const SIDE_SECTIONS = [
+        ["tables", ".iogc-AvailableGameSidePanel", "available tables"],
+        ["leaderboard", ".iogc-tourny", "table leaderboard"],
+        ["teams", ".iogc-TeamsLeaderboard", "teams"],
+        ["following", ".iogc-friends", "following"],
+    ];
+    let SIDE_COLLAPSED = {}; // section key -> collapsed?
+    let SHOW_TEAMS = true;   // the toggle that replaces the site's "Dark Mode" menu item
+
+    function setSectionCollapsed(key, collapsed) {
+        SIDE_COLLAPSED = Object.assign({}, SIDE_COLLAPSED, { [key]: collapsed });
+        saveSetting("sideCollapsed", SIDE_COLLAPSED);
+        applySideSections();
+    }
+
+    function ensureSideSections() {
+        for (const [key, sel] of SIDE_SECTIONS) {
+            const panel = document.querySelector(sel);
+            if (!panel) continue;
+            const row = panel.querySelector(":scope > .iogc-SidePanel-titleRow");
+            if (!row) continue;
+            panel.classList.add("gpe-sec");
+            if (!row.querySelector(":scope > .gpe-sec-toggle")) {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "gpe-sec-toggle";
+                // Inserted FIRST: a right-floated box only shares a line with the
+                // content that follows it in source order.
+                btn.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation(); // some panel titles are links
+                    setSectionCollapsed(key, !SIDE_COLLAPSED[key]);
+                });
+                row.insertBefore(btn, row.firstChild);
+            }
+        }
+        applySideSections();
+    }
+
+    function applySideSections() {
+        for (const [key, sel, label] of SIDE_SECTIONS) {
+            const panel = document.querySelector(sel);
+            if (!panel) continue;
+            const off = !!SIDE_COLLAPSED[key];
+            panel.classList.toggle("gpe-sec-collapsed", off);
+            if (key === "teams") panel.classList.toggle("gpe-sec-hidden", !SHOW_TEAMS);
+            const btn = panel.querySelector(":scope > .iogc-SidePanel-titleRow > .gpe-sec-toggle");
+            if (!btn) continue;
+            const glyph = off ? "▸" : "▾";
+            if (btn.textContent !== glyph) btn.textContent = glyph;
+            btn.title = off ? "expand " + label + " (or hover to peek)" : "collapse " + label;
+        }
+    }
+
+    // The site's ⋮ menu: hide its "Dark Mode" item — ours is in the tools tab and
+    // restyles far more of the site — and put a Teams panel toggle in its place,
+    // the one rail panel the site offers no switch for. GWT rebuilds the menu every
+    // time it opens, so this re-applies on each poll (and right after the click
+    // that opens it, so the replaced item never flashes into view).
+    function patchProfileMenu() {
+        const menu = document.querySelector(".iogc-LoginPanel-menuPopup .iogc-LoginPanel-menu tbody");
+        if (!menu) return;
+        let anchor = null;
+        for (const item of menu.querySelectorAll(".gwt-MenuItem")) {
+            if (!/^dark mode$/i.test(item.textContent.trim())) continue;
+            const tr = item.closest("tr");
+            if (tr) { tr.classList.add("gpe-menu-off"); anchor = tr; }
+        }
+        if (!menu.querySelector(".gpe-menu-teams")) {
+            const tr = document.createElement("tr");
+            const td = document.createElement("td");
+            td.className = "gwt-MenuItem iogc-LoginPanel-menuItemToggle gpe-menu-teams";
+            td.addEventListener("click", () => {
+                SHOW_TEAMS = !SHOW_TEAMS;
+                saveSetting("showTeams", SHOW_TEAMS);
+                applySideSections();
+                syncProfileMenu();
+                // The site's own toggles dismiss the menu when clicked; a native
+                // mousedown outside it is what GWT's auto-hide listens for.
+                document.body.dispatchEvent(
+                    new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+            });
+            tr.appendChild(td);
+            if (anchor) anchor.insertAdjacentElement("afterend", tr);
+            else menu.appendChild(tr);
+        }
+        syncProfileMenu();
+    }
+    // The site marks a toggle on with a leading ✓ and off with padding spaces.
+    function syncProfileMenu() {
+        const td = document.querySelector(".gpe-menu-teams");
+        if (td) td.textContent = (SHOW_TEAMS ? "✓ " : "    ") + "Teams";
+    }
+    // Patch as soon as the menu opens rather than waiting for the next tick.
+    function watchProfileMenuButton() {
+        const btn = document.querySelector(".iogc-LoginPanel-menuButton");
+        if (!btn || btn._gpeMenuHook) return;
+        btn._gpeMenuHook = true;
+        btn.addEventListener("click", () => requestAnimationFrame(patchProfileMenu));
+    }
+
     // ---------- who's here roster ----------
     // Seated players come from the seat panels; watcher NAMES are only ever
     // revealed incrementally — "NAME is here / has left" chat events and chat
@@ -3942,16 +4055,22 @@
     });
 
     // ---------- boot ----------
-    setInterval(() => { updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming(); }, 300); // track avatars + turn highlight live
+    setInterval(() => {
+        updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming();
+        patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
+    }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();
         ensureSidePanelTabs();
         ensureLobbyTools();
+        ensureSideSections();
+        watchProfileMenuButton();
         if (ready) {
             clearInterval(boot);
             setInterval(() => {
-                watchChat(); addPicker(); ensureSidePanelTabs(); ensureLobbyTools(); pollHandState();
+                watchChat(); addPicker(); ensureSidePanelTabs(); ensureLobbyTools();
+                ensureSideSections(); watchProfileMenuButton(); pollHandState();
             }, 1500);
         }
     }, 800);

@@ -401,6 +401,29 @@
    the profile card above it can lay out normally) */
 #gpe-stat-tip .gpe-tip-body { white-space: pre-line; }
 
+/* ---- Sidebar sections: collapse to the title, hover to peek ----
+   Each of the site's rail panels wraps its own titleRow + info + inner, so
+   collapsing hides the two content blocks and the title stays put. */
+.gpe-sec-toggle {
+    all: unset;
+    float: right;
+    cursor: pointer;
+    font: 10px/1 Arial, sans-serif;
+    color: #8a8a8a;
+    padding: 4px 1px 4px 7px;
+}
+.gpe-sec-toggle:hover { color: #222; }
+.gpe-sec.gpe-sec-collapsed > .iogc-SidePanel-info,
+.gpe-sec.gpe-sec-collapsed > .iogc-SidePanel-inner { display: none; }
+/* Hover-peek. The :hover is on the WRAPPER, which contains the title and the
+   content it reveals, so the panel stays open while the pointer travels down
+   into it — nothing snaps shut underneath the cursor. */
+.gpe-sec.gpe-sec-collapsed:hover > .iogc-SidePanel-info,
+.gpe-sec.gpe-sec-collapsed:hover > .iogc-SidePanel-inner { display: block; }
+.gpe-sec-hidden { display: none !important; }
+/* the site's "Dark Mode" row in the ⋮ menu, replaced by our Teams toggle */
+tr.gpe-menu-off { display: none !important; }
+
 /* ---- Lobby controls: sort + tier filter above "Available Tables" ----
    Sits between the site's section header and its tile list. Hidden along with the
    site's own panel content when one of our side tabs is active, since it's a

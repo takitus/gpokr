@@ -90,6 +90,30 @@ html.gpe-dark .iogc-LoginPanel-menuButton { color: #c3cad6 !important; }
 html.gpe-dark .iogc-LoginPanel-menuButton svg,
 html.gpe-dark .iogc-LoginPanel-menuButton svg * { fill: #c3cad6 !important; }
 
+/* the ⋮ menu popup: the site renders it white, which on a dark page reads as a
+   flashlight. Same surface family as our dialogs/tooltips; GWT marks the hovered
+   row with .gwt-MenuItem-selected rather than relying on :hover. */
+html.gpe-dark .iogc-LoginPanel-menuPopup {
+    background-color: #232c3a !important;
+    border-color: #3c4a61 !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55) !important;
+}
+html.gpe-dark .iogc-LoginPanel-menuPopup .popupContent,
+html.gpe-dark .iogc-LoginPanel-menuPopup .iogc-LoginPanel-menu,
+html.gpe-dark .iogc-LoginPanel-menuPopup table { background-color: transparent !important; }
+html.gpe-dark .iogc-LoginPanel-menuPopup .gwt-MenuItem { color: #d2d8e2 !important; }
+html.gpe-dark .iogc-LoginPanel-menuPopup .gwt-MenuItem-selected,
+html.gpe-dark .iogc-LoginPanel-menuPopup .gwt-MenuItem:hover {
+    background-color: #2f3a4b !important;
+    color: #fff !important;
+}
+html.gpe-dark .iogc-LoginPanel-menuPopup .iogc-LoginPanel-menuItemDanger { color: #f0837a !important; }
+html.gpe-dark .iogc-LoginPanel-menuPopup .iogc-LoginPanel-menuItemDanger.gwt-MenuItem-selected,
+html.gpe-dark .iogc-LoginPanel-menuPopup .iogc-LoginPanel-menuItemDanger:hover {
+    background-color: #46292b !important;
+    color: #ffb4ab !important;
+}
+
 /* ---- right rail: titles, tiles, leaderboards ---- */
 html.gpe-dark .iogc-SidePanel-title,
 html.gpe-dark a.iogc-SidePanel-title { color: #d2d8e2 !important; }
@@ -320,6 +344,10 @@ html.gpe-dark .gpe-hover-topper .gpe-ht-edit {
     background: rgba(20, 26, 34, 0.6);
 }
 html.gpe-dark .gpe-hover-topper .gpe-ht-edit:hover { background: #2c3645; color: #fff; }
+/* section collapse carets in the rail's title rows */
+html.gpe-dark .gpe-sec-toggle { color: #8a97ab; }
+html.gpe-dark .gpe-sec-toggle:hover { color: #e6ebf2; }
+
 /* lobby sort + tier filter (sits on the sidebar's #1f2530 panel) */
 html.gpe-dark .gpe-lobby-sel,
 html.gpe-dark .gpe-lobby-btn {
