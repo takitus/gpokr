@@ -387,7 +387,7 @@
 #gpe-stat-tip {
     position: fixed;
     z-index: 100000;
-    max-width: 240px;
+    max-width: 264px;
     background: #fff;
     color: #333;
     border: 1px solid #cfcfcf;
@@ -395,9 +395,171 @@
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
     padding: 6px 9px;
     font: 11px/1.5 Arial, sans-serif;
-    white-space: pre-line;
     pointer-events: none;
 }
+/* the observed-stats text block (pre-line lives here, not on the whole tip, so
+   the profile card above it can lay out normally) */
+#gpe-stat-tip .gpe-tip-body { white-space: pre-line; }
+
+/* ---- Lobby controls: sort + tier filter above "Available Tables" ----
+   Sits between the site's section header and its tile list. Hidden along with the
+   site's own panel content when one of our side tabs is active, since it's a
+   direct child of .iogc-SidePanel-inner like everything else there. */
+#gpe-lobby-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    margin: 1px 0 6px;
+    font: 10px/1.4 Arial, sans-serif;
+}
+.gpe-lobby-sel {
+    flex: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    font: 10px Arial, sans-serif;
+    padding: 2px 4px;
+    color: #333;
+    background: #fff;
+    border: 1px solid #c9c9c9;
+    border-radius: 5px;
+}
+.gpe-lobby-btn {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    white-space: nowrap;
+    font: 10px Arial, sans-serif;
+    padding: 3px 7px;
+    color: #333;
+    background: #fff;
+    border: 1px solid #c9c9c9;
+    border-radius: 5px;
+}
+.gpe-lobby-btn:hover { background: #f0f0f0; }
+.gpe-lobby-btn.gpe-open { background: #eef2f8; border-color: #9db4d4; }
+.gpe-lobby-note,
+.gpe-lobby-hint { flex: 1 0 100%; color: #888; }
+.gpe-lobby-panel {
+    flex: 1 0 100%;
+    /* border-box, or the 100% basis plus this padding/border overflows the
+       sidebar and clips the min-entry column */
+    box-sizing: border-box;
+    display: grid;
+    gap: 3px;
+    padding: 6px 7px;
+    /* a step down from the bar's own 10px — this is a dense list of secondary
+       controls, matching the 9px used for other small labels in the panel */
+    font-size: 9px;
+    background: #fafafa;
+    border: 1px solid #dcdcdc;
+    border-radius: 6px;
+}
+.gpe-lobby-panel[hidden] { display: none; }
+.gpe-lobby-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    user-select: none;
+}
+/* the native box doesn't scale with font-size; size it to match the smaller text */
+.gpe-lobby-row input { margin: 0; flex: none; width: 11px; height: 11px; }
+.gpe-lobby-row.gpe-dim { color: #aaa; cursor: default; }   /* mode owns the boxes */
+.gpe-lobby-min { margin-left: auto; color: #888; white-space: nowrap; }
+.gpe-lobby-rule { height: 1px; background: #e4e4e4; margin: 1px 0; }
+.gpe-lobby-foot { display: flex; gap: 8px; margin-top: 1px; }
+.gpe-lobby-link {
+    all: unset;
+    cursor: pointer;
+    font: 9px Arial, sans-serif;
+    color: #1a6fd4;
+    text-decoration: underline;
+}
+.gpe-lobby-link:disabled { color: #aaa; cursor: default; text-decoration: none; }
+/* filtered-out tiles: hidden, never removed — the list is GWT's to rebuild */
+.iogc-AvailableGamePanel-tile.gpe-lobby-off { display: none !important; }
+
+/* ---- Site-profile card at the top of the stats tooltip ----
+   gpokr's own record for the player: monthly standing, today's numbers as a row
+   of stat tiles, and their trophy artwork. Signs (+/−) and the ★ carry meaning
+   on their own; colour only reinforces them. */
+.gpe-pf {
+    margin: -1px 0 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #ececec;
+}
+.gpe-pf-top {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 5px;
+}
+.gpe-pf-name {
+    font-weight: bold;
+    font-size: 12px;
+    color: #222;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.gpe-pf-rank {
+    margin-left: auto;
+    flex: none;
+    font-size: 10px;
+    color: #666;
+    background: #f2f2f2;
+    border-radius: 999px;
+    padding: 1px 6px;
+    white-space: nowrap;
+}
+.gpe-pf-elite { color: #8a5f18; background: rgba(232, 179, 57, 0.22); }
+
+/* Tiles: value over label, four across. Proportional figures (no tabular-nums —
+   these are standalone values, not a column that has to align). */
+.gpe-pf-tiles {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+}
+.gpe-pf-tile {
+    min-width: 0;
+    text-align: center;
+    background: #f7f7f7;
+    border-radius: 5px;
+    padding: 3px 2px 2px;
+}
+.gpe-pf-val {
+    font-size: 12px;
+    font-weight: bold;
+    line-height: 1.2;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.gpe-pf-up { color: #0a7f2e; }
+.gpe-pf-down { color: #b3261e; }
+.gpe-pf-lab {
+    font-size: 9px;
+    line-height: 1.3;
+    color: #666;
+    white-space: nowrap;
+}
+.gpe-pf-note { font-size: 9px; color: #666; text-align: center; margin-top: 3px; }
+.gpe-pf-trophies {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-top: 5px;
+}
+.gpe-pf-trophy {
+    width: 27px;
+    height: 27px;
+    object-fit: contain;
+    flex: none;
+}
+.gpe-pf-more { font-size: 9px; color: #666; margin-left: 2px; }
 
 /* ---- Player note editor (opens from a stats badge) ---- */
 #gpe-note-editor {

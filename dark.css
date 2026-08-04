@@ -136,7 +136,7 @@ html.gpe-dark .gwt-DialogBox {
    tone, darker than the frame so the black separator border still reads.
    Excluded: the table tiles (card-colored) and native pill buttons. */
 html.gpe-dark .iogc-DialogOuter,
-html.gpe-dark .iogc-DialogOuter *:not(button.ui-button):not(.ui-button_content):not(.iogc-ChangeTableDialog-tile):not(.iogc-ChangeTableDialog-tile *) {
+html.gpe-dark .iogc-DialogOuter *:not(button.ui-button):not(.ui-button_content):not(.iogc-ChangeTableDialog-tile):not(.iogc-ChangeTableDialog-tile *):not(.gwt-TabBarItem) {
     background-color: #161a22 !important;
 }
 html.gpe-dark .iogc-DialogOuter {
@@ -164,6 +164,46 @@ html.gpe-dark .iogc-ChangeTableDialog-tile {
 html.gpe-dark .iogc-ChangeTableDialog-tile-selected { background-color: #28455e !important; }
 html.gpe-dark .iogc-ChangeTableDialog-tile-inactive { color: #7a879b !important; }
 html.gpe-dark .iogc-ChangeTableDialog-stat { color: #aab4c4 !important; }
+
+/* GWT tab bars — the Preferences dialog's General / Profile / Following, and any
+   other tab bar the site renders. Unselected tabs are painted #112233, which on
+   the dark dialog (#161a22) is 1.08:1: they read as blank space, so the dialog
+   looks like it has one tab. Rebuilt as folder tabs: inactive ones sit back on a
+   dimmer fill, the active one takes the panel's own tone and pulls down over the
+   bar's rule (margin-bottom) so it reads as joined to the content, capped with an
+   accent line on top.
+   The inactive fill only survives because ".gwt-TabBarItem" is excluded from the
+   blanket ".iogc-DialogOuter *" background rule above — that selector computes to
+   (0,6,2) thanks to its chained :not()s, so no reasonable selector here outranks
+   it and every tab would flatten to the panel tone. */
+html.gpe-dark .gwt-TabBar { border-bottom: 2px solid #39455a !important; }
+html.gpe-dark div.gwt-TabBarItem {
+    box-sizing: border-box;
+    color: #a9b4c4 !important;                    /* 8.3:1 on the dialog surface */
+    cursor: pointer;
+    text-align: center;
+    padding: 4px 8px 3px !important;
+    background-color: #1e2532 !important;
+    border: 1px solid #2e3949 !important;
+    border-bottom: none !important;
+    border-radius: 7px 7px 0 0 !important;
+}
+html.gpe-dark div.gwt-TabBarItem:not(.gwt-TabBarItem-selected):hover {
+    color: #d2d8e2 !important;
+    background-color: #263041 !important;
+}
+html.gpe-dark div.gwt-TabBarItem-selected {
+    color: #fff !important;
+    font-weight: bold !important;
+    cursor: default;
+    /* the panel's own background + no bottom edge = the tab and the content
+       below it read as one surface */
+    background-color: #161a22 !important;
+    border-color: #45526b !important;
+    box-shadow: inset 0 2px 0 0 #6fb1e8 !important;   /* accent cap */
+    margin-bottom: -2px !important;                   /* cover the bar's rule */
+    padding-bottom: 5px !important;
+}
 
 html.gpe-dark td:has(>table.iogc-ChatPanel-input) {
     background-color: #2b3648 !important;
@@ -280,12 +320,50 @@ html.gpe-dark .gpe-hover-topper .gpe-ht-edit {
     background: rgba(20, 26, 34, 0.6);
 }
 html.gpe-dark .gpe-hover-topper .gpe-ht-edit:hover { background: #2c3645; color: #fff; }
+/* lobby sort + tier filter (sits on the sidebar's #1f2530 panel) */
+html.gpe-dark .gpe-lobby-sel,
+html.gpe-dark .gpe-lobby-btn {
+    color: #d2d8e2 !important;
+    background: #262e3b !important;
+    border-color: #44516a !important;
+}
+html.gpe-dark .gpe-lobby-btn:hover { background: #2f3a4b !important; }
+html.gpe-dark .gpe-lobby-btn.gpe-open {
+    background: #2b3a52 !important;
+    border-color: #5a7ba8 !important;
+}
+html.gpe-dark .gpe-lobby-panel {
+    background: #1a212c;
+    border-color: #39455a;
+}
+html.gpe-dark .gpe-lobby-note,
+html.gpe-dark .gpe-lobby-hint,
+html.gpe-dark .gpe-lobby-min { color: #93a0b4; }
+html.gpe-dark .gpe-lobby-row { color: #c3cad6; }
+html.gpe-dark .gpe-lobby-row.gpe-dim { color: #6c7a90; }
+html.gpe-dark .gpe-lobby-rule { background: #33415a; }
+html.gpe-dark .gpe-lobby-link { color: #6fb1e8; }
+html.gpe-dark .gpe-lobby-link:disabled { color: #5d6a7e; }
+
 html.gpe-dark #gpe-stat-tip {
     background: #232c3a;
     color: #cfd6e0;
     border-color: #3c4a61;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
 }
+/* Site-profile card — its own steps chosen against the #232c3a tip surface
+   (each ≥ 4.5:1 there), not lightened copies of the light-mode values. */
+html.gpe-dark .gpe-pf { border-bottom-color: #33415a; }
+html.gpe-dark .gpe-pf-name { color: #e6ebf3; }
+html.gpe-dark .gpe-pf-rank { color: #a9b4c4; background: #2c3645; }
+html.gpe-dark .gpe-pf-elite { color: #e8b339; background: rgba(232, 179, 57, 0.16); }
+html.gpe-dark .gpe-pf-tile { background: #2a3444; }
+html.gpe-dark .gpe-pf-val { color: #cfd6e0; }
+html.gpe-dark .gpe-pf-up { color: #57d06a; }
+html.gpe-dark .gpe-pf-down { color: #f0837a; }
+html.gpe-dark .gpe-pf-lab,
+html.gpe-dark .gpe-pf-note,
+html.gpe-dark .gpe-pf-more { color: #93a0b4; }
 
 /* note editor */
 html.gpe-dark #gpe-note-editor {

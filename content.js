@@ -124,6 +124,15 @@
             betEditorList = cfg.map((c) => ({ mult: c.mult, base: c.base, pos: c.pos }));
             renderBetEditorRows();
         }
+        // Lobby sort/filter. Unknown sort keys fall back to the site's own order.
+        LOBBY_SORT = LOBBY_SORTS.some(([k]) => k === (s && s.lobbySort)) ? s.lobbySort : "site";
+        LOBBY_TIERS = Array.isArray(s && s.lobbyTiers)
+            ? s.lobbyTiers.filter((t) => typeof t === "string") : [];
+        LOBBY_MINE_ONLY = !!(s && s.lobbyMineOnly);
+        const lobbyPanel = document.getElementById("gpe-lobby-panel");
+        if (lobbyPanel) lobbyPanel._gpeKey = "";
+        renderLobbyFilters();
+        applyLobbyView();
         const chatCfg = sanitizeChatConfig(s && s.chatButtons);
         if (JSON.stringify(chatCfg) !== JSON.stringify(CHAT_CONFIG)) {
             CHAT_CONFIG = chatCfg;
@@ -1672,20 +1681,22 @@
         return pct(t.vpip) + "/" + pct(t.pfr) + "/" + sd;
     }
 
-    // Hover tooltip: spell the numbers out in plain English.
-    function badgeTitleFor(name) {
+    // Hover tooltip: spell the numbers out in plain English. `skipName` drops the
+    // leading "NAME —" when the site-profile card above the text already names them.
+    function badgeTitleFor(name, skipName) {
         const t = playerStats[name];
         const lines = [];
+        const who = skipName ? "" : name + " — ";
         if (t && t.hands) {
             const pct = (x) => Math.round((x / t.hands) * 100) + "%";
-            lines.push(name + " — " + t.hands + " hand" + (t.hands === 1 ? "" : "s") + " observed");
+            lines.push(who + t.hands + " hand" + (t.hands === 1 ? "" : "s") + " observed");
             lines.push("plays " + pct(t.vpip) + " of hands (VPIP)");
             lines.push("raises " + pct(t.pfr) + " preflop (PFR)");
             const aggr = (t.bets || 0) + (t.raises || 0);
             if (aggr || t.calls) lines.push("postflop: " + aggr + " bets/raises vs " + (t.calls || 0) + " calls");
             if (t.showdowns) lines.push("won " + t.sdWins + " of " + t.showdowns + " showdowns");
         } else {
-            lines.push(name + " — no hands observed yet");
+            lines.push(who + "no hands observed yet");
         }
         if (playerNicks[name]) lines.push("🏷 " + playerNicks[name]);
         if (playerNotes[name]) lines.push("📝 " + playerNotes[name]);
@@ -1693,20 +1704,244 @@
         return lines.join("\n");
     }
 
+    // ---------- site-profile stats (the numbers gpokr itself keeps) ----------
+    // Our own stats are only what this tab has watched. `/profile/{id}.json` is
+    // the site's own record — today's chips/hands/busts, the monthly standing,
+    // and the trophy artwork — and it answers unauthenticated for any user id.
+    // Fetched lazily on first hover of a badge, cached, and re-rendered into the
+    // open tooltip when it lands. Everything here degrades to nothing: no id, a
+    // failed fetch, or a null block just leaves the observed-stats text alone.
+    const PROFILE_TTL_MS = 5 * 60 * 1000;
+    const profileCache = new Map();   // userId -> { data, fetchedAt, loading }
+    const userIdByName = new Map();   // player name -> userId (stable; cached for the session)
+    const PROFILE_TROPHY_MAX = 6;     // artwork is 512px/50KB+ per file — show a handful
+
+    // Three independent places the numeric id shows up, tried in order of how
+    // tightly each is bound to the player: their seat's profile link, their
+    // avatar's photoId (which ends "-<userId>"), then any profile link elsewhere
+    // on the page whose text is exactly their name (the game log links names).
+    // A miss is cached-free and simply means no card.
+    const PROFILE_HREF_ID = /\/profile\/(\d{4,})/;
+    // Avatar URLs end with the photoId, which is "<hash>-<userId>.<ext>". Anchored
+    // on the hyphen so a default avatar ("usr64/100000.jpg") can't be mistaken for
+    // a user id.
+    const PHOTO_ID = /-(\d{4,})\.[a-z]{3,4}(?:[?#]|$)/i;
+    function seatUserId(name) {
+        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            if (getSeatName(p) !== name) continue;
+            const link = p.querySelector('a[href*="/profile/"]');
+            const byHref = link && (link.getAttribute("href") || "").match(PROFILE_HREF_ID);
+            if (byHref) return byHref[1];
+            const av = p.querySelector("img.iogc-PlayerPanel-avatar");
+            const byPhoto = av && (av.getAttribute("src") || "").match(PHOTO_ID);
+            if (byPhoto) return byPhoto[1];
+        }
+        return null;
+    }
+    function linkedUserId(name) {
+        for (const a of document.querySelectorAll('a[href*="/profile/"]')) {
+            if (a.textContent.trim() !== name) continue;
+            const m = (a.getAttribute("href") || "").match(PROFILE_HREF_ID);
+            if (m) return m[1];
+        }
+        return null;
+    }
+    function userIdFor(name) {
+        const known = userIdByName.get(name);
+        if (known) return known;
+        const id = seatUserId(name) || linkedUserId(name);
+        if (id) userIdByName.set(name, id); // ids never change; keep it for the session
+        return id;
+    }
+
+    // Cached profile for `name`, kicking off a fetch when missing or stale.
+    // Returns null until data is in hand (the tooltip re-renders on arrival).
+    function profileStats(name) {
+        const id = userIdFor(name);
+        if (!id) return null;
+        const hit = profileCache.get(id);
+        const fresh = hit && Date.now() - hit.fetchedAt < PROFILE_TTL_MS;
+        if (!fresh && !(hit && hit.loading)) fetchProfile(id, name);
+        return (hit && hit.data) || null;
+    }
+    // My own id comes from the sidebar avatar rather than a seat — it's there
+    // whether I'm seated, standing, or only watching.
+    function myUserId() {
+        const av = document.querySelector(".iogc-LoginPanel-avatar");
+        const m = av && (av.getAttribute("src") || "").match(PHOTO_ID);
+        return m ? m[1] : null;
+    }
+    // My monthly score — the number the lobby's tier "min entry" is compared
+    // against. Null until the profile lands (or if the id can't be read).
+    function myMonthlyScore() {
+        const id = myUserId();
+        if (!id) return null;
+        const hit = profileCache.get(id);
+        if (!hit || Date.now() - hit.fetchedAt >= PROFILE_TTL_MS) {
+            if (!(hit && hit.loading)) fetchProfile(id, null);
+        }
+        const s = hit && hit.data && hit.data.monthStat && hit.data.monthStat.score;
+        return typeof s === "number" ? s : null;
+    }
+    function fetchProfile(id, name) {
+        const prev = profileCache.get(id);
+        const keep = prev && prev.data;
+        profileCache.set(id, { data: keep, fetchedAt: Date.now(), loading: true });
+        // fetchedAt is stamped on failure too, so a dead id is retried at most
+        // once per TTL instead of on every hover.
+        const done = (data) => {
+            profileCache.set(id, { data: data || keep || null, fetchedAt: Date.now(), loading: false });
+            if (badgeTip && badgeTip.name === name) renderBadgeTip();
+        };
+        fetch("/profile/" + encodeURIComponent(id) + ".json", { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then(done, () => done(null));
+    }
+
+    // 1,284 / 12.9K / 1.4M — compact only once the digits get long.
+    function compactNum(n) {
+        if (typeof n !== "number" || !isFinite(n)) return "–";
+        const a = Math.abs(n);
+        const trim = (s) => s.replace(/\.0$/, "");
+        if (a >= 1e6) return trim((n / 1e6).toFixed(a >= 1e7 ? 0 : 1)) + "M";
+        if (a >= 1e4) return trim((n / 1e3).toFixed(a >= 1e5 ? 0 : 1)) + "K";
+        return n.toLocaleString();
+    }
+    // Signed for the win/loss numbers: the sign carries direction, so color is
+    // never the only cue. Real minus sign (U+2212), not a hyphen.
+    function signedNum(n) {
+        if (typeof n !== "number" || !isFinite(n)) return "–";
+        return (n > 0 ? "+" : n < 0 ? "−" : "") + compactNum(Math.abs(n));
+    }
+
+    // The card that sits above the observed-stats text: monthly standing chip,
+    // a row of today's tiles, and the trophy artwork. Null when there's nothing
+    // to show, so the tooltip stays exactly as it was before this existed.
+    function buildProfileCard(name) {
+        const prof = profileStats(name);
+        if (!prof) return null;
+        const today = prof.today || null;
+        const month = prof.monthStat || null;
+        // `today` is null for anyone who hasn't played yet today; fall back to the
+        // month-to-date block rather than showing a row of dashes. Same fields
+        // either way, except the running total is `scoreChange` vs `score`.
+        const period = today || month;
+        if (!period) return null;
+        const total = today ? today.scoreChange : month.score;
+
+        const card = document.createElement("div");
+        card.className = "gpe-pf";
+
+        const top = document.createElement("div");
+        top.className = "gpe-pf-top";
+        const who = document.createElement("span");
+        who.className = "gpe-pf-name";
+        who.textContent = displayName(name);
+        top.appendChild(who);
+        if (month && month.rank) {
+            const chip = document.createElement("span");
+            chip.className = "gpe-pf-rank" + (month.rank <= 3 ? " gpe-pf-elite" : "");
+            // ★ + the word "rank" keep the top-3 gold from being colour-alone.
+            chip.textContent = (month.rank <= 3 ? "★ " : "") + "#" + month.rank.toLocaleString() +
+                " " + String(prof.monthName || "").slice(0, 3);
+            top.appendChild(chip);
+        }
+        card.appendChild(top);
+
+        const tiles = document.createElement("div");
+        tiles.className = "gpe-pf-tiles";
+        const TILES = [
+            { lab: today ? "today" : "month", val: signedNum(total), dir: total },
+            { lab: "hands", val: compactNum(period.played) },
+            { lab: "busts", val: compactNum(period.busts) },
+            { lab: "per game", val: signedNum(period.ppg), dir: period.ppg },
+        ];
+        TILES.forEach((t) => {
+            const cell = document.createElement("div");
+            cell.className = "gpe-pf-tile";
+            const v = document.createElement("div");
+            v.className = "gpe-pf-val" + (t.dir > 0 ? " gpe-pf-up" : t.dir < 0 ? " gpe-pf-down" : "");
+            v.textContent = t.val || "–";
+            const l = document.createElement("div");
+            l.className = "gpe-pf-lab";
+            l.textContent = t.lab;
+            cell.appendChild(v);
+            cell.appendChild(l);
+            tiles.appendChild(cell);
+        });
+        card.appendChild(tiles);
+        if (!today) {
+            const none = document.createElement("div");
+            none.className = "gpe-pf-note";
+            none.textContent = "nothing played today";
+            card.appendChild(none);
+        }
+
+        // Monthly leaderboard trophies first (best finish first); a player with
+        // none falls back to their bounty/tournament/team artwork.
+        const career = (prof.careerTrophies || []).slice()
+            .sort((a, b) => (a.rank || 99) - (b.rank || 99))
+            .map((t) => ({ url: t.imageUrl, alt: (t.monthName || "") + " #" + (t.rank || "?") }));
+        const wins = career.length ? career
+            : (prof.achievements || []).map((a) => ({
+                url: a.imageUrl, alt: (a.sourceName || a.bonusType || "") + " #" + (a.rank || "?") }));
+        const shown = wins.filter((w) => w.url).slice(0, PROFILE_TROPHY_MAX);
+        if (shown.length) {
+            const row = document.createElement("div");
+            row.className = "gpe-pf-trophies";
+            shown.forEach((w) => {
+                const img = document.createElement("img");
+                img.className = "gpe-pf-trophy";
+                img.src = w.url;
+                img.alt = w.alt;
+                img.decoding = "async";
+                row.appendChild(img);
+            });
+            if (wins.length > shown.length) {
+                const more = document.createElement("span");
+                more.className = "gpe-pf-more";
+                more.textContent = "+" + (wins.length - shown.length);
+                row.appendChild(more);
+            }
+            card.appendChild(row);
+        }
+        return card;
+    }
+
     // Hand-rolled hover tooltip. (Native title tooltips never appear here:
     // the 300ms badge refresh rewrites the attribute, resetting the
     // browser's tooltip timer every tick.)
+    let badgeTip = null; // { badge, name } while one is open — the re-render target
     function showBadgeTip(badge, name) {
         hideBadgeTip();
-        const tip = document.createElement("div");
-        tip.id = "gpe-stat-tip";
-        tip.textContent = badgeTitleFor(name);
-        document.body.appendChild(tip);
+        badgeTip = { badge, name };
+        renderBadgeTip();
+    }
+    // Rebuilt in place rather than patched: called again when a profile fetch
+    // lands, which changes the card's height, so it re-anchors as well.
+    function renderBadgeTip() {
+        if (!badgeTip) return;
+        const { badge, name } = badgeTip;
+        if (!badge.isConnected) { hideBadgeTip(); return; }
+        let tip = document.getElementById("gpe-stat-tip");
+        if (!tip) {
+            tip = document.createElement("div");
+            tip.id = "gpe-stat-tip";
+            document.body.appendChild(tip);
+        }
+        tip.textContent = "";
+        const card = buildProfileCard(name);
+        if (card) tip.appendChild(card);
+        const body = document.createElement("div");
+        body.className = "gpe-tip-body";
+        body.textContent = badgeTitleFor(name, !!card); // the card already names them
+        tip.appendChild(body);
         const r = badge.getBoundingClientRect();
         tip.style.left = Math.max(4, Math.min(r.left, window.innerWidth - tip.offsetWidth - 8)) + "px";
         tip.style.top = r.bottom + 6 + "px";
     }
     function hideBadgeTip() {
+        badgeTip = null;
         const t = document.getElementById("gpe-stat-tip");
         if (t) t.remove();
     }
@@ -2389,6 +2624,7 @@
         fetch("/api/gpokr/tables", { credentials: "include" })
             .then((r) => (r.ok ? r.json() : null))
             .then((data) => {
+                noteLobbySnap(data); // same payload the lobby filter needs — share it
                 if (!data || rosterTable !== table) return;
                 const t = (data.tables || []).find((x) => x.name === table);
                 if (t) { viewerInfo.count = t.viewerCount; viewerInfo.listed = true; }
@@ -2640,6 +2876,318 @@
         }
 
         updateShareControlUI(); // swap the button/checkbox for the current game phase
+    }
+
+    // ---------- lobby: sort + tier filter for "Available Tables" ----------
+    // The site's tile list is a flex column, so sorting is done with CSS `order`
+    // and hiding with a class: GWT's own nodes are never moved or removed, which
+    // matters because it re-renders that list constantly. Everything is re-applied
+    // from the same 1.5s poll that installs the rest of our sidebar furniture.
+    const LOBBY_SORTS = [
+        ["site", "site order"],
+        ["tier", "tier ↑"],
+        ["-tier", "tier ↓"],
+        ["-players", "most players"],
+        ["players", "fewest players"],
+    ];
+    let LOBBY_SORT = "site";
+    let LOBBY_TIERS = [];        // [] = show every tier; else the tier keys to show
+    let LOBBY_MINE_ONLY = false; // show only tiers whose min entry my score meets
+
+    // Tier metadata (min entry per tier) comes from the lobby endpoint's
+    // `categories`. Refreshed at most every 30s, and only once the list is on
+    // screen. The roster's viewer-count fetch feeds the same cache for free.
+    let lobbySnap = { categories: [], at: 0, loading: false };
+    function noteLobbySnap(data) {
+        if (!data || !data.categories) return;
+        lobbySnap.categories = data.categories;
+        lobbySnap.at = Date.now();
+    }
+    function refreshLobbySnap() {
+        if (lobbySnap.loading || Date.now() - lobbySnap.at < 30000) return;
+        lobbySnap.loading = true;
+        const done = (data) => {
+            lobbySnap.loading = false;
+            lobbySnap.at = Date.now(); // stamped on failure too, so a dead endpoint isn't hammered
+            if (data) { noteLobbySnap(data); renderLobbyFilters(); }
+        };
+        fetch("/api/gpokr/tables", { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then(done, () => done(null));
+    }
+
+    // Tier key = the tile's badge text, uppercased ("TIER 1", "TIER 0 SNG"), which
+    // is the category name in caps. Union of the API's categories and whatever
+    // badges are actually on screen, so nothing in the list is unfilterable.
+    function lobbyTierMeta() {
+        const out = new Map();
+        for (const c of lobbySnap.categories) {
+            if (!c || !c.name) continue;
+            out.set(String(c.name).toUpperCase(), {
+                label: c.name,
+                min: typeof c.minimumScore === "number" ? c.minimumScore : null,
+            });
+        }
+        for (const t of lobbyTiles()) {
+            if (t.tier && !out.has(t.tier)) out.set(t.tier, { label: t.tier, min: null });
+        }
+        return out;
+    }
+    function lobbyList() { return document.querySelector(".iogc-AvailableGamePanel-list"); }
+    function lobbyTiles() {
+        const list = lobbyList();
+        if (!list) return [];
+        return Array.from(list.querySelectorAll(":scope > .iogc-AvailableGamePanel-tile")).map((el, i) => {
+            const badge = el.querySelector(".iogc-AvailableGamePanel-categoryBadge");
+            // The stats row is "<seated>/<seats>" then the bounty; find the one
+            // shaped like a seat count rather than trusting its position.
+            let players = -1;
+            for (const s of el.querySelectorAll(".iogc-AvailableGamePanel-stat")) {
+                const m = s.textContent.match(/(\d+)\s*\/\s*(\d+)/);
+                if (m) { players = parseInt(m[1], 10); break; }
+            }
+            return { el, i, players, tier: badge ? badge.textContent.trim().toUpperCase() : "" };
+        });
+    }
+
+    // "Tiers I can play" = my monthly score meets the tier's min entry (the site
+    // labels it "Min Entry" in its own change-table dialog). While my score is
+    // unknown the filter stays open rather than hiding the whole lobby.
+    function lobbyTierAllowed(key, meta, score) {
+        if (LOBBY_MINE_ONLY) {
+            if (score == null) return true;
+            const m = meta.get(key);
+            return !m || m.min == null || score >= m.min;
+        }
+        return !LOBBY_TIERS.length || LOBBY_TIERS.includes(key);
+    }
+
+    function applyLobbyView() {
+        const list = lobbyList();
+        if (!list) return;
+        refreshLobbySnap();
+        const meta = lobbyTierMeta();
+        const score = myMonthlyScore();
+        const tiles = lobbyTiles();
+        const visible = [];
+        for (const t of tiles) {
+            const ok = lobbyTierAllowed(t.tier, meta, score);
+            t.el.classList.toggle("gpe-lobby-off", !ok);
+            if (t.el.style.order) t.el.style.order = ""; // reset; re-assigned below when sorting
+            if (ok) visible.push(t);
+        }
+        if (LOBBY_SORT !== "site") {
+            const min = (t) => {
+                const m = meta.get(t.tier);
+                return m && m.min != null ? m.min : Number.MAX_SAFE_INTEGER;
+            };
+            const key = {
+                tier: (t) => min(t),
+                "-tier": (t) => -min(t),
+                players: (t) => t.players,
+                "-players": (t) => -t.players,
+            }[LOBBY_SORT];
+            visible
+                .map((t) => ({ t, k: key(t) }))
+                .sort((a, b) => a.k - b.k || a.t.i - b.t.i) // original order breaks ties
+                .forEach(({ t }, n) => { t.el.style.order = String(n); });
+        }
+        syncLobbyControls(visible.length, tiles.length);
+    }
+
+    let lobbyPanelOpen = false; // session-only: survives the re-inserts below
+
+    function ensureLobbyTools() {
+        const list = lobbyList();
+        if (!list) return;
+        let bar = document.getElementById("gpe-lobby-bar");
+        const fresh = !bar;
+        if (fresh) bar = buildLobbyBar();
+        // GWT re-renders this panel whenever the lobby changes, which can leave our
+        // bar detached or in the wrong place. MOVE the existing node rather than
+        // rebuilding it — a rebuild would drop the open filter panel mid-use.
+        if (bar.nextElementSibling !== list) list.insertAdjacentElement("beforebegin", bar);
+        if (fresh) renderLobbyFilters(); // needs the panel in the document
+        applyLobbyView();
+    }
+
+    function buildLobbyBar() {
+        const bar = document.createElement("div");
+        bar.id = "gpe-lobby-bar";
+
+        const sort = document.createElement("select");
+        sort.id = "gpe-lobby-sort";
+        sort.className = "gpe-lobby-sel";
+        LOBBY_SORTS.forEach(([value, label]) => {
+            const o = document.createElement("option");
+            o.value = value;
+            o.textContent = label;
+            sort.appendChild(o);
+        });
+        sort.value = LOBBY_SORT;
+        sort.addEventListener("change", () => {
+            LOBBY_SORT = sort.value;
+            saveSetting("lobbySort", LOBBY_SORT);
+            applyLobbyView();
+        });
+
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.id = "gpe-lobby-tiers";
+        toggle.className = "gpe-lobby-btn";
+        toggle.addEventListener("click", () => {
+            const panel = document.getElementById("gpe-lobby-panel");
+            if (!panel) return;
+            lobbyPanelOpen = panel.hidden;
+            panel.hidden = !lobbyPanelOpen;
+            toggle.classList.toggle("gpe-open", lobbyPanelOpen);
+            if (lobbyPanelOpen) renderLobbyFilters();
+        });
+
+        const note = document.createElement("div");
+        note.id = "gpe-lobby-note";
+        note.className = "gpe-lobby-note";
+        note.hidden = true;
+
+        const panel = document.createElement("div");
+        panel.id = "gpe-lobby-panel";
+        panel.className = "gpe-lobby-panel";
+        panel.hidden = !lobbyPanelOpen;
+        toggle.classList.toggle("gpe-open", lobbyPanelOpen);
+
+        bar.appendChild(sort);
+        bar.appendChild(toggle);
+        bar.appendChild(note);
+        bar.appendChild(panel);
+        return bar;
+    }
+
+    // Panel body: the "only tiers I can play" mode, then one row per tier with its
+    // min entry. Rebuilt whenever the tier list or my score changes.
+    function renderLobbyFilters() {
+        const panel = document.getElementById("gpe-lobby-panel");
+        if (!panel) return;
+        const meta = lobbyTierMeta();
+        const score = myMonthlyScore();
+        const key = JSON.stringify([[...meta.keys()], score, LOBBY_MINE_ONLY, LOBBY_TIERS]);
+        if (panel._gpeKey === key) return; // nothing changed -> don't churn the DOM
+        panel._gpeKey = key;
+        panel.textContent = "";
+
+        const mine = document.createElement("label");
+        mine.className = "gpe-lobby-row";
+        const mineBox = document.createElement("input");
+        mineBox.type = "checkbox";
+        mineBox.id = "gpe-lobby-mine";
+        mineBox.checked = LOBBY_MINE_ONLY;
+        mineBox.addEventListener("change", () => {
+            LOBBY_MINE_ONLY = mineBox.checked;
+            saveSetting("lobbyMineOnly", LOBBY_MINE_ONLY);
+            panel._gpeKey = ""; // the per-tier rows change state with the mode
+            renderLobbyFilters();
+            applyLobbyView();
+        });
+        mine.appendChild(mineBox);
+        mine.appendChild(document.createTextNode("only tiers I can play"));
+        panel.appendChild(mine);
+        if (LOBBY_MINE_ONLY && score == null) {
+            const hint = document.createElement("div");
+            hint.className = "gpe-lobby-hint";
+            hint.textContent = "waiting for my score…";
+            panel.appendChild(hint);
+        }
+
+        const rule = document.createElement("div");
+        rule.className = "gpe-lobby-rule";
+        panel.appendChild(rule);
+
+        const tiers = [...meta.entries()].sort((a, b) => {
+            const am = a[1].min == null ? Number.MAX_SAFE_INTEGER : a[1].min;
+            const bm = b[1].min == null ? Number.MAX_SAFE_INTEGER : b[1].min;
+            return am - bm || a[1].label.localeCompare(b[1].label);
+        });
+        for (const [tierKey, m] of tiers) {
+            const row = document.createElement("label");
+            row.className = "gpe-lobby-row" + (LOBBY_MINE_ONLY ? " gpe-dim" : "");
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.disabled = LOBBY_MINE_ONLY;
+            // In "only mine" mode the boxes mirror eligibility (read-only); otherwise
+            // an empty filter list means everything is on.
+            box.checked = LOBBY_MINE_ONLY
+                ? lobbyTierAllowed(tierKey, meta, score)
+                : (!LOBBY_TIERS.length || LOBBY_TIERS.includes(tierKey));
+            box.addEventListener("change", () => {
+                const boxes = [...panel.querySelectorAll(".gpe-lobby-tier")];
+                const on = boxes.filter((b) => b.checked).map((b) => b.dataset.tier);
+                LOBBY_TIERS = on.length === boxes.length ? [] : on; // all checked = no filter
+                saveSetting("lobbyTiers", LOBBY_TIERS);
+                panel._gpeKey = "";
+                applyLobbyView();
+            });
+            box.className = "gpe-lobby-tier";
+            box.dataset.tier = tierKey;
+            const label = document.createElement("span");
+            label.textContent = m.label;
+            const minEntry = document.createElement("span");
+            minEntry.className = "gpe-lobby-min";
+            minEntry.textContent = m.min == null ? "" : "$" + m.min.toLocaleString();
+            row.appendChild(box);
+            row.appendChild(label);
+            row.appendChild(minEntry);
+            panel.appendChild(row);
+        }
+
+        const foot = document.createElement("div");
+        foot.className = "gpe-lobby-foot";
+        const setAll = (pick) => {
+            LOBBY_TIERS = pick;
+            saveSetting("lobbyTiers", LOBBY_TIERS);
+            panel._gpeKey = "";
+            renderLobbyFilters();
+            applyLobbyView();
+        };
+        const allBtn = document.createElement("button");
+        allBtn.type = "button";
+        allBtn.className = "gpe-lobby-link";
+        allBtn.textContent = "all";
+        allBtn.disabled = LOBBY_MINE_ONLY;
+        allBtn.addEventListener("click", () => setAll([]));
+        const noneBtn = document.createElement("button");
+        noneBtn.type = "button";
+        noneBtn.className = "gpe-lobby-link";
+        noneBtn.textContent = "none";
+        noneBtn.disabled = LOBBY_MINE_ONLY;
+        // A single impossible key hides everything without meaning "no filter".
+        noneBtn.addEventListener("click", () => setAll([" none"]));
+        foot.appendChild(allBtn);
+        foot.appendChild(noneBtn);
+        panel.appendChild(foot);
+    }
+
+    // Keep the bar's own widgets truthful (settings can also change from the popup
+    // or another tab) and report what the current filter leaves visible.
+    function syncLobbyControls(shown, total) {
+        const sort = document.getElementById("gpe-lobby-sort");
+        if (sort && sort.value !== LOBBY_SORT) sort.value = LOBBY_SORT;
+        const toggle = document.getElementById("gpe-lobby-tiers");
+        if (toggle) {
+            const label = LOBBY_MINE_ONLY ? "mine"
+                : !LOBBY_TIERS.length ? "all"
+                : String(LOBBY_TIERS.filter((t) => t !== " none").length);
+            toggle.textContent = "tiers: " + label + " ▾";
+        }
+        const note = document.getElementById("gpe-lobby-note");
+        if (note) {
+            note.hidden = !(total && !shown);
+            if (!note.hidden) note.textContent = "no tables match this filter";
+        }
+        const mineBox = document.getElementById("gpe-lobby-mine");
+        if (mineBox && mineBox.checked !== LOBBY_MINE_ONLY) {
+            const panel = document.getElementById("gpe-lobby-panel");
+            if (panel) panel._gpeKey = "";
+            renderLobbyFilters();
+        }
     }
 
     // ---------- sending ----------
@@ -3399,9 +3947,12 @@
         const ready = watchChat();
         addPicker();
         ensureSidePanelTabs();
+        ensureLobbyTools();
         if (ready) {
             clearInterval(boot);
-            setInterval(() => { watchChat(); addPicker(); ensureSidePanelTabs(); pollHandState(); }, 1500);
+            setInterval(() => {
+                watchChat(); addPicker(); ensureSidePanelTabs(); ensureLobbyTools(); pollHandState();
+            }, 1500);
         }
     }, 800);
 })();
