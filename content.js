@@ -2055,13 +2055,15 @@
         const btn = document.getElementById("gpe-share-last");
         const toggle = document.getElementById("gpe-share-toggle");
         if (!btn || !toggle) return;
+        // Hide with a class (visibility, not display) so the unused control keeps
+        // its place in the shared slot and the row's width stays put.
         const showBtn = shareLastAvailable();
-        btn.style.display = showBtn ? "" : "none";
-        toggle.style.display = showBtn ? "none" : "";
+        btn.classList.toggle("gpe-hidden", !showBtn);
+        toggle.classList.toggle("gpe-hidden", showBtn);
         if (showBtn) {
             const done = sharedLastGameId != null && lastHandShare.gameId === sharedLastGameId;
             btn.disabled = done;
-            btn.textContent = done ? "hand shared ✓" : "share last hand";
+            btn.classList.toggle("gpe-shared", done); // swaps which label shows
         }
     }
     function shareLastHand() {
@@ -2145,14 +2147,22 @@
     // Instant hover popup — replaces the native `title` tooltip, which has an
     // uncontrollable ~1s delay. The popup lives on <body> so the narrow side
     // panel can't clip it, and is positioned under the anchor each time.
+    // `text` may be a function, resolved on each hover — that's how the
+    // quick-chat buttons preview the current value of their [playername] /
+    // [lastwinner] tokens. Returning "" skips the popup entirely.
+    let instantTip = null;
+    function hideInstantTip() {
+        if (instantTip) { instantTip.remove(); instantTip = null; }
+    }
     function attachInstantTip(el, text) {
-        let pop = null;
-        const hide = () => { if (pop) { pop.remove(); pop = null; } };
         el.addEventListener("mouseenter", () => {
-            hide();
-            pop = document.createElement("div");
+            hideInstantTip();
+            const msg = typeof text === "function" ? text() : text;
+            if (!msg) return;
+            const pop = document.createElement("div");
+            instantTip = pop;
             pop.className = "gpe-tip-pop";
-            pop.textContent = text;
+            pop.textContent = msg;
             document.body.appendChild(pop);
             const r = el.getBoundingClientRect();
             const pad = 6;
@@ -2164,7 +2174,7 @@
             pop.style.left = Math.round(left) + "px";
             pop.style.top = Math.round(r.bottom + 4) + "px";
         });
-        el.addEventListener("mouseleave", hide);
+        el.addEventListener("mouseleave", hideInstantTip);
     }
 
     function ensureSidePanelTabs() {
@@ -3005,19 +3015,39 @@
             .replace(/\s+/g, " ").trim();
     }
 
+    // Hover preview for a quick-chat button: the message as it would go out
+    // right now, with the tokens filled in. A token whose player isn't known
+    // yet drops out of the message, so name it rather than silently showing a
+    // shorter line ("gg [playername]" with nobody busted -> "sends: gg").
+    const CHAT_TOKENS = [
+        { re: /\[playername\]/i, label: "[playername]", value: () => displayName(lastDeparted) },
+        { re: /\[lastwinner\]/i, label: "[lastwinner]", value: () => displayName(lastWinner) },
+    ];
+    function chatButtonTip(b) {
+        const used = CHAT_TOKENS.filter((t) => t.re.test(b.text));
+        if (!used.length) {
+            // No tokens: only worth a tip when the caption hides the message.
+            return b.name && b.name !== b.text ? "sends: " + b.text : "";
+        }
+        const unknown = used.filter((t) => !t.value()).map((t) => t.label);
+        const msg = chatButtonMessage(b.text);
+        if (!msg) return "nothing to send yet — " + unknown.join(" and ") + " unknown";
+        return "sends: " + msg + (unknown.length ? "  (" + unknown.join(" and ") + " unknown)" : "");
+    }
+
     function renderChatButtons() {
         const wrap = document.getElementById("gpe-chat-btns");
         if (!wrap) return;
+        hideInstantTip(); // the anchors below are about to be destroyed
         wrap.textContent = "";
         CHAT_CONFIG.forEach((b) => {
             const btn = document.createElement("button");
             btn.type = "button";
             btn.className = "gpe-chat-btn";
             btn.textContent = b.name || b.text;      // caption defaults to the message
-            // Show what it actually sends when the label differs or a token is used.
-            if ((b.name && b.name !== b.text) || /\[(playername|lastwinner)\]/i.test(b.text)) {
-                btn.title = "sends: " + b.text;
-            }
+            // Preview the outgoing message on hover — resolved at hover time so
+            // the token values shown are the current ones.
+            attachInstantTip(btn, () => chatButtonTip(b));
             btn.addEventListener("click", () => {
                 const msg = chatButtonMessage(b.text);
                 if (msg) sendMessage(msg);
@@ -3219,26 +3249,44 @@
         shareBox.id = "gpe-share-next";
         shareBox.addEventListener("change", () => { shareNextHand = shareBox.checked; });
         shareToggle.appendChild(shareBox);
-        shareToggle.appendChild(document.createTextNode(" share hand"));
+        shareToggle.appendChild(document.createTextNode("share hand")); // gap, not a space, sets the offset
 
         // Its counterpart: a one-click button to reveal the hand that just
         // ended, shown (in place of the checkbox) only in the gap before the
         // next flop. updateShareControlUI() toggles which of the two is visible.
+        // Both of its labels stay in the layout (one hidden) so the button's
+        // width never changes when it flips to "hand shared ✓".
         const shareLast = document.createElement("button");
         shareLast.type = "button";
         shareLast.id = "gpe-share-last";
-        shareLast.className = "gpe-share-last";
-        shareLast.textContent = "share last hand";
-        shareLast.style.display = "none";
+        shareLast.className = "gpe-share-last gpe-stack gpe-hidden";
+        const shareLastIdle = document.createElement("span");
+        shareLastIdle.className = "gpe-share-last-idle";
+        shareLastIdle.textContent = "share last hand";
+        const shareLastDone = document.createElement("span");
+        shareLastDone.className = "gpe-share-last-done";
+        shareLastDone.textContent = "hand shared ✓";
+        shareLast.appendChild(shareLastIdle);
+        shareLast.appendChild(shareLastDone);
         shareLast.addEventListener("click", shareLastHand);
+
+        // The checkbox and the button swap in and out of view, so they share one
+        // fixed-size slot: both stay in the layout (the inactive one hidden) and
+        // the slot stays as wide as the wider of the two. Without this, swapping
+        // them resized the row and shifted the quick-chat buttons sideways —
+        // right under a click that was aimed at the share control.
+        const shareSlot = document.createElement("div");
+        shareSlot.id = "gpe-share-slot";
+        shareSlot.className = "gpe-stack";
+        shareSlot.appendChild(shareToggle);
+        shareSlot.appendChild(shareLast);
 
         // One tidy flex row under the chat input for all our controls.
         // (The "odds" toggle moved up to the side panel's tools tab.)
         const tools = document.createElement("div");
         tools.id = "gpe-chat-tools";
         tools.appendChild(btn);
-        tools.appendChild(shareToggle);
-        tools.appendChild(shareLast);
+        tools.appendChild(shareSlot);
         // Quick-chat buttons live to the right of "share hand".
         const chatBtns = document.createElement("div");
         chatBtns.id = "gpe-chat-btns";

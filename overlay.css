@@ -880,6 +880,24 @@ a.gpe-roster-name:hover { text-decoration: underline; }
 .gpe-share-last:hover { background: #e3efd6; }
 .gpe-share-last:disabled { cursor: default; opacity: 0.55; }
 
+/* ---- Share control slot ----
+   The "share hand" checkbox and the "share last hand" button trade places, and
+   the button's label flips to "hand shared ✓". Everything that swaps is stacked
+   in a single grid cell and hidden with visibility (not display), so each slot
+   stays as wide as its widest state. Otherwise the row reflowed on every swap
+   and slid the quick-chat buttons under a click aimed at the share control.
+   The button is the wider of the two, so it fills the slot; the checkbox and its
+   text sit centered in that same space. */
+.gpe-stack { display: inline-grid; align-items: center; }
+.gpe-stack > * { grid-area: 1 / 1; }
+.gpe-hidden { visibility: hidden; }
+#gpe-share-slot { justify-items: center; }
+.gpe-share-last { display: inline-grid; justify-items: center; }
+.gpe-share-last > span { visibility: hidden; }
+.gpe-share-last:not(.gpe-hidden) .gpe-share-last-idle { visibility: visible; }
+.gpe-share-last:not(.gpe-hidden).gpe-shared .gpe-share-last-idle { visibility: hidden; }
+.gpe-share-last:not(.gpe-hidden).gpe-shared .gpe-share-last-done { visibility: visible; }
+
 /* ---- Bet-sizing columns (float flush against the bet input) ----
    Width is set inline to match the input. Blind buttons (all in / 3x / 2x)
    stack above it with a rounded top; pot-fraction buttons (½ / ⅔ / pot)
