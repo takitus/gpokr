@@ -9,6 +9,10 @@
 # Runs ./pack.sh first (so the Chrome zip is built too) to keep one source of
 # truth for the packaged file list; then copies that staging, injects the gecko
 # settings, and rezips.
+#
+# The JS/CSS in here is minified, so an AMO submission needs the source archive
+# pack.sh also emits — dist/gpokr-tools-<version>-source.zip — uploaded alongside
+# this zip, from the same run. See BUILD.md.
 
 set -euo pipefail
 cd "$(dirname "$0")"

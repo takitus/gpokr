@@ -3,9 +3,9 @@
 
     const EMOTES = [
         // general reactions
-        "🙂","🙁","😀","😅","😂","🤣","😉","😡","😭","😎","😍","🤔","🫡","👋","👎","🔥","💩","👏","🤞","🍻","💀","🤑","🤫","👀","🙄",
+        "🙂","🙁","😀","😅","😂","🤣","😉","😡","😭","😎","😍","🤔","🫡","👋","👍","👎","🔥","💩","👏","🤞","🍻","💀","🤑","🤫","👀","🙄",
         // poker flavor: cards & suits, chips & money, luck, and table reactions
-        "🃏","♠️","♥️","♦️","♣️","💰","💵","💸","🚽","🗑️","🚤","⌛️","🎰","🎲","🏆","👑","🎁","🍀","🥶","🤯","🤡",
+        "🃏","♠️","♥️","♦️","♣️","💰","💵","💸","🚽","🗑️","🎣","🚤","⌛️","🎰","🎲","🏆","👑","🎁","🍀","🥶","🤯","🤡",
     ];
 
     const DISPLAY_MS = 2500;
@@ -202,7 +202,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -369,7 +369,15 @@
 
     function initStorage() {
         if (!EXT_STORE) { // no extension storage available: legacy fallback
-            applySettings(legacyLocalStorageSettings());
+            // Deferred by a tick on purpose. initStorage() is called partway down
+            // this file, but applySettings() writes module state that is declared
+            // further down still, next to the features that own it (oddsPos,
+            // SIDE_COLLAPSED, SHOW_TEAMS, LOBBY_*). Calling it synchronously from
+            // here therefore hit those `let`s in their temporal dead zone and threw
+            // "Cannot access 'oddsPos' before initialization", taking the whole
+            // content script down. The chrome.storage path below is async and so
+            // was never affected — which is why only this fallback was broken.
+            setTimeout(() => applySettings(legacyLocalStorageSettings()), 0);
             cardStore = legacyLocalStorageCardStore();
             return;
         }
@@ -3995,6 +4003,80 @@
         document.body.appendChild(panel);
     }
 
+    // ---------- UI: "splash" (3D chip portal) ----------
+    // TEST FEATURE, no settings toggle yet: drops 3D chips through a portal over
+    // the felt. Purely cosmetic and local — nothing is sent to the site.
+    //
+    // The button goes in the pot label's own table cell, as a SIBLING of the
+    // label rather than a child: the label is a GWT widget whose text is rewritten
+    // on every pot change, which would wipe out any child we put inside it. It is
+    // then positioned (see overlay.css) into the 50px right margin the site
+    // already leaves on the label, so the controls row can't reflow.
+    // Re-checked on the poll loop, since GWT rebuilds the controls between hands.
+    function addSplashButton() {
+        const pot = document.querySelector(".gpokr-GameWindow-potLabel");
+        if (!pot) return;
+        const cell = pot.parentElement;
+        if (!cell) return;
+        const existing = document.getElementById("gpe-splash-btn");
+        if (existing && existing.parentElement === cell) return;
+        if (existing) existing.remove();   // stale: GWT rebuilt the row
+        cell.classList.add("gpe-pot-cell");   // positioning context for the button
+
+        const btn = document.createElement("button");
+        btn.id = "gpe-splash-btn";
+        btn.type = "button";
+        btn.textContent = "splash";
+        btn.title = "Splash the pot — dump 3D chips on the table";
+        btn.addEventListener("click", () => {
+            if (!window.GPE_CHIPS) return;
+            // Ignored while one is already running; flash the button so the click
+            // doesn't feel dropped.
+            if (!window.GPE_CHIPS.drop()) {
+                btn.classList.add("gpe-splash-busy");
+                setTimeout(() => btn.classList.remove("gpe-splash-busy"), 180);
+            }
+        });
+        pot.insertAdjacentElement("afterend", btn);
+        placeSplashButton();
+    }
+
+    // Tuck the button just right of the pot TEXT. The label's box is a fixed
+    // 150px with its text left-aligned, so any fixed offset is wrong: clearing
+    // the box leaves the button 70px away from a short pot (and jammed against
+    // the fold/call/raise controls), while a closer offset would collide once
+    // the pot runs long. So measure the text and follow it, clamped inside the
+    // cell. Re-measured only when the pot text actually changes.
+    let lastPotText = null;
+    function placeSplashButton() {
+        const btn = document.getElementById("gpe-splash-btn");
+        const pot = document.querySelector(".gpokr-GameWindow-potLabel");
+        if (!btn || !pot) return;
+        if (pot.textContent === lastPotText && btn.style.left) return;
+        lastPotText = pot.textContent;
+
+        const cell = pot.parentElement;
+        if (!cell) return;
+        const cellBox = cell.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(pot);
+        const textBox = range.getBoundingClientRect();
+
+        // The label empties out between hands, which collapses the measurement to
+        // a zero rect. Hold the last good spot rather than darting to the left
+        // edge and back every time a hand ends; only fall back on first placement.
+        if (textBox.width <= 0) {
+            if (!btn.style.left) {
+                btn.style.left = (pot.getBoundingClientRect().left - cellBox.left + 8) + "px";
+            }
+            return;
+        }
+
+        const left = textBox.right - cellBox.left + 8;
+        const max = cellBox.width - btn.offsetWidth - 3;   // stay inside the cell
+        btn.style.left = Math.max(0, Math.min(left, max)) + "px";
+    }
+
     // Nudge the bet input by `steps` big blinds (may be negative), clamped to
     // [0, my stack]. Shared by the ↑/↓ hotkeys and the scroll wheel. Returns
     // true only if it actually changed the field.
@@ -4058,10 +4140,12 @@
     setInterval(() => {
         updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming();
         patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
+        placeSplashButton(); // follows the pot total as it changes
     }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();
+        addSplashButton();
         ensureSidePanelTabs();
         ensureLobbyTools();
         ensureSideSections();
@@ -4069,7 +4153,7 @@
         if (ready) {
             clearInterval(boot);
             setInterval(() => {
-                watchChat(); addPicker(); ensureSidePanelTabs(); ensureLobbyTools();
+                watchChat(); addPicker(); addSplashButton(); ensureSidePanelTabs(); ensureLobbyTools();
                 ensureSideSections(); watchProfileMenuButton(); pollHandState();
             }, 1500);
         }

@@ -220,6 +220,54 @@
     background: #f0f0f0;
 }
 
+/* ---- 3D chip portal (test feature) ----
+   The button sits in the chat tools row next to the emote picker; the layer is
+   a transparent canvas pinned over .iogc-GameWindow-table by chips3d.js.
+   pointer-events:none is what keeps the game clickable underneath it, and
+   z-index 9 keeps it below GWT dialogs (z 10) like the rest of our overlays. */
+/* The button sits beside the pot total, in its cell. The site gives the label a
+   150px width plus a 50px right margin, which together fill the 205px cell — so
+   the button is absolutely positioned into that empty margin instead of being
+   laid out after the label (which wrapped it onto the next line). Nothing in the
+   site's own box model changes, so the controls row can't reflow.
+
+   The `left` here is only a pre-JS fallback: placeSplashButton() in content.js
+   overrides it with an inline value that tracks the right edge of the pot TEXT,
+   since the label's box is a fixed 150px regardless of how short the pot is. */
+.gpe-pot-cell { position: relative; }
+#gpe-splash-btn {
+    all: unset;
+    box-sizing: border-box;
+    position: absolute;
+    left: 158px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 10.5px;
+    line-height: 1;
+    padding: 3px 6px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 6px;
+    vertical-align: middle;
+}
+#gpe-splash-btn:hover { background: #f0f0f0; }
+#gpe-splash-btn.gpe-splash-busy { opacity: 0.45; }
+
+#gpe-chips-layer {
+    position: fixed;
+    pointer-events: none;
+    z-index: 9;
+    overflow: visible;
+}
+#gpe-chips-layer canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
 /* ---- "Show Hand" button ---- */
 #gpe-hand-btn {
     all: unset;
