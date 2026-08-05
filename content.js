@@ -90,6 +90,15 @@
     const EXT_STORE = (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local)
         ? chrome.storage.local : null;
 
+    // Where this file was served from, captured while the script is still
+    // executing (document.currentScript is only valid then). gpokr can host these
+    // files itself and load them into the page — the "Takitus's gpokr tools"
+    // checkbox in its Preferences dialog — in which case this is an absolute
+    // https URL under tools.gpokr.com/<version>/ and we can resolve siblings
+    // against it. Running as a content script there is no currentScript, so this
+    // is "" and every use of it is skipped.
+    const SELF_SRC = (document.currentScript && document.currentScript.src) || "";
+
     function applySettings(s) {
         LOCAL_TEST = !!(s && s.localTest);
         SHARE_HAND = !!(s && s.shareHand);
@@ -4004,6 +4013,47 @@
     }
 
     // ---------- UI: "splash" (3D chip portal) ----------
+    // The animation lives in two extra files (vendor/three.iife.js and
+    // chips3d.js). As an extension they are declared as content scripts, so
+    // window.GPE_CHIPS already exists by the time this runs. When gpokr hosts the
+    // tools itself its loader fetches a fixed list — overlay.css, dark.css,
+    // odds.js, content.js — and knows nothing about the other two, so the button
+    // was there but silently did nothing. Rather than require a site-side change
+    // every time we add a file, fetch them on demand from wherever this file came
+    // from. They only need to be present alongside it on the host.
+    let chipsLoad = null;
+
+    function loadScript(url) {
+        return new Promise((resolve, reject) => {
+            const el = document.createElement("script");
+            el.src = url;
+            el.async = false;
+            el.onload = () => resolve();
+            el.onerror = () => reject(new Error(url));
+            (document.head || document.documentElement).appendChild(el);
+        });
+    }
+
+    // Resolves to whether window.GPE_CHIPS is available. Caches the in-flight
+    // load so hovering then clicking doesn't fetch three.js twice; on failure the
+    // cache is cleared so a later click can retry.
+    function ensureChips() {
+        if (window.GPE_CHIPS) return Promise.resolve(true);
+        if (!SELF_SRC) return Promise.resolve(false);
+        if (!chipsLoad) {
+            const base = SELF_SRC.replace(/[^/]*$/, "");
+            chipsLoad = loadScript(base + "vendor/three.iife.js")
+                .then(() => loadScript(base + "chips3d.js"))
+                .then(() => !!window.GPE_CHIPS)
+                .catch((err) => {
+                    console.warn("[gpe] chip portal unavailable — could not load " + err.message);
+                    chipsLoad = null;
+                    return false;
+                });
+        }
+        return chipsLoad;
+    }
+
     // TEST FEATURE, no settings toggle yet: drops 3D chips through a portal over
     // the felt. Purely cosmetic and local — nothing is sent to the site.
     //
@@ -4028,14 +4078,23 @@
         btn.type = "button";
         btn.textContent = "splash";
         btn.title = "Splash the pot — dump 3D chips on the table";
-        btn.addEventListener("click", () => {
-            if (!window.GPE_CHIPS) return;
-            // Ignored while one is already running; flash the button so the click
-            // doesn't feel dropped.
-            if (!window.GPE_CHIPS.drop()) {
-                btn.classList.add("gpe-splash-busy");
-                setTimeout(() => btn.classList.remove("gpe-splash-busy"), 180);
+        const flash = () => {
+            btn.classList.add("gpe-splash-busy");
+            setTimeout(() => btn.classList.remove("gpe-splash-busy"), 180);
+        };
+        // Warm the animation up on hover so the first click isn't waiting on
+        // three.js. Harmless if it never arrives — the click path awaits it too.
+        btn.addEventListener("pointerenter", () => { ensureChips(); }, { once: true });
+        btn.addEventListener("click", async () => {
+            if (!window.GPE_CHIPS) {
+                btn.classList.add("gpe-splash-busy");   // held until the fetch lands
+                const ready = await ensureChips();
+                btn.classList.remove("gpe-splash-busy");
+                if (!ready) return;
             }
+            // drop() returns false while one is already running; flash the button
+            // so the click doesn't feel dropped.
+            if (!window.GPE_CHIPS.drop()) flash();
         });
         pot.insertAdjacentElement("afterend", btn);
         placeSplashButton();
