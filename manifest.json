@@ -29,7 +29,7 @@
   "content_scripts": [
 	{
 	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"],
-	  "js": ["vendor/three.iife.js", "chips3d.js", "table3d.js", "odds.js", "content.js"],
+	  "js": ["vendor/three.iife.js", "chips3d.js", "table3d.js", "coin3d.js", "odds.js", "content.js"],
 	  "css": ["overlay.css", "dark.css"],
 	  "run_at": "document_idle"
 	}

@@ -48,7 +48,7 @@ mkdir -p "$STAGE/assets" "$STAGE/vendor"
 # Everything that gets minified: our own code plus the vendored three.js build.
 # (vendor/three.iife.js is itself generated — see vendor/README.md.) Split by
 # directory so the source archive can rebuild the same layout.
-BUILT_TOP="content.js odds.js chips3d.js popup.js overlay.css dark.css"
+BUILT_TOP="content.js odds.js chips3d.js table3d.js coin3d.js popup.js overlay.css dark.css"
 BUILT_VENDOR="vendor/three.iife.js"
 BUILT="$BUILT_TOP $BUILT_VENDOR"
 # Everything copied through byte-for-byte.
@@ -57,6 +57,7 @@ VERBATIM="manifest.json popup.html"
 cp $VERBATIM "$STAGE/"
 cp -R icons "$STAGE/icons"
 cp assets/table.png "$STAGE/assets/"   # dark.css backdrop (web_accessible_resources)
+cp assets/gpokr-logo.svg "$STAGE/assets/"   # table3d felt watermark (web_accessible_resources)
 
 if [ "$MINIFY" -eq 1 ]; then
     command -v npx >/dev/null 2>&1 || {

@@ -717,7 +717,20 @@
         return true;
     }
 
+    // The chip artwork is shared, not private to the portal: coin3d.js throws
+    // these same chips at players, and drawing its own would mean a second set
+    // of denominations to keep in step with the site's. `textures` mints a fresh
+    // pair per call — the caller owns them and must dispose them.
+    const art = {
+        types: CHIP_TYPES.map((t) => ({ denom: t.denom, body: t.body })),
+        proportions: { r: CHIP_R, h: CHIP_H },   // for anything drawn at another scale
+        textures(T, i) {
+            const type = CHIP_TYPES[((i | 0) % CHIP_TYPES.length + CHIP_TYPES.length) % CHIP_TYPES.length];
+            return { face: chipFaceTexture(T, type), rim: chipRimTexture(T, type), type };
+        },
+    };
+
     // _session is a debugging handle (camera/felt/chip state) for the harness in
     // scratch; nothing in the extension reads it.
-    window.GPE_CHIPS = { drop, isRunning: () => !!session, _session: () => session };
+    window.GPE_CHIPS = { drop, art, isRunning: () => !!session, _session: () => session };
 })();
