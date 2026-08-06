@@ -134,7 +134,9 @@ html.gpe-dark .iogc-LoginPanel-playerRow {
     border-color: rgb(255 255 255 / 20%) !important;
 }
 html.gpe-dark .iogc-AvailableGamePanel-tableName { color: #d2d8e2 !important; }
-html.gpe-dark .iogc-AvailableGamePanel-categoryBadge { color: #aab4c4 !important; }
+/* tier badge keeps the site's light #e0e0e0 chip, so its text keeps the
+   light-mode #333 — lightening it left gray-on-gray */
+html.gpe-dark .iogc-AvailableGamePanel-categoryBadge { color: #333 !important; }
 html.gpe-dark .iogc-tourny-odd { background-color: #1b222d !important; }
 html.gpe-dark .footerSection { color: #93a0b4 !important; }
 
