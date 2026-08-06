@@ -139,13 +139,7 @@
         TABLE3D_FELT_COLOR = clampColor(s && s.table3dFeltColor, TABLE3D_DEFAULTS.table3dFeltColor);
         TABLE3D_LEATHER_COLOR = clampColor(s && s.table3dLeatherColor, TABLE3D_DEFAULTS.table3dLeatherColor);
         TABLE3D_LOGO_OPACITY = clamp01(s && s.table3dLogoOpacity, TABLE3D_DEFAULTS.table3dLogoOpacity);
-        if (window.GPE_TABLE3D) {
-            GPE_TABLE3D.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
-            GPE_TABLE3D.setTexDepth(TABLE3D_FELT_DEPTH, TABLE3D_LEATHER_DEPTH);
-            GPE_TABLE3D.setFeltColor(TABLE3D_FELT_COLOR);
-            GPE_TABLE3D.setLeatherColor(TABLE3D_LEATHER_COLOR);
-            GPE_TABLE3D.setLogoOpacity(TABLE3D_LOGO_OPACITY);
-        }
+        applyTable3dSettings();
         syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
         COIN_TOSS = !(s && s.coinToss === false); // opt-out
         updateCoinButtons(); // add/remove the per-seat buttons for the new value
@@ -4520,12 +4514,54 @@
     // Keep the 3D table in step with the setting and the live DOM: turn it on
     // once a table appears, rebuild it if GWT recycled the host (wiping our
     // canvas), and tear it down when it's off or we've left the table.
-    function syncTable3d() {
+    // The 3D-table renderer lives in vendor/three.iife.js + table3d.js. As an
+    // extension both are content scripts (window.GPE_TABLE3D already exists); when
+    // gpokr hosts the tools its loader only fetches the core files, so pull the
+    // renderer from wherever this file came from — same trick as the chip
+    // portal (ensureChips3d) and coin toss (ensureCoin3d).
+    let table3dLoad = null;
+    function ensureTable3d() {
+        if (window.GPE_TABLE3D) return Promise.resolve(true);
+        if (!SELF_SRC) return Promise.resolve(false);
+        if (!table3dLoad) {
+            const base = SELF_SRC.replace(/[^/]*$/, "");
+            const three = window.THREE ? Promise.resolve() : loadScript(base + "vendor/three.iife.js");
+            table3dLoad = three
+                .then(() => loadScript(base + "table3d.js"))
+                .then(() => !!window.GPE_TABLE3D)
+                .catch((err) => {
+                    console.warn("[gpe] 3D table unavailable — could not load " + err.message);
+                    table3dLoad = null;
+                    return false;
+                });
+        }
+        return table3dLoad;
+    }
+
+    // Push the current felt/leather/logo settings into the live renderer.
+    function applyTable3dSettings() {
         const api = window.GPE_TABLE3D;
         if (!api) return;
+        api.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
+        api.setTexDepth(TABLE3D_FELT_DEPTH, TABLE3D_LEATHER_DEPTH);
+        api.setFeltColor(TABLE3D_FELT_COLOR);
+        api.setLeatherColor(TABLE3D_LEATHER_COLOR);
+        api.setLogoOpacity(TABLE3D_LOGO_OPACITY);
+    }
+
+    function syncTable3d() {
         const hasTable = !!document.querySelector(".iogc-GameWindow-table");
+        const api = window.GPE_TABLE3D;
+        if (!api) {
+            // Embedded: the renderer isn't a content script here — fetch it, then
+            // re-run once GPE_TABLE3D is in. (No-op as an extension: api exists.)
+            if (TABLE_3D && hasTable) ensureTable3d().then((ok) => { if (ok) syncTable3d(); });
+            return;
+        }
         if (TABLE_3D && hasTable) {
-            if (!api.isOn() || !document.getElementById("gpe-table3d")) { api.disable(); api.enable(); }
+            if (!api.isOn() || !document.getElementById("gpe-table3d")) {
+                api.disable(); api.enable(); applyTable3dSettings();
+            }
         } else if (api.isOn()) {
             api.disable();
         }
