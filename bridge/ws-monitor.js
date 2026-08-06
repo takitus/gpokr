@@ -60,6 +60,7 @@
         rawSample: null,
         debug: false,
         sockets: 0,   // sockets constructed through the wrapper
+        adopted: 0,   // already-open sockets picked up via the send() patch
         hooked: 0,    // realms patched (top window + same-origin frames)
         t0: (function () { try { return Math.round(performance.now()); } catch (e) { return -1; } })(),
         frames: [],   // {id, at, preexisting} per frame hooked — is the tap early enough?
@@ -298,6 +299,10 @@
                 ws.addEventListener("message", function (e) {
                     try { onFrame(e.data); } catch (err) {}
                 });
+                // Claim it, so the send() patch's adopt() doesn't attach a SECOND
+                // listener to a socket we already watch — that would dispatch every
+                // frame twice and play each interaction twice over.
+                ws.__gpeAdopted = true;
             } catch (e) {}
             return ws;
         }
@@ -311,6 +316,52 @@
         return GpeWebSocket;
     }
 
+    // ---------- adopting a socket that is already open ----------
+    // A constructor wrapper only ever sees sockets opened after it lands, which
+    // leaves the site-hosted build with nothing: gpokr's own client injects our
+    // loader after it has booted, so its socket is long open by the time we run.
+    //
+    // But the prototype is patchable at any time, and it reaches EXISTING
+    // instances. Inside a patched send(), `this` is the live socket — so the first
+    // outgoing frame hands us the instance, and from there addEventListener gets
+    // us incoming frames after all. The client pings with
+    // {action:'ping', clientId:'...'} (see Isb() in the client bundle), so the same
+    // frame also carries the id the REST call needs.
+    //
+    // Cost: nothing works until the client's next ping, rather than immediately.
+    // Outgoing frames are read ONLY for that id and are never forwarded anywhere.
+    function adopt(ws) {
+        try {
+            if (!ws || ws.__gpeAdopted) return;
+            ws.__gpeAdopted = true;
+            api.adopted++;
+            ws.addEventListener("message", function (e) {
+                try { onFrame(e.data); } catch (err) {}
+            });
+        } catch (e) {}
+    }
+
+    function readOutgoing(data) {
+        // Cheap reject first: this runs on every frame the client sends.
+        if (typeof data !== "string" || data.length > MAX_FRAME || data.indexOf("clientId") < 0) return;
+        try { noteClientId(JSON.parse(data)); } catch (e) {}
+    }
+
+    function hookSend(w) {
+        try {
+            const proto = w.WebSocket && w.WebSocket.prototype;
+            if (!proto || proto.__gpeSendHooked) return;
+            const send = proto.send;
+            if (typeof send !== "function") return;
+            proto.send = function (data) {
+                // Never let our bookkeeping break the client's own send.
+                try { adopt(this); readOutgoing(data); } catch (e) {}
+                return send.apply(this, arguments);
+            };
+            proto.__gpeSendHooked = true;
+        } catch (e) {}
+    }
+
     function hook(w) {
         try {
             if (!w || w.__gpeWsHooked) return false;
@@ -318,6 +369,7 @@
             if (!wrapped) return false;
             w.WebSocket = wrapped;
             w.__gpeWsHooked = true;
+            hookSend(w);   // also reach any socket already open in this realm
             api.hooked++;
             return true;
         } catch (e) {
