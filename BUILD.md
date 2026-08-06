@@ -11,17 +11,25 @@ build tool from npm.
 | ----------------------- | ----------------------- | ---------------------------------------- |
 | `content.js`            | `content.js`            | our code                                 |
 | `odds.js`               | `odds.js`               | our code                                 |
-| `chips3d.js`            | `chips3d.js`            | our code                                 |
-| `table3d.js`            | `table3d.js`            | our code                                 |
-| `coin3d.js`             | `coin3d.js`             | our code                                 |
+| `3d/chips3d.js`         | `3d/chips3d.js`         | our code                                 |
+| `3d/table3d.js`         | `3d/table3d.js`         | our code                                 |
+| `3d/coin3d.js`          | `3d/coin3d.js`          | our code                                 |
 | `popup.js`              | `popup.js`              | our code                                 |
 | `overlay.css`           | `overlay.css`           | our code                                 |
 | `dark.css`              | `dark.css`              | our code                                 |
 | `vendor/three.iife.js`  | `vendor/three.iife.js`  | three.js r0.185.1, MIT — see below        |
 
-`manifest.json`, `popup.html`, `icons/*`, `assets/table.png` and
-`assets/gpokr-logo.svg` are copied into
-the package byte-for-byte and are not transformed at all.
+`manifest.json`, `popup.html`, `icons/*` and the whole `assets/` directory
+(images plus the 3D models under `assets/models/`) are copied into the package
+byte-for-byte and are not transformed at all.
+
+The 3D models are committed to the repo **already optimized**, so no model is
+transformed at build time either. `tools/optimize-model.sh` is the authoring
+helper that produced them — it wraps `@gltf-transform/cli` and is run by hand
+when a model is added or re-exported, never by `pack.sh`. Its output is what's
+committed under `assets/models/`, and the un-optimized export is kept outside the
+package in `assets-src/models/`. Nothing under `assets/` needs a build tool to
+reproduce: the files in this archive *are* the files in the add-on.
 
 The only build tool is **esbuild 0.28.1**, used solely as a minifier (no bundling,
 no transpiling, no code generation). Every file is minified independently, so each
@@ -55,7 +63,8 @@ The exact minifier invocation `pack.sh` makes is:
 
 ```sh
 npx --yes esbuild@0.28.1 \
-  content.js odds.js chips3d.js table3d.js coin3d.js popup.js overlay.css dark.css vendor/three.iife.js \
+  content.js odds.js popup.js overlay.css dark.css \
+  3d/chips3d.js 3d/table3d.js 3d/coin3d.js vendor/three.iife.js \
   --minify --outdir=<staging dir> --outbase=.
 ```
 
@@ -64,7 +73,7 @@ To inspect a build with readable sources instead, run `./pack.sh --no-minify`.
 ## About vendor/three.iife.js
 
 This is [three.js](https://threejs.org) r0.185.1 (MIT, © 2010-2025 three.js
-authors), used by `chips3d.js` for the 3D chip animation. It is committed here as a
+authors), used by `3d/chips3d.js` for the 3D chip animation. It is committed here as a
 readable, non-minified bundle; the extension cannot load it from a CDN because
 Manifest V3 forbids remote code.
 

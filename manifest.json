@@ -22,14 +22,14 @@
   },
   "web_accessible_resources": [
 	{
-	  "resources": ["assets/table.png", "assets/gpokr-logo.svg"],
+	  "resources": ["assets/*"],
 	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*", "https://kdice.com/*", "https://www.kdice.com/*"]
 	}
   ],
   "content_scripts": [
 	{
 	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"],
-	  "js": ["vendor/three.iife.js", "chips3d.js", "table3d.js", "coin3d.js", "odds.js", "content.js"],
+	  "js": ["vendor/three.iife.js", "3d/chips3d.js", "3d/table3d.js", "3d/coin3d.js", "odds.js", "content.js"],
 	  "css": ["overlay.css", "dark.css"],
 	  "run_at": "document_idle"
 	}

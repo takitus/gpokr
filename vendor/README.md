@@ -1,7 +1,7 @@
 # vendor/three.iife.js
 
 [three.js](https://threejs.org) **r0.185.1**, MIT licensed, © 2010–2025 three.js
-authors. Used by `chips3d.js`, `table3d.js`, and `coin3d.js` for the 3D chip,
+authors. Used by `3d/chips3d.js`, `3d/table3d.js`, and `3d/coin3d.js` for the 3D chip,
 table, and coin rendering. Manifest V3 forbids loading remote code, so the
 library is committed here as a readable (non-minified) IIFE bundle that exposes
 `window.THREE` in the content-script world.

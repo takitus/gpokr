@@ -340,8 +340,8 @@
     const coinButtons = new Map();  // player name -> button
     let coinLoad = null;
 
-    // The renderer lives in three extra files (vendor/three.iife.js, chips3d.js
-    // for the chip artwork, and coin3d.js). As an extension all three are
+    // The renderer lives in three extra files (vendor/three.iife.js, 3d/chips3d.js
+    // for the chip artwork, and 3d/coin3d.js). As an extension all three are
     // declared as content scripts, so window.GPE_COIN already exists by the time
     // this runs; when gpokr hosts the tools itself its loader only fetches the
     // core files, so pull whichever are missing from wherever this file came
@@ -353,8 +353,8 @@
             const base = SELF_SRC.replace(/[^/]*$/, "");
             const three = window.THREE ? Promise.resolve() : loadScript(base + "vendor/three.iife.js");
             coinLoad = three
-                .then(() => (window.GPE_CHIPS ? null : loadScript(base + "chips3d.js")))
-                .then(() => loadScript(base + "coin3d.js"))
+                .then(() => (window.GPE_CHIPS ? null : loadScript(base + "3d/chips3d.js")))
+                .then(() => loadScript(base + "3d/coin3d.js"))
                 .then(() => !!window.GPE_COIN)
                 .catch((err) => {
                     console.warn("[gpe] chip toss unavailable — could not load " + err.message);
@@ -4330,7 +4330,7 @@
 
     // ---------- UI: "splash" (3D chip portal) ----------
     // The animation lives in two extra files (vendor/three.iife.js and
-    // chips3d.js). As an extension they are declared as content scripts, so
+    // 3d/chips3d.js). As an extension they are declared as content scripts, so
     // window.GPE_CHIPS already exists by the time this runs. When gpokr hosts the
     // tools itself its loader fetches a fixed list — overlay.css, dark.css,
     // odds.js, content.js — and knows nothing about the other two, so the button
@@ -4359,7 +4359,7 @@
         if (!chipsLoad) {
             const base = SELF_SRC.replace(/[^/]*$/, "");
             chipsLoad = loadScript(base + "vendor/three.iife.js")
-                .then(() => loadScript(base + "chips3d.js"))
+                .then(() => loadScript(base + "3d/chips3d.js"))
                 .then(() => !!window.GPE_CHIPS)
                 .catch((err) => {
                     console.warn("[gpe] chip portal unavailable — could not load " + err.message);
@@ -4514,7 +4514,7 @@
     // Keep the 3D table in step with the setting and the live DOM: turn it on
     // once a table appears, rebuild it if GWT recycled the host (wiping our
     // canvas), and tear it down when it's off or we've left the table.
-    // The 3D-table renderer lives in vendor/three.iife.js + table3d.js. As an
+    // The 3D-table renderer lives in vendor/three.iife.js + 3d/table3d.js. As an
     // extension both are content scripts (window.GPE_TABLE3D already exists); when
     // gpokr hosts the tools its loader only fetches the core files, so pull the
     // renderer from wherever this file came from — same trick as the chip
@@ -4527,7 +4527,7 @@
             const base = SELF_SRC.replace(/[^/]*$/, "");
             const three = window.THREE ? Promise.resolve() : loadScript(base + "vendor/three.iife.js");
             table3dLoad = three
-                .then(() => loadScript(base + "table3d.js"))
+                .then(() => loadScript(base + "3d/table3d.js"))
                 .then(() => !!window.GPE_TABLE3D)
                 .catch((err) => {
                     console.warn("[gpe] 3D table unavailable — could not load " + err.message);

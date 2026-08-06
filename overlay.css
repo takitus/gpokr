@@ -222,7 +222,7 @@
 
 /* ---- 3D chip portal (test feature) ----
    The button sits in the chat tools row next to the emote picker; the layer is
-   a transparent canvas pinned over .iogc-GameWindow-table by chips3d.js.
+   a transparent canvas pinned over .iogc-GameWindow-table by 3d/chips3d.js.
    pointer-events:none is what keeps the game clickable underneath it, and
    z-index 9 keeps it below GWT dialogs (z 10) like the rest of our overlays. */
 /* The button sits beside the pot total, in its cell. The site gives the label a
