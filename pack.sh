@@ -90,9 +90,11 @@ if [ "$MINIFY" -eq 1 ]; then
     cp $VERBATIM $BUILT_TOP BUILD.md pack.sh pack_ff.sh "$SRC_STAGE/"
     cp $BUILT_VENDOR vendor/README.md "$SRC_STAGE/vendor/"
     cp -R icons "$SRC_STAGE/icons"
-    cp assets/table.png "$SRC_STAGE/assets/"
+    # Every asset the runtime package ships, or a reviewer re-running pack.sh
+    # from this archive hits a missing file and can't reproduce the upload.
+    cp assets/table.png assets/gpokr-logo.svg "$SRC_STAGE/assets/"
 
-    for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md; do
+    for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md assets/gpokr-logo.svg; do
         [ -f "$SRC_STAGE/$f" ] || { echo "MISSING from source archive: $f" >&2; exit 1; }
     done
 
