@@ -425,8 +425,7 @@
                 if (!btn || !btn.isConnected) {
                     btn = document.createElement("button");
                     btn.type = "button";
-                    btn.className = "gpe-coin-btn";
-                    btn.textContent = "$";
+                    btn.className = "gpe-coin-btn"; // no label: the chip IS the button
                     btn.addEventListener("click", (e) => {
                         e.preventDefault();
                         e.stopPropagation(); // don't trip the seat panel's own handlers
@@ -442,10 +441,11 @@
                     coinButtons.set(name, btn);
                 }
                 btn.title = "toss a chip at " + displayName(name);
-                // Sits on the avatar's bottom-right corner (the stats tab owns
-                // the top edge), half on and half off so it reads as a badge.
+                // Top-right corner, half on and half off the avatar. Nudged just
+                // inside the top edge so it clears the stats tab, which sits
+                // flush above the avatar and spans its full width.
                 btn.style.left = (r.right - 5) + "px";
-                btn.style.top = (r.bottom - 5) + "px";
+                btn.style.top = (r.top + 7) + "px";
             }
         }
         for (const [name, el] of coinButtons) {
