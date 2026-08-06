@@ -507,6 +507,10 @@ html.gpe-dark #gpe-chat-add {
 html.gpe-dark #gpe-bet-add:hover,
 html.gpe-dark #gpe-chat-add:hover { background: #344056; }
 html.gpe-dark .gpe-modal-hint { color: #93a0b4; }
+html.gpe-dark .gpe-slider-label { color: #d2d8e2; }
+html.gpe-dark .gpe-slider-val { color: #aab4c2; }
+html.gpe-dark .gpe-reset-btn { background: #2b3648; color: #d2d8e2; border-color: #3a4759; }
+html.gpe-dark .gpe-reset-btn:hover { background: #344056; }
 /* quick-chat buttons in the chat row */
 html.gpe-dark .gpe-chat-btn,
 html.gpe-dark .gpe-chat-edit {

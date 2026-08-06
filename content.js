@@ -20,6 +20,22 @@
     let DARK_MODE = false;
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
+    let TABLE_3D = false;        // replace the flat felt with a live 3D render (opt-in)
+    let TABLE3D_FELT_ZOOM = 0.5, TABLE3D_LEATHER_ZOOM = 10; // texture zoom (tools editor)
+    let TABLE3D_FELT_DEPTH = 0, TABLE3D_LEATHER_DEPTH = 0.1; // relief depth (tools editor)
+    let TABLE3D_FELT_COLOR = "#2f6360", TABLE3D_LEATHER_COLOR = "#1d1a16"; // tints (tools editor)
+    let TABLE3D_LOGO_OPACITY = 0.2; // felt-center watermark opacity (tools editor)
+    // Single source of truth for the 3D-table editor defaults (used by
+    // applySettings' fallbacks and the "Reset to defaults" button).
+    const TABLE3D_DEFAULTS = {
+        table3dFeltColor: "#2f6360", table3dFeltZoom: 0.5, table3dFeltDepth: 0,
+        table3dLeatherColor: "#1d1a16", table3dLeatherZoom: 10, table3dLeatherDepth: 0.1,
+        table3dLogoOpacity: 0.2,
+    };
+    const clampZoom = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n > 0) ? Math.min(10, Math.max(0.1, n)) : (dflt != null ? dflt : 1); };
+    const clampDepth = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0) ? Math.min(3, Math.max(0, n)) : dflt; };
+    const clamp01 = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0 && n <= 1) ? n : dflt; };
+    const clampColor = (v, dflt) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v)) ? v : (dflt || "#2f6360");
     // Per-player bet readout: swap each seat's "Level" stat for the total the
     // player has bet/raised (calls excluded) over their last BET_WINDOW hands.
     let BET_READOUT = true;      // opt-out, like the bet buttons
@@ -114,6 +130,22 @@
         const prevShowBet = SHOW_BET_BUTTONS;
         SHOW_BET_BUTTONS = !(s && s.showBetButtons === false);
         HAND_SUMMARY = !(s && s.handSummary === false); // opt-out
+        TABLE_3D = !!(s && s.table3d); // opt-in
+        TABLE3D_FELT_ZOOM = clampZoom(s && s.table3dFeltZoom, TABLE3D_DEFAULTS.table3dFeltZoom);
+        TABLE3D_LEATHER_ZOOM = clampZoom(s && s.table3dLeatherZoom, TABLE3D_DEFAULTS.table3dLeatherZoom);
+        TABLE3D_FELT_DEPTH = clampDepth(s && s.table3dFeltDepth, TABLE3D_DEFAULTS.table3dFeltDepth);
+        TABLE3D_LEATHER_DEPTH = clampDepth(s && s.table3dLeatherDepth, TABLE3D_DEFAULTS.table3dLeatherDepth);
+        TABLE3D_FELT_COLOR = clampColor(s && s.table3dFeltColor, TABLE3D_DEFAULTS.table3dFeltColor);
+        TABLE3D_LEATHER_COLOR = clampColor(s && s.table3dLeatherColor, TABLE3D_DEFAULTS.table3dLeatherColor);
+        TABLE3D_LOGO_OPACITY = clamp01(s && s.table3dLogoOpacity, TABLE3D_DEFAULTS.table3dLogoOpacity);
+        if (window.GPE_TABLE3D) {
+            GPE_TABLE3D.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
+            GPE_TABLE3D.setTexDepth(TABLE3D_FELT_DEPTH, TABLE3D_LEATHER_DEPTH);
+            GPE_TABLE3D.setFeltColor(TABLE3D_FELT_COLOR);
+            GPE_TABLE3D.setLeatherColor(TABLE3D_LEATHER_COLOR);
+            GPE_TABLE3D.setLogoOpacity(TABLE3D_LOGO_OPACITY);
+        }
+        syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
@@ -211,7 +243,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -2355,6 +2387,9 @@
         ["gpe-bet-readout", "bet readout", "betReadout", () => BET_READOUT,
             "Replaces each player's \"Level\" with the total they've bet/raised " +
             "(calls not counted) over their last N hands. Set N below."],
+        ["gpe-table-3d", "3D table", "table3d", () => TABLE_3D,
+            "Replaces the flat felt with a live 3D-rendered table (top-down, so " +
+            "cards and chips stay aligned). Experimental."],
     ];
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
@@ -2478,6 +2513,17 @@
                 edit.textContent = "edit";
                 edit.addEventListener("click", (e) => {
                     e.preventDefault(); e.stopPropagation(); openBetEditor();
+                });
+                row.appendChild(edit);
+            }
+            // The 3D-table option gets an "edit" button -> texture-zoom modal.
+            if (id === "gpe-table-3d") {
+                const edit = document.createElement("button");
+                edit.type = "button";
+                edit.className = "gpe-side-edit";
+                edit.textContent = "edit";
+                edit.addEventListener("click", (e) => {
+                    e.preventDefault(); e.stopPropagation(); openTable3dEditor();
                 });
                 row.appendChild(edit);
             }
@@ -3630,6 +3676,135 @@
         if (backdrop) backdrop.style.display = "none";
     }
 
+    // ---------- UI: 3D-table texture editor (felt / leather zoom sliders) ----------
+    function closeTable3dEditor() {
+        const b = document.getElementById("gpe-table3d-editor");
+        if (b) b.style.display = "none";
+    }
+    function buildTable3dEditor() {
+        // A floating panel (NOT a dimming modal), so the felt stays fully visible
+        // while dragging the sliders.
+        const modal = document.createElement("div");
+        modal.id = "gpe-table3d-editor";
+        modal.className = "gpe-modal gpe-float-panel";
+
+        const head = document.createElement("div");
+        head.className = "gpe-modal-head";
+        head.appendChild(document.createTextNode("3D table textures"));
+        const close = document.createElement("button");
+        close.type = "button"; close.textContent = "✕"; close.title = "close";
+        close.addEventListener("click", closeTable3dEditor);
+        head.appendChild(close);
+
+        // Each slider keeps a refresh() so openTable3dEditor can re-sync it to the
+        // current setting. Live on drag (input), persisted on release (change).
+        const refreshers = [];
+        const makeSlider = (label, getVal, apply, saveKey, opts) => {
+            const o = opts || {};
+            const min = o.min != null ? o.min : 0.1, max = o.max != null ? o.max : 10, step = o.step || 0.05;
+            const fmt = o.fmt || ((n) => n.toFixed(2) + "×");
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label"; lab.textContent = label;
+            const s = document.createElement("input");
+            s.type = "range"; s.min = String(min); s.max = String(max); s.step = String(step); s.value = String(getVal());
+            const val = document.createElement("span");
+            val.className = "gpe-slider-val"; val.textContent = fmt(getVal());
+            s.addEventListener("input", () => { const z = parseFloat(s.value); val.textContent = fmt(z); apply(z); });
+            s.addEventListener("change", () => saveSetting(saveKey, parseFloat(s.value)));
+            refreshers.push(() => { const v = getVal(); s.value = String(v); val.textContent = fmt(v); });
+            row.append(lab, s, val);
+            return row;
+        };
+
+        const zoomOpts = { min: 0.1, max: 10, step: 0.05, fmt: (n) => n.toFixed(2) + "×" };
+        const depthOpts = { min: 0, max: 3, step: 0.05, fmt: (n) => n.toFixed(2) };
+
+        // A color swatch row (live on input, persisted on change).
+        const makeColorRow = (label, getVal, apply, saveKey) => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label"; lab.textContent = label;
+            const inp = document.createElement("input");
+            inp.type = "color"; inp.className = "gpe-color-input"; inp.value = getVal();
+            inp.addEventListener("input", () => apply(inp.value));
+            inp.addEventListener("change", () => saveSetting(saveKey, inp.value));
+            refreshers.push(() => { inp.value = getVal(); });
+            row.append(lab, inp);
+            return row;
+        };
+
+        const feltColor = makeColorRow("felt color",
+            () => TABLE3D_FELT_COLOR,
+            (c) => { TABLE3D_FELT_COLOR = c; if (window.GPE_TABLE3D) GPE_TABLE3D.setFeltColor(c); },
+            "table3dFeltColor");
+        const leatherColor = makeColorRow("leather color",
+            () => TABLE3D_LEATHER_COLOR,
+            (c) => { TABLE3D_LEATHER_COLOR = c; if (window.GPE_TABLE3D) GPE_TABLE3D.setLeatherColor(c); },
+            "table3dLeatherColor");
+
+        const feltZoom = makeSlider("felt zoom",
+            () => TABLE3D_FELT_ZOOM,
+            (z) => { TABLE3D_FELT_ZOOM = z; if (window.GPE_TABLE3D) GPE_TABLE3D.setTexZoom(z, undefined); },
+            "table3dFeltZoom", zoomOpts);
+        const feltDepth = makeSlider("felt depth",
+            () => TABLE3D_FELT_DEPTH,
+            (d) => { TABLE3D_FELT_DEPTH = d; if (window.GPE_TABLE3D) GPE_TABLE3D.setTexDepth(d, undefined); },
+            "table3dFeltDepth", depthOpts);
+        const leatherZoom = makeSlider("leather zoom",
+            () => TABLE3D_LEATHER_ZOOM,
+            (z) => { TABLE3D_LEATHER_ZOOM = z; if (window.GPE_TABLE3D) GPE_TABLE3D.setTexZoom(undefined, z); },
+            "table3dLeatherZoom", zoomOpts);
+        const leatherDepth = makeSlider("leather depth",
+            () => TABLE3D_LEATHER_DEPTH,
+            (d) => { TABLE3D_LEATHER_DEPTH = d; if (window.GPE_TABLE3D) GPE_TABLE3D.setTexDepth(undefined, d); },
+            "table3dLeatherDepth", depthOpts);
+
+        const logoOpacity = makeSlider("logo opacity",
+            () => TABLE3D_LOGO_OPACITY,
+            (o) => { TABLE3D_LOGO_OPACITY = o; if (window.GPE_TABLE3D) GPE_TABLE3D.setLogoOpacity(o); },
+            "table3dLogoOpacity", { min: 0, max: 1, step: 0.05, fmt: (n) => Math.round(n * 100) + "%" });
+
+        const hint = document.createElement("div");
+        hint.className = "gpe-modal-hint";
+        hint.textContent = "Zoom = feature size (0.1×–10×). Depth = relief strength. Updates live; needs \"3D table\" on.";
+
+        // ---- reset to defaults ----
+        const resetRow = document.createElement("div");
+        resetRow.className = "gpe-reset-row";
+        const resetBtn = document.createElement("button");
+        resetBtn.type = "button"; resetBtn.className = "gpe-reset-btn"; resetBtn.textContent = "Reset to defaults";
+        resetBtn.addEventListener("click", () => {
+            const d = TABLE3D_DEFAULTS;
+            TABLE3D_FELT_COLOR = d.table3dFeltColor; TABLE3D_FELT_ZOOM = d.table3dFeltZoom; TABLE3D_FELT_DEPTH = d.table3dFeltDepth;
+            TABLE3D_LEATHER_COLOR = d.table3dLeatherColor; TABLE3D_LEATHER_ZOOM = d.table3dLeatherZoom; TABLE3D_LEATHER_DEPTH = d.table3dLeatherDepth;
+            TABLE3D_LOGO_OPACITY = d.table3dLogoOpacity;
+            if (window.GPE_TABLE3D) {
+                GPE_TABLE3D.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
+                GPE_TABLE3D.setTexDepth(TABLE3D_FELT_DEPTH, TABLE3D_LEATHER_DEPTH);
+                GPE_TABLE3D.setFeltColor(TABLE3D_FELT_COLOR);
+                GPE_TABLE3D.setLeatherColor(TABLE3D_LEATHER_COLOR);
+                GPE_TABLE3D.setLogoOpacity(TABLE3D_LOGO_OPACITY);
+            }
+            Object.keys(d).forEach((k) => saveSetting(k, d[k]));
+            modal._refresh();
+        });
+        resetRow.appendChild(resetBtn);
+
+        modal._refresh = () => refreshers.forEach((fn) => fn());
+        modal.append(head, feltColor, feltZoom, feltDepth, leatherColor, leatherZoom, leatherDepth, logoOpacity, hint, resetRow);
+        document.body.appendChild(modal);
+        return modal;
+    }
+    function openTable3dEditor() {
+        const panel = document.getElementById("gpe-table3d-editor") || buildTable3dEditor();
+        if (panel.style.display === "block") { panel.style.display = "none"; return; } // toggle
+        if (panel._refresh) panel._refresh(); // reflect current values (may have changed)
+        panel.style.display = "block";
+    }
+
     // ---------- UI: quick-chat buttons ----------
     // Full text of each game-log line, read from the gwt-HTML rows rather than
     // logLines() — logLines() keeps only childless leaves, so a line whose player
@@ -4195,11 +4370,26 @@
         if (btn) { e.preventDefault(); btn.click(); }
     });
 
+    // Keep the 3D table in step with the setting and the live DOM: turn it on
+    // once a table appears, rebuild it if GWT recycled the host (wiping our
+    // canvas), and tear it down when it's off or we've left the table.
+    function syncTable3d() {
+        const api = window.GPE_TABLE3D;
+        if (!api) return;
+        const hasTable = !!document.querySelector(".iogc-GameWindow-table");
+        if (TABLE_3D && hasTable) {
+            if (!api.isOn() || !document.getElementById("gpe-table3d")) { api.disable(); api.enable(); }
+        } else if (api.isOn()) {
+            api.disable();
+        }
+    }
+
     // ---------- boot ----------
     setInterval(() => {
         updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming();
         patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
         placeSplashButton(); // follows the pot total as it changes
+        syncTable3d(); // keep the 3D felt attached across GWT re-renders
     }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
