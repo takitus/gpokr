@@ -308,6 +308,163 @@ html.gpe-dark .menu2 {
 }
 
 /* ============================================================
+   Forum (/topics, /discussion, /reviews, /strategies, /ideas,
+   /replays, post + idea detail, composer)
+   ============================================================
+
+   The rebuilt forum is a self-contained design system: everything under
+   #forum draws from a :root token set (--idea-*), so re-pointing those ten
+   tokens re-themes ~66 of the site's rules in one move. Only the places the
+   site hardcoded a literal — white pills, light status badges, dark-on-dark
+   hover tints — need individual rules, and they follow below.
+
+   Left alone deliberately: --idea-link / --idea-link-deep. They are only ever
+   used as a *fill* under white button text (Reply, Post), where the site's
+   #226699 already clears 5.9:1 on dark. Brightening them would make that text
+   worse, not better. */
+html.gpe-dark {
+    --idea-ink: #e6ebf2;        /* primary text: post bodies, titles, names */
+    --idea-ink2: #b3bdcd;       /* secondary: excerpts, timestamps, tool icons */
+    --idea-muted: #93a0b4;      /* bylines, captions, column labels */
+    --idea-line: #39455a;       /* hairlines and control borders */
+    --idea-surface: #1f2530;    /* raised strips: sort bars, selects, footnotes */
+    /* the green accent doubles as link/label text (.pages a, .post-body a,
+       .idea-sorts a.on), so "deep" has to invert to the *lighter* green here */
+    --idea-acc: #4fb87a;
+    --idea-acc-deep: #6fdc9a;
+    --idea-acc-soft: rgba(90, 210, 127, 0.14);
+}
+
+/* The forum's own tab strip (.hmenu — Overview / Discussion / …) and the
+   site nav strip (.menu2 — LEADERBOARD / TOURNAMENTS / …). The site pins the
+   active tab to `color: black`, which lands on our #2b3648 chip at 1.7:1 —
+   the one tab you most need to read — and its #226699 idle links sit at 2:1
+   on the same repainted bar. */
+html.gpe-dark .hmenu a.current,
+html.gpe-dark .hmenu a.current:visited,
+html.gpe-dark .menu2 a.current,
+html.gpe-dark .menu2 a.current:visited { color: #e6ebf2 !important; }
+html.gpe-dark .hmenu a.notcurrent,
+html.gpe-dark .hmenu a.notcurrent:visited,
+html.gpe-dark .menu2 a.notcurrent,
+html.gpe-dark .menu2 a.notcurrent:visited { color: #6fb1e8 !important; }
+
+/* white surfaces the forum hardcoded rather than tokenised */
+html.gpe-dark #forum .pill { background: #232c3a !important; }
+html.gpe-dark .composer { background: #1b222d !important; }
+html.gpe-dark .emoji-pop {
+    background: #232c3a !important;
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55) !important;
+}
+html.gpe-dark #forum .btnbar .btn-done { background: #2a3342 !important; }
+/* emoji picker buttons inherit the UA's black `buttontext`. Colour emoji
+   ignore it, but glyphs that fall back to a monochrome text presentation
+   (❤ and ✔ do, on some systems) would paint black on the dark popup. */
+html.gpe-dark .emoji-tabs button,
+html.gpe-dark .emoji-grid button { color: #d2d8e2 !important; }
+html.gpe-dark #forum .award {
+    background: rgba(232, 179, 57, 0.16) !important;
+    color: #e8b339 !important;
+    border-color: rgba(232, 179, 57, 0.35) !important;
+}
+/* submit button while the composer is empty: was #fff on #c9d0d6 (1.7:1) */
+html.gpe-dark .composer .composer-go[disabled],
+html.gpe-dark .composer .composer-go[disabled]:hover {
+    background: #2a3342 !important;
+    color: #7a879b !important;
+}
+/* avatar placeholder behind not-yet-loaded images */
+html.gpe-dark .idea-ava,
+html.gpe-dark #forum .post-ava img,
+html.gpe-dark #forum .cmt-ava img { background: #262e3b !important; }
+
+/* the footer slab carries an inline background-color, hence !important */
+html.gpe-dark #pagefoot { background-color: #1b222d !important; }
+html.gpe-dark .footerHeading { color: #93a0b4 !important; }
+
+/* hover feedback is painted as a near-black wash (rgba(16,21,27,.0x)) — it
+   vanishes on a dark page, so every one of them flips to a white wash */
+html.gpe-dark #forum table:not([style]) tbody tr:hover,
+html.gpe-dark #forum .all-item[data-href]:hover { background: rgba(255, 255, 255, 0.05) !important; }
+html.gpe-dark #forum .post-act:hover,
+html.gpe-dark .composer .composer-tool:hover,
+html.gpe-dark .composer .composer-tool[aria-expanded="true"],
+html.gpe-dark .composer .composer-tool:focus-within,
+html.gpe-dark .emoji-tabs button:hover,
+html.gpe-dark .emoji-grid button:hover { background: rgba(255, 255, 255, 0.09) !important; }
+
+/* Status + role badges: light chips with mid-dark ink. Our blanket
+   "#mainpage span" color rule strips their ink and leaves light-on-light, so
+   each is rebuilt as a translucent tint of its own hue — same semantics
+   (grey triage, blue accepted, green done, amber in-progress, red won't-do),
+   legible on the dark page. !important because that span rule outranks a
+   plain class selector here. */
+html.gpe-dark .idea-state,
+html.gpe-dark #forum .role { border-style: solid !important; }
+html.gpe-dark .idea-state-triage,
+html.gpe-dark #forum .role-hidden {
+    background: rgba(144, 164, 174, 0.16) !important;
+    color: #aebac4 !important;
+    border-color: rgba(144, 164, 174, 0.38) !important;
+}
+html.gpe-dark .idea-state-accepted,
+html.gpe-dark #forum .role-admin {
+    background: rgba(100, 181, 246, 0.16) !important;
+    color: #7cc0f5 !important;
+    border-color: rgba(100, 181, 246, 0.38) !important;
+}
+html.gpe-dark .idea-state-active,
+html.gpe-dark .idea-state-done,
+html.gpe-dark #forum .role-mod {
+    background: rgba(90, 210, 127, 0.16) !important;
+    color: #6fdc9a !important;
+    border-color: rgba(90, 210, 127, 0.38) !important;
+}
+html.gpe-dark .idea-state-in_progress {
+    background: rgba(232, 179, 57, 0.16) !important;
+    color: #e8b339 !important;
+    border-color: rgba(232, 179, 57, 0.38) !important;
+}
+html.gpe-dark .idea-state-wont_do {
+    background: rgba(240, 131, 122, 0.16) !important;
+    color: #f0837a !important;
+    border-color: rgba(240, 131, 122, 0.38) !important;
+}
+html.gpe-dark .idea-state-archived {
+    background: rgba(160, 160, 160, 0.14) !important;
+    color: #a3a9b2 !important;
+    border-color: rgba(160, 160, 160, 0.34) !important;
+}
+
+/* per-type bylines under each row ("TOPIC BY …", "IDEA BY …") — the site's
+   mid-tone hues all land under 4.5:1 on the dark page; same hues, lifted */
+html.gpe-dark #forum .row-by.ty-topic { color: #9fb3bf !important; }
+html.gpe-dark #forum .row-by.ty-idea { color: #e0a93f !important; }
+html.gpe-dark #forum .row-by.ty-strategy { color: #7cc0f5 !important; }
+html.gpe-dark #forum .row-by.ty-replay { color: #b0a2e8 !important; }
+html.gpe-dark #forum .row-by.ty-review { color: #4ec9bb !important; }
+
+/* error / destructive text (#b23c17 reads at ~3:1 on the dark page) */
+html.gpe-dark #forum .error,
+html.gpe-dark #forum .field-error,
+html.gpe-dark .composer-err,
+html.gpe-dark .idea-error,
+html.gpe-dark #forum .post-act.danger { color: #f0837a !important; }
+
+/* white label on the site's blue action buttons (Reply, Post) — the
+   "#mainpage span" rule repaints their inner span to body-text grey */
+html.gpe-dark #forum .replybar a,
+html.gpe-dark #forum .replybar button,
+html.gpe-dark #forum .btnbar a,
+html.gpe-dark #forum .btnbar button,
+html.gpe-dark #forum .replybar a span,
+html.gpe-dark #forum .replybar button span,
+html.gpe-dark #forum .btnbar a span,
+html.gpe-dark #forum .btnbar button span,
+html.gpe-dark .iogc-btn,
+html.gpe-dark .iogc-btn span { color: #fff !important; }
+
+/* ============================================================
    Our own overlays, re-themed to match
    ============================================================ */
 
