@@ -106,9 +106,16 @@ jobs:
           # model/gltf-binary is absent. GLTFLoader reads an ArrayBuffer and
           # wouldn't care, but a stable type keeps CloudFront's behaviour and any
           # future compression rule predictable.
-          aws s3 sync assets/ "s3://tools.gpokr.com/$V/assets/" --cache-control "$CACHE" \
+          #
+          # `cp --recursive`, NOT `sync`: sync lists the destination to work out
+          # what it can skip, so it needs s3:ListBucket, and this deploy role is
+          # scoped to PutObject only (that AccessDenied is how we found out). The
+          # skip-if-unchanged behaviour buys nothing here anyway — every deploy
+          # writes to a fresh immutable /<version>/ prefix, so there is never
+          # anything on the far side to compare against.
+          aws s3 cp assets/ "s3://tools.gpokr.com/$V/assets/" --recursive --cache-control "$CACHE" \
             --exclude '*.DS_Store' --exclude '*.glb'
-          aws s3 sync assets/ "s3://tools.gpokr.com/$V/assets/" --cache-control "$CACHE" \
+          aws s3 cp assets/ "s3://tools.gpokr.com/$V/assets/" --recursive --cache-control "$CACHE" \
             --exclude '*' --include '*.glb' --content-type "model/gltf-binary"
           printf '{"version": "%s", "files": ["odds.js", "content.js", "overlay.css", "dark.css", "assets/table.png"], "syncedAt": "%s"}' \
             "$V" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > current.json
