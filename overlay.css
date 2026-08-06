@@ -918,6 +918,33 @@ tr.gpe-menu-off { display: none !important; }
 #gpe-chat-add:hover { background: #f0f0f0; }
 .gpe-modal-hint { font-size: 11px; color: #888; margin-top: 8px; }
 
+/* ---- 3D-table texture editor: a floating panel (no screen dim) ---- */
+.gpe-float-panel {
+    position: fixed;
+    top: 130px;
+    left: 14px;
+    z-index: 2147483646;
+    display: none;            /* shown via JS */
+    width: 232px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+/* ---- 3D-table texture editor: labeled sliders ---- */
+.gpe-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+    font: 12px/1.3 Arial, sans-serif;
+}
+.gpe-slider-label { flex: 0 0 84px; color: #333; }
+.gpe-slider-row input[type=range] { flex: 1 1 auto; min-width: 0; accent-color: #4c9aff; cursor: pointer; }
+.gpe-slider-val {
+    flex: 0 0 42px;
+    text-align: right;
+    color: #445;
+    font-variant-numeric: tabular-nums;
+}
+
 /* ---- Auto-linked URLs in chat ---- */
 .gpe-chat-link { color: #1a6fd4; text-decoration: underline; word-break: break-all; }
 .gpe-chat-link:hover { color: #0d5bbf; }

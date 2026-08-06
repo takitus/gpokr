@@ -20,6 +20,9 @@
     let DARK_MODE = false;
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
+    let TABLE_3D = false;        // replace the flat felt with a live 3D render (opt-in)
+    let TABLE3D_FELT_ZOOM = 1, TABLE3D_LEATHER_ZOOM = 1; // texture zoom (tools editor)
+    const clampZoom = (v) => { const n = parseFloat(v); return (isFinite(n) && n > 0) ? Math.min(4, Math.max(0.25, n)) : 1; };
     // Per-player bet readout: swap each seat's "Level" stat for the total the
     // player has bet/raised (calls excluded) over their last BET_WINDOW hands.
     let BET_READOUT = true;      // opt-out, like the bet buttons
@@ -114,6 +117,11 @@
         const prevShowBet = SHOW_BET_BUTTONS;
         SHOW_BET_BUTTONS = !(s && s.showBetButtons === false);
         HAND_SUMMARY = !(s && s.handSummary === false); // opt-out
+        TABLE_3D = !!(s && s.table3d); // opt-in
+        TABLE3D_FELT_ZOOM = clampZoom(s && s.table3dFeltZoom);
+        TABLE3D_LEATHER_ZOOM = clampZoom(s && s.table3dLeatherZoom);
+        if (window.GPE_TABLE3D) GPE_TABLE3D.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
+        syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
@@ -211,7 +219,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -2355,6 +2363,9 @@
         ["gpe-bet-readout", "bet readout", "betReadout", () => BET_READOUT,
             "Replaces each player's \"Level\" with the total they've bet/raised " +
             "(calls not counted) over their last N hands. Set N below."],
+        ["gpe-table-3d", "3D table", "table3d", () => TABLE_3D,
+            "Replaces the flat felt with a live 3D-rendered table (top-down, so " +
+            "cards and chips stay aligned). Experimental."],
     ];
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
@@ -2478,6 +2489,17 @@
                 edit.textContent = "edit";
                 edit.addEventListener("click", (e) => {
                     e.preventDefault(); e.stopPropagation(); openBetEditor();
+                });
+                row.appendChild(edit);
+            }
+            // The 3D-table option gets an "edit" button -> texture-zoom modal.
+            if (id === "gpe-table-3d") {
+                const edit = document.createElement("button");
+                edit.type = "button";
+                edit.className = "gpe-side-edit";
+                edit.textContent = "edit";
+                edit.addEventListener("click", (e) => {
+                    e.preventDefault(); e.stopPropagation(); openTable3dEditor();
                 });
                 row.appendChild(edit);
             }
@@ -3630,6 +3652,71 @@
         if (backdrop) backdrop.style.display = "none";
     }
 
+    // ---------- UI: 3D-table texture editor (felt / leather zoom sliders) ----------
+    function closeTable3dEditor() {
+        const b = document.getElementById("gpe-table3d-editor");
+        if (b) b.style.display = "none";
+    }
+    function buildTable3dEditor() {
+        // A floating panel (NOT a dimming modal), so the felt stays fully visible
+        // while dragging the sliders.
+        const modal = document.createElement("div");
+        modal.id = "gpe-table3d-editor";
+        modal.className = "gpe-modal gpe-float-panel";
+
+        const head = document.createElement("div");
+        head.className = "gpe-modal-head";
+        head.appendChild(document.createTextNode("3D table textures"));
+        const close = document.createElement("button");
+        close.type = "button"; close.textContent = "✕"; close.title = "close";
+        close.addEventListener("click", closeTable3dEditor);
+        head.appendChild(close);
+
+        // Live on drag (input), persisted on release (change).
+        const makeSlider = (label, getVal, apply, saveKey) => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label"; lab.textContent = label;
+            const s = document.createElement("input");
+            s.type = "range"; s.min = "0.25"; s.max = "4"; s.step = "0.05"; s.value = String(getVal());
+            const val = document.createElement("span");
+            val.className = "gpe-slider-val"; val.textContent = getVal().toFixed(2) + "×";
+            s.addEventListener("input", () => { const z = parseFloat(s.value); val.textContent = z.toFixed(2) + "×"; apply(z); });
+            s.addEventListener("change", () => saveSetting(saveKey, parseFloat(s.value)));
+            row.append(lab, s, val);
+            return row;
+        };
+
+        const felt = makeSlider("felt zoom",
+            () => TABLE3D_FELT_ZOOM,
+            (z) => { TABLE3D_FELT_ZOOM = z; if (window.GPE_TABLE3D) GPE_TABLE3D.setTexZoom(z, undefined); },
+            "table3dFeltZoom");
+        const leather = makeSlider("leather zoom",
+            () => TABLE3D_LEATHER_ZOOM,
+            (z) => { TABLE3D_LEATHER_ZOOM = z; if (window.GPE_TABLE3D) GPE_TABLE3D.setTexZoom(undefined, z); },
+            "table3dLeatherZoom");
+
+        const hint = document.createElement("div");
+        hint.className = "gpe-modal-hint";
+        hint.textContent = "Higher = zoomed in (bigger threads / grain). Updates live; needs \"3D table\" on.";
+
+        modal.append(head, felt, leather, hint);
+        document.body.appendChild(modal);
+        return modal;
+    }
+    function openTable3dEditor() {
+        const panel = document.getElementById("gpe-table3d-editor") || buildTable3dEditor();
+        if (panel.style.display === "block") { panel.style.display = "none"; return; } // toggle
+        // reflect the current values (settings may have changed since it was built)
+        const sliders = panel.querySelectorAll("input[type=range]");
+        const vals = panel.querySelectorAll(".gpe-slider-val");
+        const cur = [TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM];
+        sliders.forEach((s, i) => { s.value = String(cur[i]); });
+        vals.forEach((v, i) => { v.textContent = cur[i].toFixed(2) + "×"; });
+        panel.style.display = "block";
+    }
+
     // ---------- UI: quick-chat buttons ----------
     // Full text of each game-log line, read from the gwt-HTML rows rather than
     // logLines() — logLines() keeps only childless leaves, so a line whose player
@@ -4195,11 +4282,26 @@
         if (btn) { e.preventDefault(); btn.click(); }
     });
 
+    // Keep the 3D table in step with the setting and the live DOM: turn it on
+    // once a table appears, rebuild it if GWT recycled the host (wiping our
+    // canvas), and tear it down when it's off or we've left the table.
+    function syncTable3d() {
+        const api = window.GPE_TABLE3D;
+        if (!api) return;
+        const hasTable = !!document.querySelector(".iogc-GameWindow-table");
+        if (TABLE_3D && hasTable) {
+            if (!api.isOn() || !document.getElementById("gpe-table3d")) { api.disable(); api.enable(); }
+        } else if (api.isOn()) {
+            api.disable();
+        }
+    }
+
     // ---------- boot ----------
     setInterval(() => {
         updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming();
         patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
         placeSplashButton(); // follows the pot total as it changes
+        syncTable3d(); // keep the 3D felt attached across GWT re-renders
     }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
