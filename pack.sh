@@ -90,7 +90,7 @@ if [ "$MINIFY" -eq 1 ]; then
     cp $VERBATIM $BUILT_TOP BUILD.md pack.sh pack_ff.sh "$SRC_STAGE/"
     cp $BUILT_VENDOR vendor/README.md "$SRC_STAGE/vendor/"
     cp -R icons "$SRC_STAGE/icons"
-    cp assets/table.png "$SRC_STAGE/assets/"
+    cp assets/table.png assets/gpokr-logo.svg "$SRC_STAGE/assets/"
 
     for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md; do
         [ -f "$SRC_STAGE/$f" ] || { echo "MISSING from source archive: $f" >&2; exit 1; }
