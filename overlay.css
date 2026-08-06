@@ -268,6 +268,78 @@
     height: 100%;
 }
 
+/* ---- Coin toss: the per-avatar button, and the layer the coin flies in ----
+   The layer covers the whole viewport (the coin travels between avatars and
+   the felt, which live in unrelated parts of the DOM) and never takes clicks. */
+#gpe-coin-layer {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
+    z-index: 9; /* over the seats, still under GWT dialogs (z 10) */
+}
+
+/* A little poker chip sitting on the avatar's bottom-right corner — the same
+   red body and white edge spots chips3d draws, in CSS. Positioned by its center
+   (content.js sets left/top to the corner), so it straddles the edge instead of
+   covering the face. */
+.gpe-coin-btn {
+    all: unset;
+    position: fixed;
+    z-index: 9;
+    box-sizing: border-box;
+    transform: translate(-50%, -50%);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    font: bold 9px/1 Arial, Helvetica, sans-serif;
+    color: #606060;
+    /* body + six white edge spokes + a pale inner disc, matching the chip art */
+    background:
+        radial-gradient(circle at 50% 50%, #f8f8f8 0 42%, transparent 42%),
+        repeating-conic-gradient(#f8f8f8 0deg 24deg, #a82026 24deg 60deg),
+        #a82026;
+    border: 1px solid rgba(0, 0, 0, 0.45);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 0 3px rgba(0, 0, 0, 0.25);
+    opacity: 0.62;
+    transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.gpe-coin-btn:hover {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.22);
+}
+.gpe-coin-btn:active { transform: translate(-50%, -50%) scale(0.92); }
+/* Flick on click: the button "launches" the coin it just threw. */
+.gpe-coin-btn.gpe-coin-pop { animation: gpe-coin-pop 0.26s ease-out; }
+@keyframes gpe-coin-pop {
+    0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    45% { opacity: 1; transform: translate(-50%, -50%) scale(1.5) rotate(-18deg); }
+    100% { opacity: 0.62; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* The struck avatar recoils. Only a transform, so nothing in the seat panel
+   reflows and GWT re-rendering the image just drops the class harmlessly. */
+img.iogc-PlayerPanel-avatar.gpe-coin-hit {
+    animation: gpe-coin-hit 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+@keyframes gpe-coin-hit {
+    0% { transform: translate(0, 0) rotate(0); }
+    12% { transform: translate(-3px, 2px) rotate(-3deg); }
+    28% { transform: translate(3px, -1px) rotate(2.5deg); }
+    46% { transform: translate(-2px, 1px) rotate(-1.6deg); }
+    64% { transform: translate(2px, 0) rotate(1deg); }
+    82% { transform: translate(-1px, 0) rotate(-0.4deg); }
+    100% { transform: translate(0, 0) rotate(0); }
+}
+
 /* ---- "Show Hand" button ---- */
 #gpe-hand-btn {
     all: unset;

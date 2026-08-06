@@ -22,6 +22,7 @@
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
     let TABLE_3D = false;        // replace the flat felt with a live 3D render (opt-in)
     let TABLE3D_FELT_ZOOM = 1, TABLE3D_LEATHER_ZOOM = 1; // texture zoom (tools editor)
+    let COIN_TOSS = true;        // coin button in each seat's avatar corner (opt-out)
     const clampZoom = (v) => { const n = parseFloat(v); return (isFinite(n) && n > 0) ? Math.min(4, Math.max(0.25, n)) : 1; };
     // Per-player bet readout: swap each seat's "Level" stat for the total the
     // player has bet/raised (calls excluded) over their last BET_WINDOW hands.
@@ -122,6 +123,8 @@
         TABLE3D_LEATHER_ZOOM = clampZoom(s && s.table3dLeatherZoom);
         if (window.GPE_TABLE3D) GPE_TABLE3D.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
         syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
+        COIN_TOSS = !(s && s.coinToss === false); // opt-out
+        updateCoinButtons(); // add/remove the per-seat buttons for the new value
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
@@ -219,7 +222,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-coin-layer, .gpe-coin-btn"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -308,6 +311,146 @@
             overlay.classList.remove("gpe-show");
             overlay.style.transform = "translate(-50%, -50%) scale(0.3)";
         }, DISPLAY_MS);
+    }
+
+    // ---------- coin toss ----------
+    // A small coin button in the corner of every other player's avatar. Clicking
+    // it throws a 3D coin from your own seat: it arcs across the table, bounces
+    // off their avatar, drops onto the felt and settles flat (coin3d.js does the
+    // rendering). Purely cosmetic and local — nothing is sent to the site, so
+    // only you ever see it.
+    const coinButtons = new Map();  // player name -> button
+    let coinLoad = null;
+
+    // The renderer lives in three extra files (vendor/three.iife.js, chips3d.js
+    // for the chip artwork, and coin3d.js). As an extension all three are
+    // declared as content scripts, so window.GPE_COIN already exists by the time
+    // this runs; when gpokr hosts the tools itself its loader only fetches the
+    // core files, so pull whichever are missing from wherever this file came
+    // from (same trick as the chip portal).
+    function ensureCoin3d() {
+        if (window.GPE_COIN) return Promise.resolve(true);
+        if (!SELF_SRC) return Promise.resolve(false);
+        if (!coinLoad) {
+            const base = SELF_SRC.replace(/[^/]*$/, "");
+            const three = window.THREE ? Promise.resolve() : loadScript(base + "vendor/three.iife.js");
+            coinLoad = three
+                .then(() => (window.GPE_CHIPS ? null : loadScript(base + "chips3d.js")))
+                .then(() => loadScript(base + "coin3d.js"))
+                .then(() => !!window.GPE_COIN)
+                .catch((err) => {
+                    console.warn("[gpe] chip toss unavailable — could not load " + err.message);
+                    coinLoad = null;
+                    return false;
+                });
+        }
+        return coinLoad;
+    }
+
+    // An element's rect, or null when it isn't laid out (GWT keeps hidden
+    // duplicates of the seat panels around).
+    function liveRect(el) {
+        const r = el && el.getBoundingClientRect();
+        return r && r.width > 0 ? r : null;
+    }
+
+    // The site's own chip sound. Its GWT module loads sounds (gwt-voices) from
+    // /<module>/sound/<name>.mp3 — the set is bet, slide_chips, shuffle_deck,
+    // check and fold — and "bet" is the plain chip clatter it plays when chips
+    // go in. Reusing it means the toss sounds like the rest of the table instead
+    // of shipping a second, slightly-different chip noise. Same origin as the
+    // page, so this is just a media element, nothing is fetched cross-site.
+    const CHIP_SOUND_URL = "/gpokr2/sound/bet.mp3";
+    let chipSound = null;
+    function playChipSound() {
+        try {
+            if (!chipSound) {
+                chipSound = new Audio(CHIP_SOUND_URL);
+                chipSound.preload = "auto";
+            }
+            // Cloned per play so two chips landing together don't cut each other
+            // off (one element can only be at one position at a time).
+            const a = chipSound.cloneNode();
+            a.volume = 0.55;
+            const p = a.play();
+            if (p && p.catch) p.catch(() => {}); // autoplay policy / offline: just stay quiet
+        } catch (e) {}
+    }
+
+    // Everything is re-resolved at click time rather than captured with the
+    // button: seats are recycled between hands, and the throw only needs to be
+    // right for the second it's in the air.
+    function tossCoinAt(name) {
+        ensureCoin3d().then((ok) => {
+            if (!ok || !window.GPE_COIN) return;
+            const target = findAvatarByName(name);
+            const to = liveRect(target);
+            if (!to) return;
+            const me = getMyName();
+            const from = me ? liveRect(findAvatarByName(me)) : null; // null -> thrown from the near rail
+            const table = liveRect(document.querySelector(".iogc-GameWindow-table"));
+            GPE_COIN.toss(from, to, table, {
+                onHit: () => { flinchAvatar(target); playChipSound(); },
+            });
+        });
+    }
+
+    // A short recoil on the avatar the coin just hit. The class is removed
+    // afterwards so a second hit replays the animation, and it's only ever a
+    // class on the site's <img> — nothing in the panel is restructured.
+    function flinchAvatar(av) {
+        if (!av || !av.isConnected) return;
+        av.classList.remove("gpe-coin-hit");
+        void av.offsetWidth; // restart the animation
+        av.classList.add("gpe-coin-hit");
+        clearTimeout(av._gpeCoinHit);
+        av._gpeCoinHit = setTimeout(() => av.classList.remove("gpe-coin-hit"), 460);
+    }
+
+    // One pass: a coin button on the corner of each visible seat's avatar,
+    // skipping my own. Same approach as the stats badges — fixed elements
+    // positioned over the avatar rather than children of it, since GWT rebuilds
+    // the seat panels whenever it likes.
+    function updateCoinButtons() {
+        const wanted = new Set();
+        const me = getMyName();
+        if (COIN_TOSS) {
+            for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+                const name = getSeatName(p);
+                if (!name || name === me || wanted.has(name)) continue;
+                const r = liveRect(p.querySelector("img.iogc-PlayerPanel-avatar"));
+                if (!r) continue;
+                wanted.add(name);
+                let btn = coinButtons.get(name);
+                if (!btn || !btn.isConnected) {
+                    btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = "gpe-coin-btn";
+                    btn.textContent = "$";
+                    btn.addEventListener("click", (e) => {
+                        e.preventDefault();
+                        e.stopPropagation(); // don't trip the seat panel's own handlers
+                        if (btn._gpeCool) return;
+                        btn._gpeCool = true; // one coin per click, however fast it's mashed
+                        setTimeout(() => { btn._gpeCool = false; }, 200);
+                        btn.classList.remove("gpe-coin-pop");
+                        void btn.offsetWidth;
+                        btn.classList.add("gpe-coin-pop");
+                        tossCoinAt(name);
+                    });
+                    document.body.appendChild(btn);
+                    coinButtons.set(name, btn);
+                }
+                btn.title = "toss a chip at " + displayName(name);
+                // Sits on the avatar's bottom-right corner (the stats tab owns
+                // the top edge), half on and half off so it reads as a badge.
+                btn.style.left = (r.right - 5) + "px";
+                btn.style.top = (r.bottom - 5) + "px";
+            }
+        }
+        for (const [name, el] of coinButtons) {
+            if (!wanted.has(name)) { el.remove(); coinButtons.delete(name); }
+        }
     }
 
     // Match the first emoji in a message — ANY emoji, not just the picker set.
@@ -2366,6 +2509,10 @@
         ["gpe-table-3d", "3D table", "table3d", () => TABLE_3D,
             "Replaces the flat felt with a live 3D-rendered table (top-down, so " +
             "cards and chips stay aligned). Experimental."],
+        ["gpe-coin-toss", "chip toss", "coinToss", () => COIN_TOSS,
+            "Puts a chip button on the corner of every other player's avatar. " +
+            "Clicking it throws a 3D chip from your seat that bounces off them " +
+            "and lands on the felt. Local only — nobody else sees it."],
     ];
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
@@ -4299,6 +4446,7 @@
     // ---------- boot ----------
     setInterval(() => {
         updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming();
+        updateCoinButtons(); // coin buttons track their avatars as seats move
         patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
         placeSplashButton(); // follows the pot total as it changes
         syncTable3d(); // keep the 3D felt attached across GWT re-renders

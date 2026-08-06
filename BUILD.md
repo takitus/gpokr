@@ -12,12 +12,15 @@ build tool from npm.
 | `content.js`            | `content.js`            | our code                                 |
 | `odds.js`               | `odds.js`               | our code                                 |
 | `chips3d.js`            | `chips3d.js`            | our code                                 |
+| `table3d.js`            | `table3d.js`            | our code                                 |
+| `coin3d.js`             | `coin3d.js`             | our code                                 |
 | `popup.js`              | `popup.js`              | our code                                 |
 | `overlay.css`           | `overlay.css`           | our code                                 |
 | `dark.css`              | `dark.css`              | our code                                 |
 | `vendor/three.iife.js`  | `vendor/three.iife.js`  | three.js r0.185.1, MIT — see below        |
 
-`manifest.json`, `popup.html`, `icons/*` and `assets/table.png` are copied into
+`manifest.json`, `popup.html`, `icons/*`, `assets/table.png` and
+`assets/gpokr-logo.svg` are copied into
 the package byte-for-byte and are not transformed at all.
 
 The only build tool is **esbuild 0.28.1**, used solely as a minifier (no bundling,
@@ -52,7 +55,7 @@ The exact minifier invocation `pack.sh` makes is:
 
 ```sh
 npx --yes esbuild@0.28.1 \
-  content.js odds.js chips3d.js popup.js overlay.css dark.css vendor/three.iife.js \
+  content.js odds.js chips3d.js table3d.js coin3d.js popup.js overlay.css dark.css vendor/three.iife.js \
   --minify --outdir=<staging dir> --outbase=.
 ```
 
