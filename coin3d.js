@@ -2,8 +2,9 @@
  * coin3d.js — toss a 3D chip at another player.
  *
  * A click on the button in a seat's avatar corner launches a real 3D chip from
- * your own seat, arcing across the screen; it bounces off the target's avatar,
- * drops onto the felt, bounces a couple of times and falls flat.
+ * your own seat, arcing across the screen; it bounces off the target's avatar
+ * and drops onto the felt just in front of them, where it barely bounces before
+ * falling flat.
  *
  * The chip itself is chips3d.js's artwork (GPE_CHIPS.art) — the same $1/$5/$25/
  * $100/$500 denominations the chip portal drops, drawn to match the site's own
@@ -37,11 +38,15 @@
     const T_MIN = 0.3, T_MAX = 0.8;
     const RICOCHET = 700;        // px/s the bounce off the avatar aims for
     const RIC_MIN = 0.25, RIC_MAX = 0.6;  // and the flight time it's held to
-    const REST = 0.42;           // bounce restitution on the felt
-    // Felt grabs a chip hard — without this it skids off the rail after landing.
-    const FRICTION = 0.34;       // horizontal speed kept per felt bounce
-    const SETTLE_VH = 60;        // below this bounce speed the chip lies down
-    const SLIDE_DECAY = 9;       // e-folds/s of the sliding skid once it's down
+    // The chip drops just in front of whoever it hit rather than carrying on to
+    // the middle of the table: a short step from their seat toward the felt.
+    const DROP_DIST = 46;        // px in front of the avatar
+    const DROP_SCATTER = 12;     // ± jitter, so repeat throws don't stack exactly
+    // Barely bounces — it lands, gives one small hop and lies down where it fell.
+    const REST = 0.22;           // bounce restitution on the felt
+    const FRICTION = 0.28;       // horizontal speed kept per felt bounce
+    const SETTLE_VH = 70;        // below this bounce speed the chip lies down
+    const SLIDE_DECAY = 12;      // e-folds/s of the sliding skid once it's down
     const FLATTEN_MS = 320;      // wobble/fall-flat time
     const REST_MS = 1900;        // time lying on the felt before fading
     const FADE_MS = 700;
@@ -53,10 +58,6 @@
     const ART_W = 790;
     const FELT_CX_PX = 395, FELT_CY_PX = 190;
     const FELT_HALF_W_PX = 290, FELT_HALF_D_PX = 102;
-    // How far out on the felt the bounce is aimed (the chip bounces and skids
-    // some way past this before resting — confine() below is what actually keeps
-    // it on the felt).
-    const LAND_SPREAD = 0.55;
     const FELT_EDGE = 0.92;      // furthest the chip's CENTER may rest, so its body stays on
     const RAIL_REST = 0.35;      // how much of the outward speed the rail gives back
 
@@ -181,12 +182,28 @@
         };
     }
 
-    // A random spot on the felt to aim the ricochet at.
-    function feltPoint(f) {
-        if (!f) return null;
-        const a = Math.random() * Math.PI * 2;
-        const rr = Math.sqrt(Math.random()) * LAND_SPREAD;
-        return { x: f.cx + Math.cos(a) * f.ax * rr, y: f.cy + Math.sin(a) * f.by * rr };
+    // Pull a point inside the felt ellipse (no-op if it's already in).
+    function clampToFelt(f, p, edge) {
+        const dx = (p.x - f.cx) / f.ax, dy = (p.y - f.cy) / f.by;
+        const r = Math.hypot(dx, dy);
+        if (r <= edge || r === 0) return p;
+        const k = edge / r;
+        return { x: f.cx + (p.x - f.cx) * k, y: f.cy + (p.y - f.cy) * k };
+    }
+
+    // Where the chip comes down: a short step from the seat it hit toward the
+    // middle of the table, so it lands right in front of that player instead of
+    // sailing on to the center. Clamped onto the felt, since a seat sitting well
+    // back from the rail would otherwise put the drop on the black surround.
+    function dropPoint(to, f) {
+        const jitter = () => (Math.random() * 2 - 1) * DROP_SCATTER;
+        if (!f) return { x: to.x + jitter(), y: to.y + DROP_DIST };
+        const dx = f.cx - to.x, dy = f.cy - to.y;
+        const len = Math.hypot(dx, dy) || 1;
+        return clampToFelt(f, {
+            x: to.x + (dx / len) * DROP_DIST + jitter(),
+            y: to.y + (dy / len) * DROP_DIST + jitter(),
+        }, FELT_EDGE);
     }
 
     // The rail is a wall. A chip that lands near the edge keeps bouncing and
@@ -233,7 +250,7 @@
             vh: (to.h - from.h) / t + 0.5 * G * t,
             phase: "flight",
             flightLeft: t,
-            to, felt, land: feltPoint(felt),
+            to, felt, land: dropPoint(to, felt),
             q: new T.Quaternion(),
             tumbleAxis: new T.Vector3(),
             tumbleRate: rand(TUMBLE[0], TUMBLE[1]) * (Math.random() < 0.5 ? -1 : 1),
@@ -288,7 +305,7 @@
             const decay = Math.exp(-SLIDE_DECAY * dt);
             c.v.x *= decay; c.v.y *= decay;
             c.p.x += c.v.x * dt; c.p.y += c.v.y * dt;
-            confine(c);
+            if (c.landed) confine(c);
             if (k >= 1) { c.phase = "rest"; c.restT = 0; c.v.x = c.v.y = 0; }
             return;
         }
@@ -309,9 +326,9 @@
         }
 
         // --- on the felt
-        confine(c);   // the rail keeps it on the table between bounces
         if (c.h <= 0) {
             c.h = 0;
+            c.landed = true;
             if (-c.vh < SETTLE_VH) {
                 startFlatten(c);
             } else {
@@ -320,6 +337,10 @@
                 c.tumbleRate *= 0.55;
             }
         }
+        // Only once it's actually touched down: this phase STARTS at the avatar,
+        // which is off the felt, so confining before the first landing would
+        // yank the chip onto the felt edge while it's still in the air.
+        if (c.landed) confine(c);
     }
 
     // The coin reaches the target's face: kick it up and away, and solve the arc
