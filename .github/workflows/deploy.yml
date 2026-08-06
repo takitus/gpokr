@@ -51,6 +51,16 @@ jobs:
         if: steps.live.outputs.skip != 'true'
         run: sed -i 's|chrome-extension://__MSG_@@extension_id__/assets/table.png|assets/table.png|' dark.css
 
+      # Minify to build/ (same pinned esbuild as pack.sh). --outbase=. keeps
+      # vendor/ nested. three.iife.js alone drops ~1MB. Runs after the URL
+      # rewrite so build/dark.css carries the web-relative asset path.
+      - name: Minify JS/CSS with esbuild
+        if: steps.live.outputs.skip != 'true'
+        run: |
+          npx --yes esbuild@0.28.1 \
+            odds.js content.js chips3d.js table3d.js coin3d.js vendor/three.iife.js overlay.css dark.css \
+            --minify --outdir=build --outbase=.
+
       - name: Authenticate to AWS (OIDC, no keys)
         if: steps.live.outputs.skip != 'true'
         uses: aws-actions/configure-aws-credentials@v4
@@ -63,18 +73,19 @@ jobs:
         run: |
           V="${{ steps.manifest.outputs.version }}"
           CACHE="public, max-age=31536000, immutable"
-          aws s3 cp odds.js              "s3://tools.gpokr.com/$V/odds.js"              --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
-          aws s3 cp content.js           "s3://tools.gpokr.com/$V/content.js"           --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          # JS/CSS come from build/ (minified above); assets are copied as-is.
+          aws s3 cp build/odds.js              "s3://tools.gpokr.com/$V/odds.js"              --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          aws s3 cp build/content.js           "s3://tools.gpokr.com/$V/content.js"           --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
           # 3D renderers: fetched on demand by content.js from this same /<version>/
           # base (chip portal, coin toss, 3D table), so they must live here too.
-          aws s3 cp chips3d.js           "s3://tools.gpokr.com/$V/chips3d.js"           --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
-          aws s3 cp table3d.js           "s3://tools.gpokr.com/$V/table3d.js"           --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
-          aws s3 cp coin3d.js            "s3://tools.gpokr.com/$V/coin3d.js"            --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
-          aws s3 cp vendor/three.iife.js "s3://tools.gpokr.com/$V/vendor/three.iife.js" --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
-          aws s3 cp overlay.css          "s3://tools.gpokr.com/$V/overlay.css"          --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
-          aws s3 cp dark.css             "s3://tools.gpokr.com/$V/dark.css"             --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
-          aws s3 cp assets/table.png     "s3://tools.gpokr.com/$V/assets/table.png"     --content-type "image/png"                             --cache-control "$CACHE"
-          aws s3 cp assets/gpokr-logo.svg "s3://tools.gpokr.com/$V/assets/gpokr-logo.svg" --content-type "image/svg+xml; charset=utf-8"        --cache-control "$CACHE"
+          aws s3 cp build/chips3d.js           "s3://tools.gpokr.com/$V/chips3d.js"           --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          aws s3 cp build/table3d.js           "s3://tools.gpokr.com/$V/table3d.js"           --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          aws s3 cp build/coin3d.js            "s3://tools.gpokr.com/$V/coin3d.js"            --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          aws s3 cp build/vendor/three.iife.js "s3://tools.gpokr.com/$V/vendor/three.iife.js" --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          aws s3 cp build/overlay.css          "s3://tools.gpokr.com/$V/overlay.css"          --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
+          aws s3 cp build/dark.css             "s3://tools.gpokr.com/$V/dark.css"             --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
+          aws s3 cp assets/table.png           "s3://tools.gpokr.com/$V/assets/table.png"     --content-type "image/png"                             --cache-control "$CACHE"
+          aws s3 cp assets/gpokr-logo.svg      "s3://tools.gpokr.com/$V/assets/gpokr-logo.svg" --content-type "image/svg+xml; charset=utf-8"        --cache-control "$CACHE"
           printf '{"version": "%s", "files": ["odds.js", "content.js", "overlay.css", "dark.css", "assets/table.png"], "syncedAt": "%s"}' \
             "$V" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > current.json
           aws s3 cp current.json s3://tools.gpokr.com/current.json --content-type "application/json" --cache-control "public, max-age=300"
