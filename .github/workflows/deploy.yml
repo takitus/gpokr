@@ -34,7 +34,7 @@ jobs:
       - name: Sanity checks
         if: steps.live.outputs.skip != 'true'
         run: |
-          for f in odds.js content.js 3d/chips3d.js 3d/table3d.js 3d/coin3d.js vendor/three.iife.js overlay.css dark.css assets/table.png assets/gpokr-logo.svg; do
+          for f in odds.js content.js 3d/chips3d.js 3d/table3d.js 3d/coin3d.js 3d/beer3d.js bridge/ws-monitor.js vendor/three.iife.js overlay.css dark.css assets/table.png assets/gpokr-logo.svg; do
             test -s "$f" || { echo "::error::$f missing or empty"; exit 1; }
           done
           node --check odds.js
@@ -42,6 +42,8 @@ jobs:
           node --check 3d/chips3d.js
           node --check 3d/table3d.js
           node --check 3d/coin3d.js
+          node --check 3d/beer3d.js
+          node --check bridge/ws-monitor.js
           # content.js resolves the renderers against its own URL, so the 3d/
           # prefix there and the S3 layout below must agree — a mismatch 404s in
           # the site-hosted build while the extension keeps working.
@@ -63,7 +65,7 @@ jobs:
         if: steps.live.outputs.skip != 'true'
         run: |
           npx --yes esbuild@0.28.1 \
-            odds.js content.js 3d/chips3d.js 3d/table3d.js 3d/coin3d.js vendor/three.iife.js overlay.css dark.css \
+            odds.js content.js 3d/chips3d.js 3d/table3d.js 3d/coin3d.js 3d/beer3d.js bridge/ws-monitor.js vendor/three.iife.js overlay.css dark.css \
             --minify --outdir=build --outbase=.
 
       - name: Authenticate to AWS (OIDC, no keys)
@@ -87,6 +89,11 @@ jobs:
           aws s3 cp build/3d/chips3d.js        "s3://tools.gpokr.com/$V/3d/chips3d.js"        --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
           aws s3 cp build/3d/table3d.js        "s3://tools.gpokr.com/$V/3d/table3d.js"        --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
           aws s3 cp build/3d/coin3d.js         "s3://tools.gpokr.com/$V/3d/coin3d.js"         --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          aws s3 cp build/3d/beer3d.js         "s3://tools.gpokr.com/$V/3d/beer3d.js"         --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          # The WebSocket tap: content.js fetches it from this same base. In the
+          # site build it can only hook sockets opened after it lands (as an
+          # extension it is a document_start MAIN-world content script instead).
+          aws s3 cp build/bridge/ws-monitor.js "s3://tools.gpokr.com/$V/bridge/ws-monitor.js" --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
           aws s3 cp build/vendor/three.iife.js "s3://tools.gpokr.com/$V/vendor/three.iife.js" --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
           aws s3 cp build/overlay.css          "s3://tools.gpokr.com/$V/overlay.css"          --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
           aws s3 cp build/dark.css             "s3://tools.gpokr.com/$V/dark.css"             --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"

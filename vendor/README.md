@@ -1,10 +1,11 @@
 # vendor/three.iife.js
 
 [three.js](https://threejs.org) **r0.185.1**, MIT licensed, © 2010–2025 three.js
-authors. Used by `3d/chips3d.js`, `3d/table3d.js`, and `3d/coin3d.js` for the 3D chip,
-table, and coin rendering. Manifest V3 forbids loading remote code, so the
-library is committed here as a readable (non-minified) IIFE bundle that exposes
-`window.THREE` in the content-script world.
+authors. Used by `3d/chips3d.js`, `3d/table3d.js`, `3d/coin3d.js` and
+`3d/beer3d.js` for the 3D chip, table, coin and beer rendering. Manifest V3
+forbids loading remote code, so the library is committed here as a readable
+(non-minified) IIFE bundle that exposes `window.THREE` in the content-script
+world.
 
 ## How it was generated
 
@@ -14,8 +15,10 @@ From an empty scratch directory, using the pinned upstream package:
 # 1. install the exact library version + the bundler
 npm i three@0.185.1 esbuild@0.28.1
 
-# 2. entry point that re-exports the whole library
-printf 'export * from "three";\n' > entry.js
+# 2. entry point that re-exports the whole library, plus the one addon we use
+#    (GLTFLoader is not part of three's core export; 3d/beer3d.js needs it to
+#     load assets/models/*.glb, and it lands on the bundle as THREE.GLTFLoader)
+printf 'export * from "three";\nexport { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";\n' > entry.js
 
 # 3. bundle to a global-name IIFE, no minification, no legal comments
 npx esbuild entry.js --bundle --format=iife \

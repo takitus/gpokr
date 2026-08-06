@@ -24,6 +24,16 @@ Equity is Monte Carlo simulated (5000 deals) against the number of live opponent
 
 Toggle via the popup ("Odds HUD") or the inline **odds** checkbox next to the chat box — they stay in sync.
 
+### Table interactions
+Hover the button on another player's avatar to open a small menu of things to send them, and click as many times as you like while it's open:
+
+- **🪙 chip** — a real 3D chip arcs from your seat, bounces off their avatar and settles on the felt.
+- **🍺 beer** — slides across the table, stays upright, and sits on the rail in front of them for ten seconds.
+
+Unlike the older local-only chip toss, these **propagate**: everyone at the table running the extension sees the same throw, at the same time, because the animation plays from the event the server broadcasts back rather than from your click. A send the server refuses (you're watching, you're muted, or you're inside the cooldown) shows as nothing happening, which is the truth.
+
+Cosmetic only — interactions never touch game state. Requires a seat; the chip has the server's 2s cooldown and the beer waits 10s. Turn the whole thing off with the "interactions" checkbox in the tools tab.
+
 ### Opponent stats (badges)
 Every completed hand is parsed from the game log and per-player counters persist across sessions. With **Player stats on avatars** enabled, each seat gets a badge:
 

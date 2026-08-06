@@ -66,8 +66,31 @@ Handlers in `GPokrRestService.java`; each publishes a poker `TableMessage` for t
 | Method | Path | ui2 | Description |
 |---|---|---|---|
 | POST | `/api/gpokr/table/chat` | ✅ | Send a chat message to the current table (body = JSON string). Incoming chat arrives over the WebSocket only. |
-| POST | `/api/gpokr/table/react` | (new) | React to a received chat message with an emoji. Body `{messageId, reaction}`. Client helper: `IogcClient.sendReaction(messageId, reaction)`. Watchers may react (same audience rules as chat). No rate limit — parity with chat. |
-| POST | `/api/gpokr/table/interact` | (new) | Fire a cosmetic seat-to-seat effect (chip throw, etc.). Body `{type, payload, toUserId}`. Client helper: `IogcClient.sendInteraction(type, payload?, toUserId?)`. **Never touches game state** — it is purely a broadcast for animation. See [Interactions & reactions](#interactions--reactions). |
+| POST | `/api/gpokr/table/react` | (new) | React to a received chat message with an emoji. Body `{messageId, reaction}`. Client helper: `IogcClient.sendReaction(messageId, reaction)`. Watchers may react (same audience rules as chat). No rate limit — parity with chat. ⚠️ Needs the `IOGC-Client-ID` header (see below). |
+| POST | `/api/gpokr/table/interact` | (new) | Fire a cosmetic seat-to-seat effect (chip throw, etc.). Body `{type, payload, toUserId}`. Client helper: `IogcClient.sendInteraction(type, payload?, toUserId?)`. **Never touches game state** — it is purely a broadcast for animation. ⚠️ Needs the `IOGC-Client-ID` header (see below). See [Interactions & reactions](#interactions--reactions). |
+
+### ⚠️ `IOGC-Client-ID` is required, and its absence is silent
+
+Both endpoints answer **204 whether or not the header is present** — and without it
+nothing is broadcast. A cookie-authenticated call with a correct body, from a
+seated user, targeting a seated user, returns 204 and produces no event for
+anybody. There is no error to distinguish "sent" from "dropped on the floor",
+which makes this the single most expensive thing to not know about this API.
+
+- Header name is exactly `IOGC-Client-ID` (confirmed in the GWT client bundle).
+- The value is **not** in `localStorage`, `sessionStorage` or any cookie. It is
+  delivered over the table WebSocket as a top-level `clientId` field on the
+  session frame, which is where the site's own client reads it
+  (`if (frame.indexOf('clientId') != -1) { … frame.clientId … }`), and it is held
+  only in that client's memory.
+- It is a **capability**, not an identifier: combined with the cookies a browser
+  attaches to any same-origin request, it is what lets a call act on that user's
+  seat. Anything holding it can fold, bet or leave on their behalf. Treat it the
+  way you'd treat a session token — in particular, don't hand it to code that
+  shares a JS realm with third-party scripts.
+- The same requirement presumably applies to the other `/table/*` verbs the
+  seating and game-action sections list, which is consistent with the note that
+  `/tournaments/{id}/players` is "only usable from in-page code".
 
 ## Profile & account
 
@@ -134,6 +157,12 @@ Server rules — violations are **silently dropped**, with no error to the calle
   Watchers are excluded on both ends.
 - Per-user cooldown, 2 s by default (`interactionCooldownMs` property).
 - Sender must pass `canChat` — muted users can't interact either.
+- The request must carry `IOGC-Client-ID` (see the warning in the endpoint table).
+  This is the one that looks like a working call and isn't.
+
+Confirmed live: the broadcast **does** reach the sender. The publisher is not
+excluded, so a client can render its own throw from the echoed event and stay in
+step with everyone else, rather than animating locally and hoping.
 
 ### Chat message ids & reactions
 

@@ -160,6 +160,52 @@
         return a;
     }
 
+    // ---------- projectiles ----------
+    // Everything below this section — the throw arc, the bounce off the avatar,
+    // the felt bounces, the skid, the fade — is indifferent to what is being
+    // thrown. Only three things are chip-specific: the mesh, the pose it flies
+    // in, and the pose it settles into. A projectile registers those and reuses
+    // the rest, which is how 3d/beer3d.js adds a bottle without a second copy of
+    // the physics.
+    const projectiles = Object.create(null);
+
+    function registerProjectile(key, def) {
+        if (typeof key === "string" && def && typeof def.make === "function") projectiles[key] = def;
+    }
+
+    function projectileFor(kind) { return projectiles[kind] || projectiles.chip; }
+
+    registerProjectile("chip", {
+        make(T, s, o) {
+            const a = artFor(s, denomIndex(o.denom));
+            // CylinderGeometry's groups are [side, top, bottom]; cloned per throw
+            // so each chip can fade on its own.
+            return new T.Mesh(s.coinGeo, [a.rimMat.clone(), a.faceMat.clone(), a.faceMat.clone()]);
+        },
+        // Face-on: the disc's axis points at the viewer.
+        basePose: (T, q) => q.setFromAxisAngle(new T.Vector3(1, 0, 0), -Math.PI / 2),
+        // Lie flat from wherever the tumble left off — the shortest rotation that
+        // turns the disc's own axis back toward the viewer.
+        settlePose(T, c) {
+            const axis = new T.Vector3(0, 1, 0).applyQuaternion(c.q);
+            const fix = new T.Quaternion().setFromUnitVectors(axis, new T.Vector3(0, 0, 1));
+            return c.q.clone().premultiply(fix);
+        },
+    });
+
+    // A projectile is either a Mesh (one material, or an array of them) or a whole
+    // Group from a loaded model, so fading and disposal walk it generically.
+    // Geometry is shared and deliberately never disposed here — only the
+    // per-throw material clones are.
+    function eachMaterial(obj, fn) {
+        obj.traverse((n) => {
+            const m = n.material;
+            if (!m) return;
+            if (Array.isArray(m)) m.forEach(fn);
+            else fn(m);
+        });
+    }
+
     // ---------- geometry helpers ----------
     function centerOf(r) { return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
 
@@ -230,10 +276,12 @@
     }
 
     // ---------- a coin ----------
-    function addCoin(s, from, to, felt, denomIdx) {
+    function addCoin(s, from, to, felt, o) {
         const T = window.THREE;
-        const a = artFor(s, denomIdx);
-        const mesh = new T.Mesh(s.coinGeo, [a.rimMat.clone(), a.faceMat.clone(), a.faceMat.clone()]);
+        const kind = (o && o.item) || "chip";
+        const def = projectileFor(kind);
+        const mesh = def.make(T, s, o || {});
+        if (!mesh) return null;   // a projectile whose model hasn't loaded yet
         const shadow = new T.Mesh(s.shadowGeo, s.shadowMat.clone());
         s.scene.add(mesh, shadow);
 
@@ -256,9 +304,9 @@
             tumbleRate: rand(TUMBLE[0], TUMBLE[1]) * (Math.random() < 0.5 ? -1 : 1),
             flatT: 0, flatFrom: null, flatTo: null,
             restT: 0, alpha: 1,
+            kind: kind,
         };
-        // Base pose: the coin's axis points at the viewer, i.e. face-on/flat.
-        c.q.setFromAxisAngle(new T.Vector3(1, 0, 0), -Math.PI / 2);
+        if (def.basePose) def.basePose(T, c.q);
         setTumbleAxis(c);
         s.coins.push(c);
         while (s.coins.length > MAX_COINS) removeCoin(s, s.coins[0]);
@@ -276,8 +324,32 @@
         const i = s.coins.indexOf(c);
         if (i >= 0) s.coins.splice(i, 1);
         s.scene.remove(c.mesh, c.shadow);
-        c.mesh.material.forEach((m) => m.dispose());
+        eachMaterial(c.mesh, (m) => m.dispose());
         c.shadow.material.dispose();
+    }
+
+    // ---------- actors ----------
+    // An actor is anything that wants this layer's canvas, camera and clock but
+    // its own motion: { object3D, step(dt) -> false when finished, dispose? }.
+    // Screen-space convention is the same as everywhere else here — world x is
+    // screen x, world y is NEGATIVE screen y.
+    function addActor(actor) {
+        const s = ensureSession();
+        if (!s || !actor || typeof actor.step !== "function" || !actor.object3D) return null;
+        s.scene.add(actor.object3D);
+        s.actors.push(actor);
+        kick(s);
+        return actor;
+    }
+
+    function removeActor(s, actor) {
+        const i = s.actors.indexOf(actor);
+        if (i >= 0) s.actors.splice(i, 1);
+        s.scene.remove(actor.object3D);
+        // Same rule as coins: per-instance materials are ours to free, shared
+        // geometry and the caller's template are not.
+        eachMaterial(actor.object3D, (m) => m.dispose());
+        if (typeof actor.dispose === "function") { try { actor.dispose(); } catch (e) {} }
     }
 
     // ---------- physics ----------
@@ -360,17 +432,21 @@
         if (c.onHit) { try { c.onHit(); } catch (e) {} c.onHit = null; }
     }
 
-    // Lie flat from wherever the tumble left off: the shortest rotation that
-    // turns the coin's current axis back toward the viewer.
+    // Settle into the projectile's resting pose from wherever the tumble left off.
     function startFlatten(c) {
         const T = window.THREE;
+        const def = projectileFor(c.kind);
+        c.vh = 0;
+        if (!def.settlePose) {           // no resting pose: just stop where it is
+            c.phase = "rest";
+            c.restT = 0;
+            c.v.x = c.v.y = 0;
+            return;
+        }
         c.phase = "flatten";
         c.flatT = 0;
-        c.vh = 0;
         c.flatFrom = c.q.clone();
-        const axis = new T.Vector3(0, 1, 0).applyQuaternion(c.q); // the coin's own axis
-        const fix = new T.Quaternion().setFromUnitVectors(axis, new T.Vector3(0, 0, 1));
-        c.flatTo = c.q.clone().premultiply(fix);
+        c.flatTo = def.settlePose(T, c);
     }
 
     // ---------- draw ----------
@@ -381,7 +457,15 @@
             c.mesh.position.set(c.p.x, -(c.p.y - lift), 2 + c.h * 0.02);
             c.mesh.quaternion.copy(c.q);
             c.mesh.scale.setScalar(sc);
-            c.mesh.material.forEach((m) => { m.opacity = c.alpha; });
+            // Fade multiplies the material's AUTHORED opacity rather than
+            // replacing it: a loaded model can have genuinely translucent parts
+            // (beer.glb's glass is baseColorFactor alpha 0.4) and forcing those to
+            // 1 while it flies would turn the glass solid.
+            eachMaterial(c.mesh, (m) => {
+                const base = (m.userData && typeof m.userData.gpeBaseOpacity === "number")
+                    ? m.userData.gpeBaseOpacity : 1;
+                m.opacity = base * c.alpha;
+            });
 
             const k = 1 / (1 + c.h / 240);
             c.shadow.position.set(c.p.x, -c.p.y, 0);
@@ -396,7 +480,7 @@
         const dt = Math.min((now - (s.last || now)) / 1000, 0.05);
         s.last = now;
 
-        if (!s.coins.length) {
+        if (!s.coins.length && !s.actors.length) {
             // Nothing in the air: idle the loop rather than burning frames.
             s.idle += dt;
             if (s.idle > 0.5) { cancelAnimationFrame(s.raf); s.raf = 0; s.running = false; }
@@ -408,6 +492,21 @@
         s.acc = Math.min(s.acc + dt, STEP * MAX_SUBSTEPS);
         while (s.acc >= STEP) {
             for (const c of s.coins.slice()) stepCoin(s, c, STEP);
+            // Actors move themselves: they get the same fixed step and are done
+            // when they say so. (The beer slide is one — it is not ballistic, so
+            // it cannot share stepCoin's phases.)
+            for (const a of s.actors.slice()) {
+                let alive = false;
+                try {
+                    alive = a.step(STEP) !== false;
+                } catch (e) {
+                    // Don't swallow it: an actor that throws on its first step
+                    // vanishes without trace otherwise.
+                    console.warn("[gpe] coin3d: actor step failed, dropping it", e);
+                    alive = false;
+                }
+                if (!alive) removeActor(s, a);
+            }
             s.acc -= STEP;
         }
         for (const c of s.coins.slice()) if (c.phase === "fade" && c.alpha <= 0) removeCoin(s, c);
@@ -433,7 +532,7 @@
         if (!T) return bail("three.js missing");
         if (!(window.GPE_CHIPS && window.GPE_CHIPS.art)) return bail("chips3d missing");
         const canvas = makeLayer();
-        const s = { canvas, coins: [], enabled: true, raf: 0, acc: 0, idle: 0, running: false, vw: 0, vh: 0 };
+        const s = { canvas, coins: [], actors: [], enabled: true, raf: 0, acc: 0, idle: 0, running: false, vw: 0, vh: 0 };
         try {
             s.renderer = new T.WebGLRenderer({
                 canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
@@ -479,7 +578,8 @@
         } else {
             from = { x: to.x, y: window.innerHeight - 20, h: 40 };
         }
-        const coin = addCoin(s, from, to, feltBounds(tableRect), denomIndex(o.denom));
+        const coin = addCoin(s, from, to, feltBounds(tableRect), o);
+        if (!coin) return false;
         coin.onHit = o.onHit || null;
         kick(s);
         return true;
@@ -499,6 +599,7 @@
         s.enabled = false;
         if (s.raf) cancelAnimationFrame(s.raf);
         s.coins.slice().forEach((c) => removeCoin(s, c));
+        s.actors.slice().forEach((a) => removeActor(s, a));
         [s.coinGeo, s.shadowGeo].forEach((g) => g && g.dispose());
         (s.art || []).forEach((a) => {
             if (!a) return;
@@ -516,8 +617,8 @@
     }
 
     window.GPE_COIN = {
-        toss, disable,
-        isRunning: () => !!(session && session.coins.length),
+        toss, disable, registerProjectile, addActor, feltBounds,
+        isRunning: () => !!(session && (session.coins.length || session.actors.length)),
         _session: () => session,
     };
 })();

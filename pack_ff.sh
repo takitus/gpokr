@@ -18,7 +18,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 GECKO_ID="gpokr-tools@orases.com"   # AMO add-on id (also chrome.runtime.id in FF)
-GECKO_MIN="109.0"                    # first Firefox with MV3 + array web_accessible_resources
+# 128 is the first Firefox with content_scripts "world": "MAIN" (MV3 + array
+# web_accessible_resources have been fine since 109). The WebSocket tap has to
+# run in the page's own realm at document_start — see bridge/ws-monitor.js — and
+# without that key it would install and silently never receive an interaction,
+# so the floor moves rather than shipping a feature that quietly does nothing.
+GECKO_MIN="128.0"
 
 ./pack.sh >/dev/null   # build the shared runtime staging (quietly)
 

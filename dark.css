@@ -451,6 +451,25 @@ html.gpe-dark #gpe-splash-btn {
 }
 html.gpe-dark #gpe-splash-btn:hover { background: #2c3645; }
 html.gpe-dark #gpe-picker-panel button:hover { background: #344056; }
+
+html.gpe-dark .gpe-bg-auto.gpe-on {
+    background: #2b3a25 !important;
+    border-color: #465a38 !important;
+    color: #c7dab4 !important;
+}
+
+/* Interact menu — same palette as the emote picker above, since they're the same
+   kind of thing: a small popover hanging off a control. The cooling-down state
+   keeps its dimming and simply must not light up on hover. */
+html.gpe-dark #gpe-interact-panel {
+    background: #232c3a;
+    border-color: #3c4a61;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+}
+html.gpe-dark #gpe-interact-panel .gpe-interact-item { color: #e6ebf2; }
+html.gpe-dark #gpe-interact-panel .gpe-interact-item:hover { background: #344056; }
+html.gpe-dark #gpe-interact-panel .gpe-interact-item.gpe-interact-cool { color: #8a97ab; }
+html.gpe-dark #gpe-interact-panel .gpe-interact-item.gpe-interact-cool:hover { background: transparent; }
 html.gpe-dark .gpe-toggle { color: #b9c2cf; }
 html.gpe-dark .gpe-toggle:has(input:disabled) { color: #5d6a7e; }
 html.gpe-dark .gpe-share-last {

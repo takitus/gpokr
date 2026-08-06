@@ -293,7 +293,7 @@
    rule on width here. Buttons with text get away with it because the label
    simply overflows a zero-width box, but this one has no content, so unforced
    it collapses to a ~2px vertical sliver. */
-.gpe-coin-btn {
+.gpe-interact-btn {
     all: unset;
     position: fixed;
     z-index: 9;
@@ -320,18 +320,72 @@
     opacity: 0.95;
     transition: opacity 0.12s ease, transform 0.12s ease;
 }
-.gpe-coin-btn:hover {
+.gpe-interact-btn:hover {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1.25);
 }
-.gpe-coin-btn:active { transform: translate(-50%, -50%) scale(0.92); }
-/* Flick on click: the button "launches" the coin it just threw. */
-.gpe-coin-btn.gpe-coin-pop { animation: gpe-coin-pop 0.26s ease-out; }
-@keyframes gpe-coin-pop {
-    0% { transform: translate(-50%, -50%) scale(1); }
-    45% { transform: translate(-50%, -50%) scale(1.55) rotate(-20deg); }
-    100% { transform: translate(-50%, -50%) scale(1); }
+.gpe-interact-btn:active { transform: translate(-50%, -50%) scale(0.92); }
+/* A menu entry still cooling down. Deliberately not a "thrown!" flourish on the
+   button: the throw only exists once the event comes back, and a send the server
+   would drop must not look like it worked. The countdown is in the label. */
+#gpe-interact-panel .gpe-interact-item.gpe-interact-cool {
+    opacity: 0.4;
+    cursor: default;
 }
+#gpe-interact-panel .gpe-interact-item.gpe-interact-cool:hover { background: transparent; }
+
+/* The background row's "auto" toggle: pressed-in when the surround is following
+   the page's own table art rather than a picked colour. */
+.gpe-bg-auto {
+    margin-left: 6px;
+    font-size: 11px !important;
+    padding: 3px 7px !important;
+}
+.gpe-bg-auto.gpe-on {
+    background: #d8e6d2 !important;
+    border-color: #7ba36b !important;
+    color: #2f4f2a !important;
+}
+
+/* ---- Interact menu (what to throw) ---- */
+#gpe-interact-panel {
+    position: fixed;
+    z-index: 99999;
+    background: #fff;
+    border: 1px solid #cfcfcf;
+    border-radius: 10px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    padding: 5px;
+    display: none;
+    min-width: 108px;
+}
+#gpe-interact-panel.gpe-open { display: block; }
+/* An invisible collar so the pointer can travel from the avatar's corner button
+   to the panel without passing over dead space and triggering the close. */
+#gpe-interact-panel::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    right: -10px;
+    top: -12px;
+    bottom: -10px;
+    z-index: -1;
+}
+#gpe-interact-panel .gpe-interact-item {
+    all: unset;
+    box-sizing: border-box;
+    display: flex !important;
+    align-items: center;
+    gap: 7px;
+    width: 100% !important;
+    padding: 6px 9px !important;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+}
+#gpe-interact-panel .gpe-interact-item:hover { background: #f0f0f0; }
 
 /* The struck avatar recoils. Only a transform, so nothing in the seat panel
    reflows and GWT re-rendering the image just drops the class harmlessly. */

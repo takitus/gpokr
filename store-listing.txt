@@ -6,6 +6,9 @@ A complete hand-tuned dark theme for the entire site: the table (with custom dar
 😀 EMOTES & HAND SHARING
 Send emoji reactions that pop over your avatar — any emoji, whether you pick it or type it — and optionally reveal your hole cards to other extension users after a hand ends: once, always, or never. Your choice. Shared hands are tamper-checked, so a copied reveal can't be passed off as someone else's.
 
+🪙 TABLE INTERACTIONS
+Send something across the table. Hover the button on any player's avatar and pick: a 3D chip that arcs over and bounces off them, or a beer that slides across the felt and sits on the rail beside them. Everyone at the table running the extension sees it happen at the same moment — and it is purely cosmetic, so it never touches the game.
+
 💬 QUICK-CHAT BUTTONS & CLICKABLE LINKS
 One-tap buttons under the chat box for the things you say every hand — gg, nh, ty, wp. Two smart tokens fill themselves in on click: [playername] becomes the last player to finish the tournament, and [lastwinner] becomes the winner of the last hand — so "gg [playername]" posts "gg Behr Necessities". Rename, reorder, add, or remove your own in a quick editor. And any link someone posts in chat becomes clickable — no more copy-pasting URLs.
 

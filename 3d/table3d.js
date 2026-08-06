@@ -16,6 +16,26 @@
 (function () {
     "use strict";
 
+    // ---------- where our own files live ----------
+    // Two very different answers depending on how we were loaded, which is why
+    // this can't just be chrome.runtime.getURL:
+    //   - as an extension content script there is no currentScript, and assets
+    //     resolve against the extension root;
+    //   - in the site-hosted build we're a plain <script> under
+    //     tools.gpokr.com/<version>/3d/, so assets are one level up from us.
+    // Same trick content.js uses for SELF_SRC. This existing as a helper is what
+    // fixed the felt watermark, which had never once rendered on the site build:
+    // the old code called chrome.runtime.getURL inside a try/catch and silently
+    // returned when it threw.
+    const SELF_SRC = (document.currentScript && document.currentScript.src) || "";
+
+    function assetUrl(path) {
+        if (SELF_SRC) {
+            try { return new URL("../" + path, SELF_SRC).href; } catch (e) { /* fall through */ }
+        }
+        try { return chrome.runtime.getURL(path); } catch (e) { return null; }
+    }
+
     // ---------- felt geometry, measured off the 790px art (see chips3d.js) ----------
     const ART_W = 790;
     const FELT_CX_PX = 395;      // felt center x, element space
@@ -39,7 +59,13 @@
     const COL_FELT = 0x2f6360;   // gpokr's teal-green felt
     const COL_FELT_EDGE = 0x213f40;
     const COL_RAIL = 0x211d15;   // warm dark leather (a touch lighter so the grain reads)
-    const COL_SURROUND = 0x000000; // outside the rail (matches the art's black corners)
+    // Outside the rail. Black matches the DARK art's corners, which is where this
+    // came from — and it is wrong in light mode, where the site's own felt art has
+    // pale corners and a black surround reads as a hole punched in the page. So
+    // black is only the fallback: sampleSurround() below takes the colour from
+    // whatever art the page actually has behind the table, and the user can
+    // override it outright.
+    const COL_SURROUND = 0x000000;
 
     const AMBIENT = 0.46;        // low, so the felt keeps a center-bright pool
     const KEY = 0.5;             // directional key (shapes the rail bevel)
@@ -286,6 +312,62 @@
     }
     // Live felt tint (a hex string). The felt map is grayscale, so this recolors
     // the whole felt instantly with no texture regeneration.
+    // ---------- surround ----------
+    let surroundHex = "";   // "" = follow the page's art
+
+    function applySurround(s) {
+        if (!s || !s.renderer) return;
+        const T = window.THREE;
+        try {
+            s.renderer.setClearColor(surroundHex ? new T.Color(surroundHex) : COL_SURROUND, 1);
+            s.needsRender = Math.max(s.needsRender, 2);
+        } catch (e) {}
+    }
+
+    function setSurroundColor(hex) {
+        surroundHex = (typeof hex === "string" && /^#[0-9a-f]{6}$/i.test(hex)) ? hex : "";
+        if (session) {
+            applySurround(session);
+            if (!surroundHex) sampleSurround();   // back to following the art
+        }
+    }
+
+    // Read the corner pixel of the felt art the page is showing and use that as the
+    // surround, so the canvas blends into the page instead of announcing itself.
+    // This is what makes light mode work without a hardcoded colour: dark mode
+    // swaps in our dark table.png (black corners), light mode keeps the site's own
+    // pale jpg, and both are sampled the same way. Same-origin art, so the canvas
+    // read is clean; anything unexpected leaves the fallback in place.
+    function sampleSurround() {
+        if (surroundHex) return;   // an explicit choice wins
+        let url = null;
+        try {
+            const host = document.querySelector(".iogc-GameWindow-table");
+            const bg = host && getComputedStyle(host).backgroundImage;
+            const m = bg && bg.match(/url\(["']?(.*?)["']?\)/);
+            url = m && m[1];
+        } catch (e) { return; }
+        if (!url) return;
+        const img = new Image();
+        img.onload = () => {
+            try {
+                const cv = document.createElement("canvas");
+                cv.width = cv.height = 1;
+                // Top-left corner: outside the painted oval in both variants.
+                cv.getContext("2d").drawImage(img, 0, 0, 1, 1, 0, 0, 1, 1);
+                const d = cv.getContext("2d").getImageData(0, 0, 1, 1).data;
+                if (surroundHex) return;      // the user chose while we were loading
+                const T = window.THREE;
+                if (session && session.renderer) {
+                    session.renderer.setClearColor(new T.Color(d[0] / 255, d[1] / 255, d[2] / 255), 1);
+                    session.needsRender = Math.max(session.needsRender, 2);
+                }
+            } catch (e) { /* tainted or decoded oddly: keep the fallback */ }
+        };
+        img.onerror = () => {};
+        img.src = url;
+    }
+
     function setFeltColor(hex) {
         if (typeof hex === "string" && hex) feltColorHex = hex;
         if (session && session.feltMat) {
@@ -310,11 +392,10 @@
         }
     }
 
-    // Load the bundled gpokr logo (an extension resource, so no cross-origin
-    // taint) and hand back a CanvasTexture + its aspect ratio.
+    // Load the bundled gpokr logo (one of our own resources either way, so no
+    // cross-origin taint) and hand back a CanvasTexture + its aspect ratio.
     function loadLogoTexture(T, onReady) {
-        let url = null;
-        try { url = chrome.runtime.getURL("assets/gpokr-logo.svg"); } catch (e) { return; }
+        const url = assetUrl("assets/gpokr-logo.svg");
         if (!url) return;
         const img = new Image();
         img.onload = () => {
@@ -520,6 +601,8 @@
         try {
             s.renderer = new T.WebGLRenderer({ canvas, antialias: true, alpha: false, preserveDrawingBuffer: true });
             s.renderer.setClearColor(COL_SURROUND, 1);
+            applySurround(s);
+            sampleSurround();   // then match the page's own art, if we can read it
             s.renderer.shadowMap.enabled = true;
             s.renderer.shadowMap.type = T.PCFShadowMap;
             s.renderer.outputColorSpace = T.SRGBColorSpace;
@@ -562,5 +645,5 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, isOn: () => !!session, _session: () => session };
+    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, isOn: () => !!session, _session: () => session };
 })();

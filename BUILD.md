@@ -14,6 +14,8 @@ build tool from npm.
 | `3d/chips3d.js`         | `3d/chips3d.js`         | our code                                 |
 | `3d/table3d.js`         | `3d/table3d.js`         | our code                                 |
 | `3d/coin3d.js`          | `3d/coin3d.js`          | our code                                 |
+| `3d/beer3d.js`          | `3d/beer3d.js`          | our code                                 |
+| `bridge/ws-monitor.js`  | `bridge/ws-monitor.js`  | our code                                 |
 | `popup.js`              | `popup.js`              | our code                                 |
 | `overlay.css`           | `overlay.css`           | our code                                 |
 | `dark.css`              | `dark.css`              | our code                                 |
@@ -64,7 +66,7 @@ The exact minifier invocation `pack.sh` makes is:
 ```sh
 npx --yes esbuild@0.28.1 \
   content.js odds.js popup.js overlay.css dark.css \
-  3d/chips3d.js 3d/table3d.js 3d/coin3d.js vendor/three.iife.js \
+  3d/chips3d.js 3d/table3d.js 3d/coin3d.js 3d/beer3d.js bridge/ws-monitor.js vendor/three.iife.js \
   --minify --outdir=<staging dir> --outbase=.
 ```
 

@@ -25,12 +25,18 @@
     let TABLE3D_FELT_DEPTH = 0, TABLE3D_LEATHER_DEPTH = 0.1; // relief depth (tools editor)
     let TABLE3D_FELT_COLOR = "#2f6360", TABLE3D_LEATHER_COLOR = "#1d1a16"; // tints (tools editor)
     let TABLE3D_LOGO_OPACITY = 0.2; // felt-center watermark opacity (tools editor)
+    // Surround = what shows outside the rail. "" means "follow the page's own felt
+    // art", which table3d samples — the right default in BOTH themes, since dark
+    // mode swaps in our dark table.png and light mode keeps the site's pale jpg.
+    // A picked colour overrides it.
+    let TABLE3D_BG_COLOR = "";
     // Single source of truth for the 3D-table editor defaults (used by
     // applySettings' fallbacks and the "Reset to defaults" button).
     const TABLE3D_DEFAULTS = {
         table3dFeltColor: "#2f6360", table3dFeltZoom: 0.5, table3dFeltDepth: 0,
         table3dLeatherColor: "#1d1a16", table3dLeatherZoom: 10, table3dLeatherDepth: 0.1,
         table3dLogoOpacity: 0.2,
+        table3dBgColor: "",   // "" = sampled from the page's art
     };
     const clampZoom = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n > 0) ? Math.min(10, Math.max(0.1, n)) : (dflt != null ? dflt : 1); };
     const clampDepth = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0) ? Math.min(3, Math.max(0, n)) : dflt; };
@@ -139,10 +145,13 @@
         TABLE3D_FELT_COLOR = clampColor(s && s.table3dFeltColor, TABLE3D_DEFAULTS.table3dFeltColor);
         TABLE3D_LEATHER_COLOR = clampColor(s && s.table3dLeatherColor, TABLE3D_DEFAULTS.table3dLeatherColor);
         TABLE3D_LOGO_OPACITY = clamp01(s && s.table3dLogoOpacity, TABLE3D_DEFAULTS.table3dLogoOpacity);
+        // Not clampColor: "" is meaningful here (follow the art), not a fallback.
+        TABLE3D_BG_COLOR = (s && typeof s.table3dBgColor === "string" && /^(#[0-9a-fA-F]{6})?$/.test(s.table3dBgColor))
+            ? s.table3dBgColor : TABLE3D_DEFAULTS.table3dBgColor;
         applyTable3dSettings();
         syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
         COIN_TOSS = !(s && s.coinToss === false); // opt-out
-        updateCoinButtons(); // add/remove the per-seat buttons for the new value
+        updateInteractButtons(); // add/remove the per-seat buttons for the new value
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
@@ -240,7 +249,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-coin-layer, .gpe-coin-btn"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -331,14 +340,55 @@
         }, DISPLAY_MS);
     }
 
-    // ---------- coin toss ----------
-    // A small coin button in the corner of every other player's avatar. Clicking
-    // it throws a 3D coin from your own seat: it arcs across the table, bounces
-    // off their avatar, drops onto the felt and settles flat (coin3d.js does the
-    // rendering). Purely cosmetic and local — nothing is sent to the site, so
-    // only you ever see it.
-    const coinButtons = new Map();  // player name -> button
+    // ---------- interactions (seat-to-seat throws) ----------
+    // An interact button in the corner of every other player's avatar, opening a
+    // small menu of things to throw. Picking one POSTs to /table/interact, which
+    // the server broadcasts to everyone at the table; the animation then plays
+    // from the event coming back, so all of us — thrower included — see the same
+    // throw at the same time. Cosmetic only: the endpoint never touches game
+    // state, and the server drops anything from a watcher or a muted user.
+    const interactButtons = new Map(); // player name -> button
     let coinLoad = null;
+
+    const INTERACT_TYPE = "gpe.throw";  // our namespace on a shared endpoint
+    const INTERACT_V = 1;               // payload schema version
+    const INTERACT_COOLDOWN_MS = 2000;  // mirrors the server's interactionCooldownMs
+
+    // Receiver limits. The payload is whatever someone chose to POST — anyone can
+    // curl this endpoint — so nothing here is trusted: a sequence is clamped into
+    // these bounds or dropped, never taken at face value.
+    const Q_MAX_STEPS = 25;
+    const Q_MAX_COUNT = 10;      // items per step
+    const Q_MAX_WAIT_MS = 3000;  // per pause
+    const Q_MAX_TOTAL_MS = 15000;
+    const Q_MAX_PAYLOAD = 1024;  // the server's own cap; a longer one is a lie
+    const Q_MAX_RUNNING = 3;     // sequences in flight, all senders
+
+    // What can be thrown. Each item renders through the same (from, to, table,
+    // opts) shape so the sequencer doesn't care which is which. Unknown keys
+    // arriving from a newer client are skipped, not fatal — that's what lets an
+    // item be added without coordinating a release.
+    const INTERACT_ITEMS = {
+        chip: {
+            label: "chip",
+            glyph: "🪙",
+            cooldownMs: INTERACT_COOLDOWN_MS,   // just the server's own limit
+            sound: true,   // the site's own chip clatter; a beer hitting someone shouldn't use it
+            ensure: ensureCoin3d,
+            throw: (from, to, table, opts) => window.GPE_COIN && GPE_COIN.toss(from, to, table, opts),
+        },
+        beer: {
+            label: "beer",
+            glyph: "🍺",
+            // Longer than the server needs: one sits on the rail for ten seconds,
+            // so letting them stack every 2s would bury the table in glasses.
+            cooldownMs: 10000,
+            flinch: false,  // it slides over and sits on the rail; nobody gets hit
+            ensure: ensureBeer3d,
+            throw: (from, to, table, opts) => window.GPE_BEER && GPE_BEER.toss(from, to, table, opts),
+        },
+    };
+    const INTERACT_ORDER = ["chip", "beer"]; // menu order, not object key order
 
     // The renderer lives in three extra files (vendor/three.iife.js, 3d/chips3d.js
     // for the chip artwork, and 3d/coin3d.js). As an extension all three are
@@ -363,6 +413,27 @@
                 });
         }
         return coinLoad;
+    }
+
+    // The beer rides on coin3d's physics (it registers itself as a projectile), so
+    // it needs that loaded first, then its model fetched before a throw can play.
+    // Both are awaited, which is what keeps a scripted sequence's timing right.
+    let beerLoad = null;
+    function ensureBeer3d() {
+        if (window.GPE_BEER) return GPE_BEER.ready();
+        if (!beerLoad) {
+            beerLoad = ensureCoin3d()
+                .then((ok) => {
+                    if (!ok) return false;
+                    if (window.GPE_BEER) return true;
+                    if (!SELF_SRC) return false; // extension: it's a content script already
+                    const base = SELF_SRC.replace(/[^/]*$/, "");
+                    return loadScript(base + "3d/beer3d.js").then(() => !!window.GPE_BEER);
+                })
+                .then((ok) => (ok && window.GPE_BEER ? GPE_BEER.ready() : false))
+                .catch(() => { beerLoad = null; return false; });
+        }
+        return beerLoad;
     }
 
     // An element's rect, or null when it isn't laid out (GWT keeps hidden
@@ -395,22 +466,265 @@
         } catch (e) {}
     }
 
-    // Everything is re-resolved at click time rather than captured with the
-    // button: seats are recycled between hands, and the throw only needs to be
-    // right for the second it's in the air.
-    function tossCoinAt(name) {
-        ensureCoin3d().then((ok) => {
-            if (!ok || !window.GPE_COIN) return;
-            const target = findAvatarByName(name);
+    // Everything is re-resolved at throw time rather than captured earlier: seats
+    // are recycled between hands, and a throw only needs to be right for the
+    // second it's in the air.
+    function renderThrow(itemKey, fromName, toName, denom) {
+        const item = INTERACT_ITEMS[itemKey];
+        if (!item) return Promise.resolve(false); // newer client threw something we don't have
+        return item.ensure().then((ok) => {
+            if (!ok) return false;
+            const target = findAvatarByName(toName);
             const to = liveRect(target);
-            if (!to) return;
-            const me = getMyName();
-            const from = me ? liveRect(findAvatarByName(me)) : null; // null -> thrown from the near rail
+            if (!to) return false; // target left the table mid-sequence
+            const from = fromName ? liveRect(findAvatarByName(fromName)) : null; // null -> from the near rail
             const table = liveRect(document.querySelector(".iogc-GameWindow-table"));
-            GPE_COIN.toss(from, to, table, {
-                onHit: () => { flinchAvatar(target); playChipSound(); },
+            // onHit is the chip striking someone; onArrive is the beer reaching
+            // the rail. Same callback either way, but an item can opt out of the
+            // recoil and the clatter — a beer sliding over is a friendly gesture,
+            // not a hit, so it lands quietly and just sits there.
+            const landed = () => {
+                if (item.flinch !== false) flinchAvatar(target);
+                if (item.sound) playChipSound();
+            };
+            return !!item.throw(from, to, table, {
+                denom: denom,
+                onHit: landed,
+                onArrive: landed,
             });
         });
+    }
+
+    // ---------- interactions: the wire ----------
+    // Small seeded PRNG (mulberry32). The seed travels in the payload so every
+    // viewer picks the same chip colours for the same throw instead of each
+    // rolling its own. In-flight jitter stays local on purpose — matching spin
+    // and scatter frame-for-frame would mean threading this through the
+    // renderer's animation loop, for a difference nobody can see.
+    function seededRand(seed) {
+        let a = (seed | 0) || 1;
+        return function () {
+            a = (a + 0x6D2B79F5) | 0;
+            let t = Math.imul(a ^ (a >>> 15), 1 | a);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    // Send an arbitrary sequence, not just one item: this is the seam the "game
+    // events fire scripted interactions" idea plugs into later, and the menu is
+    // simply its simplest caller. One POST per sequence, never one per item —
+    // the server's 2s cooldown would silently swallow everything after the first.
+    function sendInteraction(targetName, steps) {
+        const toUserId = userIdForName(targetName);
+        if (!toUserId) return Promise.resolve(false); // no profile link -> no id to aim at
+        const q = [];
+        for (const step of steps || []) {
+            if (!Array.isArray(step) || !step.length) continue;
+            q.push(step[1] == null ? [String(step[0])] : [String(step[0]), step[1] | 0]);
+            if (q.length >= Q_MAX_STEPS) break;
+        }
+        if (!q.length) return Promise.resolve(false);
+        const payload = JSON.stringify({
+            v: INTERACT_V,
+            s: (Math.random() * 0x7FFFFFFF) | 0,
+            q: q,
+        });
+        if (payload.length > Q_MAX_PAYLOAD) return Promise.resolve(false);
+        return sendViaBridge(toUserId, payload);
+    }
+
+    // The POST has to carry the session's IOGC-Client-ID header or the server
+    // accepts it and silently drops it — a 204 that does nothing, which is exactly
+    // how this cost an afternoon. That id only exists on the table socket, i.e. in
+    // the page's world, and bridge/ws-monitor.js deliberately keeps it there rather
+    // than posting it over to us: it is the capability that lets a call act on this
+    // seat, so leaking it into a page-readable channel would let any ad script on
+    // gpokr.com fold the user's hand. So we don't ask for the credential, we ask the
+    // bridge to make the one cosmetic call.
+    let sendSeq = 0;
+    function sendViaBridge(toUserId, payload) {
+        return new Promise((resolve) => {
+            const id = ++sendSeq;
+            let done = false;
+            const finish = (ok) => {
+                if (done) return;
+                done = true;
+                window.removeEventListener("message", onReply);
+                clearTimeout(timer);
+                resolve(ok);
+            };
+            const onReply = (e) => {
+                if (e.origin !== location.origin) return;
+                const d = e.data;
+                if (!d || d.__gpe !== "gpe-sent" || d.id !== id) return;
+                if (!d.ok && d.why) console.warn("[gpe] interaction not sent — " + d.why);
+                finish(!!d.ok);
+            };
+            window.addEventListener("message", onReply);
+            // No bridge (site build too late to hook, or injection blocked) means no
+            // reply ever comes; fail rather than hang the caller.
+            const timer = setTimeout(() => finish(false), 4000);
+            window.postMessage({
+                __gpe: "gpe-send",
+                kind: "interact",
+                id: id,
+                type: INTERACT_TYPE,
+                toUserId: toUserId,
+                payload: payload,
+            }, location.origin);
+        });
+    }
+
+    // Name -> numeric user id, off the profile links the page already shows
+    // (seat panels, leaderboard...). profileLinks() is the same harvest the
+    // roster uses; only seated players can be targeted anyway, and every seat
+    // panel carries a profile link.
+    function userIdForName(name) {
+        const href = name ? profileLinks()[name] : null;
+        const m = href && href.match(/\/profile\/(\d+)/);
+        return m ? Number(m[1]) : 0;
+    }
+
+    function nameForUserId(id) {
+        if (!id) return null;
+        const links = profileLinks();
+        for (const name of Object.keys(links)) {
+            const m = links[name].match(/\/profile\/(\d+)/);
+            if (m && Number(m[1]) === Number(id)) return name;
+        }
+        return null;
+    }
+
+    // Validate a received payload into a sequence we're willing to play, or null.
+    // Written as "prove it's acceptable" rather than "reject what looks bad", so
+    // a shape nobody anticipated fails closed.
+    function parseInteractionPayload(raw) {
+        if (typeof raw !== "string" || !raw || raw.length > Q_MAX_PAYLOAD) return null;
+        let obj;
+        try { obj = JSON.parse(raw); } catch (e) { return null; }
+        if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+        if ((obj.v | 0) !== INTERACT_V) return null; // unknown schema: leave it alone
+        if (!Array.isArray(obj.q) || !obj.q.length) return null;
+        const q = [];
+        let total = 0;
+        for (const step of obj.q.slice(0, Q_MAX_STEPS)) {
+            if (!Array.isArray(step) || typeof step[0] !== "string") continue;
+            const name = step[0];
+            if (name === "wait") {
+                const ms = Math.max(0, Math.min(Q_MAX_WAIT_MS, step[1] | 0));
+                if (!ms) continue;
+                if (total + ms > Q_MAX_TOTAL_MS) break;
+                total += ms;
+                q.push(["wait", ms]);
+                continue;
+            }
+            if (!INTERACT_ITEMS[name]) continue; // item from a newer client: skip, keep the rest
+            const count = Math.max(1, Math.min(Q_MAX_COUNT, step[1] == null ? 1 : step[1] | 0));
+            q.push([name, count]);
+        }
+        return q.length ? { seed: obj.s | 0, q: q } : null;
+    }
+
+    // One sequence per sender at a time, and a hard ceiling overall: a spammer
+    // (or a bug in another client) can't stack animations without bound.
+    const runningInteractions = new Map(); // fromUserId -> true
+
+    function playInteraction(ev) {
+        if (!COIN_TOSS) return; // receiving is part of the same opt-out as sending
+        if (!ev || ev.type !== INTERACT_TYPE) return;
+        const fromId = Number(ev.fromUserId) || 0;
+        if (!fromId) return;
+        if (runningInteractions.has(fromId) || runningInteractions.size >= Q_MAX_RUNNING) return;
+        const parsed = parseInteractionPayload(ev.payload);
+        if (!parsed) return;
+        const fromName = nameForUserId(fromId);
+        const toName = nameForUserId(Number(ev.toUserId) || 0);
+        if (!toName) return; // untargeted throws have nowhere to land yet
+        const rand = seededRand(parsed.seed);
+        const denoms = (window.GPE_CHIPS && GPE_CHIPS.art && GPE_CHIPS.art.types) || null;
+
+        runningInteractions.set(fromId, true);
+        let chain = Promise.resolve();
+        for (const [name, arg] of parsed.q) {
+            if (name === "wait") {
+                chain = chain.then(() => new Promise((res) => setTimeout(res, arg)));
+                continue;
+            }
+            for (let i = 0; i < arg; i++) {
+                chain = chain.then(() => {
+                    const denom = denoms && denoms.length
+                        ? denoms[Math.floor(rand() * denoms.length)].denom
+                        : undefined;
+                    return renderThrow(name, fromName, toName, denom);
+                });
+            }
+        }
+        // Release the sender's slot when the sequence finishes — but NEVER rely on
+        // that alone. A renderer that hangs (a model load that neither resolves
+        // nor rejects, say) would otherwise leave this entry set forever and
+        // silently mute that player for the rest of the session, which is exactly
+        // what happened the first time a beer went wrong: every later throw from
+        // them, chips included, vanished with no error anywhere.
+        // So a watchdog always clears it: the clamped duration plus enough margin
+        // for the throws themselves.
+        const release = () => runningInteractions.delete(fromId);
+        let budget = 4000;
+        for (const [name, arg] of parsed.q) budget += (name === "wait") ? arg : arg * 900;
+        const watchdog = setTimeout(release, Math.min(budget, Q_MAX_TOTAL_MS + 12000));
+        chain.then(
+            () => { clearTimeout(watchdog); release(); },
+            () => { clearTimeout(watchdog); release(); }
+        );
+    }
+
+    // Can we actually send? Only the bridge knows: the POST needs a header whose
+    // value lives in the page's world (see sendViaBridge). Until it says yes, the
+    // interact button stays hidden — offering a menu whose clicks silently do
+    // nothing is the exact failure this feature kept tripping over while it was
+    // being built. False in the site-hosted build, where we load too late to ever
+    // see a session frame, and anywhere the page-world script didn't run.
+    let canInteract = false;
+
+    function probeBridge() {
+        if (canInteract) return;
+        try { window.postMessage({ __gpe: "gpe-probe" }, location.origin); } catch (e) {}
+    }
+
+    // The tap (bridge/ws-monitor.js) runs in the page's world and posts here.
+    // Treat everything it sends as untrusted: same-origin page code — or an XSS
+    // on the site — could forge these just as easily, so the origin and marker
+    // checks only establish "this came from our own origin", and the payload
+    // still goes through parseInteractionPayload's clamps.
+    window.addEventListener("message", (e) => {
+        if (e.origin !== location.origin) return;
+        const d = e.data;
+        if (!d) return;
+        if (d.__gpe === "gpe-ready" && d.canSend) {
+            if (!canInteract) {
+                canInteract = true;
+                updateInteractButtons();   // show them the moment sending is possible
+            }
+            return;
+        }
+        if (d.__gpe !== "gpe-ws" || !d.ev) return;
+        if (d.ev.typeName === "InteractionEvent") playInteraction(d.ev);
+    });
+
+    // As an extension the tap is a document_start MAIN-world content script (it
+    // has to beat the client's socket, measured opening ~55ms into page load). In
+    // the site-hosted build there's no such hook, so pull it from alongside this
+    // file and settle for whatever sockets open after it lands.
+    let wsMonitorLoad = null;
+    function ensureWsMonitor() {
+        if (!SELF_SRC) return Promise.resolve(false); // extension: the manifest handled it
+        if (!wsMonitorLoad) {
+            const base = SELF_SRC.replace(/[^/]*$/, "");
+            wsMonitorLoad = loadScript(base + "bridge/ws-monitor.js")
+                .then(() => true)
+                .catch(() => { wsMonitorLoad = null; return false; });
+        }
+        return wsMonitorLoad;
     }
 
     // A short recoil on the avatar the coin just hit. The class is removed
@@ -425,40 +739,170 @@
         av._gpeCoinHit = setTimeout(() => av.classList.remove("gpe-coin-hit"), 460);
     }
 
-    // One pass: a coin button on the corner of each visible seat's avatar,
+    // The menu of things to throw: one shared panel, repositioned beside whichever
+    // avatar you're pointing at. Opens on hover and STAYS open, so a handful of
+    // chips is a handful of clicks rather than a hover-click-hover-click dance.
+    // Built on the emote picker's shape (button + panel toggled with .gpe-open).
+    let interactPanel = null;
+    let closeTimer = 0;
+
+    function interactMenu() {
+        if (interactPanel && interactPanel.isConnected) return interactPanel;
+        const panel = document.createElement("div");
+        panel.id = "gpe-interact-panel";
+        for (const key of INTERACT_ORDER) {
+            const item = INTERACT_ITEMS[key];
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "gpe-interact-item";
+            b.dataset.gpeItem = key;
+            b.textContent = item.glyph + " " + item.label;
+            // Deliberately does NOT close the panel: clicking five times sends five.
+            b.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (panel._gpeTarget) throwAt(panel._gpeTarget, key);
+                syncMenuCooldowns();
+            });
+            panel.appendChild(b);
+        }
+        // Hovering the panel itself keeps it open — otherwise it would vanish the
+        // moment the pointer left the avatar to reach it.
+        panel.addEventListener("mouseenter", holdInteractMenu);
+        panel.addEventListener("mouseleave", scheduleCloseInteractMenu);
+        document.body.appendChild(panel);
+        interactPanel = panel;
+        return panel;
+    }
+
+    function openInteractMenu(name, btn) {
+        const panel = interactMenu();
+        holdInteractMenu();
+        panel._gpeTarget = name;
+        const br = btn.getBoundingClientRect();
+        panel.style.left = br.left + "px";
+        panel.style.top = (br.bottom + 4) + "px";
+        panel.classList.add("gpe-open");
+        // Keep it on screen when the seat is near an edge.
+        const pr = panel.getBoundingClientRect();
+        if (pr.right > window.innerWidth - 4) {
+            panel.style.left = Math.max(4, window.innerWidth - pr.width - 4) + "px";
+        }
+        if (pr.bottom > window.innerHeight - 4) {
+            panel.style.top = Math.max(4, br.top - pr.height - 4) + "px";
+        }
+        syncMenuCooldowns();
+    }
+
+    function holdInteractMenu() {
+        if (closeTimer) { clearTimeout(closeTimer); closeTimer = 0; }
+    }
+
+    // A grace period, because the pointer has to cross a gap between the avatar
+    // corner and the panel below it.
+    function scheduleCloseInteractMenu() {
+        holdInteractMenu();
+        closeTimer = setTimeout(closeInteractMenu, 320);
+    }
+
+    function closeInteractMenu() {
+        holdInteractMenu();
+        if (interactPanel) interactPanel.classList.remove("gpe-open");
+    }
+
+    // Any click outside dismisses it, matching how the site's own popups behave.
+    document.addEventListener("mousedown", (e) => {
+        if (!interactPanel || !interactPanel.classList.contains("gpe-open")) return;
+        if (interactPanel.contains(e.target) || (e.target.classList && e.target.classList.contains("gpe-interact-btn"))) return;
+        closeInteractMenu();
+    });
+
+    // ---------- cooldowns ----------
+    // Two rules, and both have to hold or the send is wasted:
+    //   - the server's own per-user 2s window, which applies across items: a chip
+    //     sent 1s after a beer is dropped on the floor, silently.
+    //   - a per-item wait, so a beer isn't spammable the way a chip is.
+    // Tracked per user rather than per target, because that's how the server
+    // counts it — throwing at someone else doesn't reset anything.
+    let lastSendAt = 0;
+    const lastSendByItem = Object.create(null);
+
+    function cooldownLeft(key) {
+        const item = INTERACT_ITEMS[key];
+        if (!item) return 0;
+        const now = Date.now();
+        const global = INTERACT_COOLDOWN_MS - (now - lastSendAt);
+        const mine = (item.cooldownMs || 0) - (now - (lastSendByItem[key] || 0));
+        return Math.max(0, global, mine);
+    }
+
+    // Repaint the open menu so a user can see what's still cooling rather than
+    // clicking into a silent drop.
+    function syncMenuCooldowns() {
+        if (!interactPanel || !interactPanel.classList.contains("gpe-open")) return;
+        for (const b of interactPanel.querySelectorAll(".gpe-interact-item")) {
+            const key = b.dataset.gpeItem;
+            const left = cooldownLeft(key);
+            b.classList.toggle("gpe-interact-cool", left > 0);
+            const label = INTERACT_ITEMS[key];
+            b.textContent = left > 0
+                ? label.glyph + " " + label.label + " " + Math.ceil(left / 1000) + "s"
+                : label.glyph + " " + label.label;
+        }
+    }
+    setInterval(syncMenuCooldowns, 250); // only touches the DOM while the panel is open
+
+    // Nothing renders here: the throw appears when the event comes back, which is
+    // also what makes a silently-dropped send (cooldown, muted, target stood up)
+    // show honestly as nothing happening.
+    function throwAt(name, key) {
+        if (cooldownLeft(key) > 0) return;
+        const now = Date.now();
+        lastSendAt = now;
+        lastSendByItem[key] = now;
+        sendInteraction(name, [[key]]);
+    }
+
+    // Am I in a seat? The server refuses interactions from watchers, so a button
+    // shown to one could only ever do nothing.
+    function amSeated() {
+        const me = getMyName();
+        return !!me && seatedNames().has(me);
+    }
+
+    // One pass: an interact button on the corner of each visible seat's avatar,
     // skipping my own. Same approach as the stats badges — fixed elements
     // positioned over the avatar rather than children of it, since GWT rebuilds
     // the seat panels whenever it likes.
-    function updateCoinButtons() {
+    function updateInteractButtons() {
         const wanted = new Set();
         const me = getMyName();
-        if (COIN_TOSS) {
+        if (COIN_TOSS && canInteract && amSeated()) {
             for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
                 const name = getSeatName(p);
                 if (!name || name === me || wanted.has(name)) continue;
                 const r = liveRect(p.querySelector("img.iogc-PlayerPanel-avatar"));
                 if (!r) continue;
                 wanted.add(name);
-                let btn = coinButtons.get(name);
+                let btn = interactButtons.get(name);
                 if (!btn || !btn.isConnected) {
                     btn = document.createElement("button");
                     btn.type = "button";
-                    btn.className = "gpe-coin-btn"; // no label: the chip IS the button
+                    btn.className = "gpe-interact-btn"; // no label: the chip IS the button
+                    // Hover to open. Click also opens (touch, and anyone who
+                    // clicks before the pointer settles) but never closes: the
+                    // panel stays put so several throws are several clicks.
+                    btn.addEventListener("mouseenter", () => openInteractMenu(name, btn));
+                    btn.addEventListener("mouseleave", scheduleCloseInteractMenu);
                     btn.addEventListener("click", (e) => {
                         e.preventDefault();
                         e.stopPropagation(); // don't trip the seat panel's own handlers
-                        if (btn._gpeCool) return;
-                        btn._gpeCool = true; // one coin per click, however fast it's mashed
-                        setTimeout(() => { btn._gpeCool = false; }, 200);
-                        btn.classList.remove("gpe-coin-pop");
-                        void btn.offsetWidth;
-                        btn.classList.add("gpe-coin-pop");
-                        tossCoinAt(name);
+                        openInteractMenu(name, btn);
                     });
                     document.body.appendChild(btn);
-                    coinButtons.set(name, btn);
+                    interactButtons.set(name, btn);
                 }
-                btn.title = "toss a chip at " + displayName(name);
+                btn.title = "throw something at " + displayName(name);
                 // Top-right corner, half on and half off the avatar. Nudged just
                 // inside the top edge so it clears the stats tab, which sits
                 // flush above the avatar and spans its full width.
@@ -466,8 +910,12 @@
                 btn.style.top = (r.top + 7) + "px";
             }
         }
-        for (const [name, el] of coinButtons) {
-            if (!wanted.has(name)) { el.remove(); coinButtons.delete(name); }
+        for (const [name, el] of interactButtons) {
+            if (!wanted.has(name)) {
+                el.remove();
+                interactButtons.delete(name);
+                if (interactPanel && interactPanel._gpeTarget === name) closeInteractMenu();
+            }
         }
     }
 
@@ -2527,10 +2975,11 @@
         ["gpe-table-3d", "3D table", "table3d", () => TABLE_3D,
             "Replaces the flat felt with a live 3D-rendered table (top-down, so " +
             "cards and chips stay aligned). Experimental."],
-        ["gpe-coin-toss", "chip toss", "coinToss", () => COIN_TOSS,
-            "Puts a chip button on the corner of every other player's avatar. " +
-            "Clicking it throws a 3D chip from your seat that bounces off them " +
-            "and lands on the felt. Local only — nobody else sees it."],
+        ["gpe-coin-toss", "interactions", "coinToss", () => COIN_TOSS,
+            "Puts an interact button on the corner of every other player's " +
+            "avatar, for throwing a chip from your seat that bounces off them " +
+            "and lands on the felt. Everyone at the table sees it, and you see " +
+            "theirs. Cosmetic only — it never affects the game. Requires a seat."],
     ];
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
@@ -3881,6 +4330,35 @@
             () => TABLE3D_FELT_COLOR,
             (c) => { TABLE3D_FELT_COLOR = c; if (window.GPE_TABLE3D) GPE_TABLE3D.setFeltColor(c); },
             "table3dFeltColor");
+        // Background gets its own row shape: a colour input can't express "unset",
+        // so it pairs with an auto button that hands control back to the art.
+        const bgRow = (() => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label"; lab.textContent = "background";
+            const inp = document.createElement("input");
+            inp.type = "color"; inp.className = "gpe-color-input";
+            const auto = document.createElement("button");
+            auto.type = "button"; auto.className = "gpe-reset-btn gpe-bg-auto";
+            auto.textContent = "auto";
+            auto.title = "match the table art behind the felt";
+            const push = (v) => {
+                TABLE3D_BG_COLOR = v;
+                if (window.GPE_TABLE3D && GPE_TABLE3D.setSurroundColor) GPE_TABLE3D.setSurroundColor(v);
+                auto.classList.toggle("gpe-on", !v);
+            };
+            inp.addEventListener("input", () => push(inp.value));
+            inp.addEventListener("change", () => saveSetting("table3dBgColor", inp.value));
+            auto.addEventListener("click", () => { push(""); saveSetting("table3dBgColor", ""); });
+            refreshers.push(() => {
+                inp.value = TABLE3D_BG_COLOR || "#000000";
+                auto.classList.toggle("gpe-on", !TABLE3D_BG_COLOR);
+            });
+            row.append(lab, inp, auto);
+            return row;
+        })();
+
         const leatherColor = makeColorRow("leather color",
             () => TABLE3D_LEATHER_COLOR,
             (c) => { TABLE3D_LEATHER_COLOR = c; if (window.GPE_TABLE3D) GPE_TABLE3D.setLeatherColor(c); },
@@ -3922,12 +4400,14 @@
             TABLE3D_FELT_COLOR = d.table3dFeltColor; TABLE3D_FELT_ZOOM = d.table3dFeltZoom; TABLE3D_FELT_DEPTH = d.table3dFeltDepth;
             TABLE3D_LEATHER_COLOR = d.table3dLeatherColor; TABLE3D_LEATHER_ZOOM = d.table3dLeatherZoom; TABLE3D_LEATHER_DEPTH = d.table3dLeatherDepth;
             TABLE3D_LOGO_OPACITY = d.table3dLogoOpacity;
+            TABLE3D_BG_COLOR = d.table3dBgColor;
             if (window.GPE_TABLE3D) {
                 GPE_TABLE3D.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
                 GPE_TABLE3D.setTexDepth(TABLE3D_FELT_DEPTH, TABLE3D_LEATHER_DEPTH);
                 GPE_TABLE3D.setFeltColor(TABLE3D_FELT_COLOR);
                 GPE_TABLE3D.setLeatherColor(TABLE3D_LEATHER_COLOR);
                 GPE_TABLE3D.setLogoOpacity(TABLE3D_LOGO_OPACITY);
+                if (GPE_TABLE3D.setSurroundColor) GPE_TABLE3D.setSurroundColor(TABLE3D_BG_COLOR);
             }
             Object.keys(d).forEach((k) => saveSetting(k, d[k]));
             modal._refresh();
@@ -3935,7 +4415,7 @@
         resetRow.appendChild(resetBtn);
 
         modal._refresh = () => refreshers.forEach((fn) => fn());
-        modal.append(head, feltColor, feltZoom, feltDepth, leatherColor, leatherZoom, leatherDepth, logoOpacity, hint, resetRow);
+        modal.append(head, feltColor, feltZoom, feltDepth, leatherColor, leatherZoom, leatherDepth, logoOpacity, bgRow, hint, resetRow);
         document.body.appendChild(modal);
         return modal;
     }
@@ -4547,6 +5027,7 @@
         api.setFeltColor(TABLE3D_FELT_COLOR);
         api.setLeatherColor(TABLE3D_LEATHER_COLOR);
         api.setLogoOpacity(TABLE3D_LOGO_OPACITY);
+        if (api.setSurroundColor) api.setSurroundColor(TABLE3D_BG_COLOR);
     }
 
     function syncTable3d() {
@@ -4568,9 +5049,18 @@
     }
 
     // ---------- boot ----------
+    // No-op as an extension (the manifest installs the tap at document_start, in
+    // the page's own world, which is the only way to beat the client's socket).
+    ensureWsMonitor();
+    // We load after the session frame has already gone by, so ask rather than wait
+    // for the announcement. Keeps asking until answered: a socket reconnect (table
+    // change, dropped connection) starts a new session we may need to hear about.
+    probeBridge();
+    setInterval(probeBridge, 4000);
+
     setInterval(() => {
         updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming();
-        updateCoinButtons(); // coin buttons track their avatars as seats move
+        updateInteractButtons(); // interact buttons track their avatars as seats move
         patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
         placeSplashButton(); // follows the pot total as it changes
         syncTable3d(); // keep the 3D felt attached across GWT re-renders

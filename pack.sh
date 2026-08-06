@@ -49,16 +49,19 @@ SRC_STAGE="dist/$SRC_NAME"
 rm -rf "$STAGE" "dist/$NAME.zip" "$SRC_STAGE" "dist/$SRC_NAME.zip"
 # esbuild creates its own output dirs; these are for the --no-minify path below,
 # which is a plain cp and won't make them itself.
-mkdir -p "$STAGE/vendor" "$STAGE/3d"
+mkdir -p "$STAGE/vendor" "$STAGE/3d" "$STAGE/bridge"
 
 # Everything that gets minified: our own code plus the vendored three.js build.
 # (vendor/three.iife.js is itself generated — see vendor/README.md.) Split by
 # directory so the source archive can rebuild the same layout; esbuild's
 # --outbase=. below keeps 3d/ and vendor/ nested in the output.
 BUILT_TOP="content.js odds.js popup.js overlay.css dark.css"
-BUILT_3D="3d/chips3d.js 3d/table3d.js 3d/coin3d.js"
+BUILT_3D="3d/chips3d.js 3d/table3d.js 3d/coin3d.js 3d/beer3d.js"
+# The page-world WebSocket tap. Also a web_accessible_resource, because the
+# site-hosted build fetches it by URL instead of getting it as a content script.
+BUILT_BRIDGE="bridge/ws-monitor.js"
 BUILT_VENDOR="vendor/three.iife.js"
-BUILT="$BUILT_TOP $BUILT_3D $BUILT_VENDOR"
+BUILT="$BUILT_TOP $BUILT_3D $BUILT_BRIDGE $BUILT_VENDOR"
 # Everything copied through byte-for-byte.
 VERBATIM="manifest.json popup.html"
 # Runtime assets the page loads by URL (manifest web_accessible_resources is the
@@ -111,9 +114,10 @@ echo "built dist/$NAME.zip$([ "$MINIFY" -eq 1 ] && echo '  (minified)' || echo '
 # Required whenever the uploaded add-on contains minified code: the readable
 # sources, the scripts that build them, and instructions to reproduce the upload.
 if [ "$MINIFY" -eq 1 ]; then
-    mkdir -p "$SRC_STAGE/vendor" "$SRC_STAGE/3d" "$SRC_STAGE/tools"
+    mkdir -p "$SRC_STAGE/vendor" "$SRC_STAGE/3d" "$SRC_STAGE/bridge" "$SRC_STAGE/tools"
     cp $VERBATIM $BUILT_TOP BUILD.md pack.sh pack_ff.sh "$SRC_STAGE/"
     cp $BUILT_3D "$SRC_STAGE/3d/"
+    cp $BUILT_BRIDGE "$SRC_STAGE/bridge/"
     cp $BUILT_VENDOR vendor/README.md "$SRC_STAGE/vendor/"
     cp -R icons "$SRC_STAGE/icons"
     # Same directory copy as the package, so a reviewer running pack.sh from the
@@ -124,7 +128,7 @@ if [ "$MINIFY" -eq 1 ]; then
     cp tools/optimize-model.sh "$SRC_STAGE/tools/"
     find "$SRC_STAGE" -name '.DS_Store' -delete
 
-    for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md tools/optimize-model.sh $BUILT_3D $REQUIRED_ASSETS; do
+    for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md tools/optimize-model.sh $BUILT_3D $BUILT_BRIDGE $REQUIRED_ASSETS; do
         [ -f "$SRC_STAGE/$f" ] || { echo "MISSING from source archive: $f" >&2; exit 1; }
     done
 
