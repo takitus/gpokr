@@ -94,6 +94,12 @@ jobs:
           # site build it can only hook sockets opened after it lands (as an
           # extension it is a document_start MAIN-world content script instead).
           aws s3 cp build/bridge/ws-monitor.js "s3://tools.gpokr.com/$V/bridge/ws-monitor.js" --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
+          # ...and again at a STABLE, unversioned path. The host page needs to load
+          # this one script before gpokr2.nocache.js to hook the table socket at
+          # creation; pointing that tag at a /<version>/ URL would mean editing the
+          # site on every release. Short TTL like current.json, since unlike the
+          # versioned copies this one is meant to change under the same URL.
+          aws s3 cp build/bridge/ws-monitor.js "s3://tools.gpokr.com/bridge/ws-monitor.js" --content-type "application/javascript; charset=utf-8" --cache-control "public, max-age=300"
           aws s3 cp build/vendor/three.iife.js "s3://tools.gpokr.com/$V/vendor/three.iife.js" --content-type "application/javascript; charset=utf-8" --cache-control "$CACHE"
           aws s3 cp build/overlay.css          "s3://tools.gpokr.com/$V/overlay.css"          --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
           aws s3 cp build/dark.css             "s3://tools.gpokr.com/$V/dark.css"             --content-type "text/css; charset=utf-8"               --cache-control "$CACHE"
