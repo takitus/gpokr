@@ -461,6 +461,8 @@ html.gpe-dark .gpe-bg-auto.gpe-on {
 /* Interact menu — same palette as the emote picker above, since they're the same
    kind of thing: a small popover hanging off a control. The cooling-down state
    keeps its dimming and simply must not light up on hover. */
+html.gpe-dark .gpe-side-version { color: #6f7c8e; }
+
 html.gpe-dark #gpe-interact-panel {
     background: #232c3a;
     border-color: #3c4a61;

@@ -3060,6 +3060,19 @@
         el.addEventListener("mouseleave", hideInstantTip);
     }
 
+    // Which build is running, for the badge in the tools tab. As an extension the
+    // manifest is authoritative; in the site-hosted build there is no manifest, but
+    // we were fetched from tools.gpokr.com/<version>/content.js, so the URL carries
+    // it. Worth showing precisely because the two builds differ in what works.
+    function buildVersion() {
+        try {
+            const v = chrome.runtime.getManifest().version;
+            if (v) return v;
+        } catch (e) { /* not an extension */ }
+        const m = SELF_SRC && SELF_SRC.match(/\/(\d+\.\d+\.\d+)\//);
+        return m ? m[1] : "";
+    }
+
     function ensureSidePanelTabs() {
         const inner = document.querySelector(".iogc-LoginPanel .iogc-SidePanel-inner");
         if (!inner) return;
@@ -3074,6 +3087,17 @@
             b.addEventListener("click", () => { sideTab = tab; applySideTabState(); });
             tabs.appendChild(b);
         });
+
+        // Version, top-right of the tab strip. In the tab row rather than the pane
+        // so it lines up with the tabs and doesn't push the options down.
+        const ver = buildVersion();
+        if (ver) {
+            const badge = document.createElement("span");
+            badge.className = "gpe-side-version";
+            badge.textContent = "v" + ver;
+            badge.title = "GPokr Tools " + ver + (SELF_SRC ? " (site build)" : "");
+            tabs.appendChild(badge);
+        }
 
         const pane = document.createElement("div");
         pane.className = "gpe-side-options";

@@ -827,6 +827,20 @@ tr.gpe-menu-off { display: none !important; }
        top edge; their 8px top radius then matches the panel's own corners */
     margin: -5px -5px 6px;
 }
+/* Version badge, right end of the tab strip. flex:0 0 auto so it takes only its
+   own width — the tabs are flex:1 and would otherwise squeeze it to nothing. Not
+   a button and not focusable: it's a label, not a control. */
+.gpe-side-version {
+    flex: 0 0 auto;
+    align-self: center;
+    padding: 0 7px 0 5px;
+    font: 10px/1 Arial, sans-serif;
+    color: #9aa3b0;
+    letter-spacing: 0.2px;
+    user-select: none;
+    cursor: default;
+}
+
 .gpe-side-tabs button {
     all: unset;
     box-sizing: border-box;
