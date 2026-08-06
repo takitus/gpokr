@@ -282,32 +282,41 @@
     z-index: 9; /* over the seats, still under GWT dialogs (z 10) */
 }
 
-/* A poker chip on the avatar's top-right corner — the same red body and white
-   edge spots chips3d draws, in CSS, and nothing else on it: it reads as a chip,
-   not a button with a glyph. Positioned by its center (content.js sets left/top
-   to the corner), so it straddles the edge instead of covering the face. */
+/* A $1 chip on the avatar's top-right corner — the same grey body and white
+   edge spots chips3d draws for the $1 denomination, in CSS, and nothing else on
+   it: it reads as a chip, not a button with a glyph. Positioned by its center
+   (content.js sets left/top to the corner), so it straddles the edge instead of
+   covering the face.
+
+   The box dimensions are forced. gpokr ships a global `button { width: 0;
+   overflow: visible }` — the old shrink-to-fit hack — which beats a plain class
+   rule on width here. Buttons with text get away with it because the label
+   simply overflows a zero-width box, but this one has no content, so unforced
+   it collapses to a ~2px vertical sliver. */
 .gpe-coin-btn {
     all: unset;
     position: fixed;
     z-index: 9;
-    box-sizing: border-box;
+    box-sizing: border-box !important;
     transform: translate(-50%, -50%);
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    display: block;
+    width: 20px !important;
+    height: 20px !important;
+    padding: 0 !important;
+    display: block !important;
+    border-radius: 50% !important;
+    overflow: hidden !important;   /* keeps the disc circular whatever the page does */
     cursor: pointer;
     user-select: none;
     /* body + six white edge spokes + a pale inner disc, matching the chip art */
     background:
         radial-gradient(circle at 50% 50%, #f4f4f4 0 40%, transparent 40%),
-        repeating-conic-gradient(#f8f8f8 0deg 24deg, #a82026 24deg 60deg),
-        #a82026;
-    border: 1px solid rgba(0, 0, 0, 0.5);
-    /* a ring of table-colored shadow so it stays legible over any avatar */
+        repeating-conic-gradient(#f8f8f8 0deg 24deg, #8a8a8a 24deg 60deg),
+        #8a8a8a;
+    border: 1px solid rgba(0, 0, 0, 0.55);
+    /* pale ring + drop shadow, so a grey chip still reads over any avatar */
     box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.45),
-        0 1px 4px rgba(0, 0, 0, 0.6);
+        0 0 0 1px rgba(255, 255, 255, 0.55),
+        0 1px 4px rgba(0, 0, 0, 0.65);
     opacity: 0.95;
     transition: opacity 0.12s ease, transform 0.12s ease;
 }
