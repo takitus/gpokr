@@ -164,6 +164,40 @@ Confirmed live: the broadcast **does** reach the sender. The publisher is not
 excluded, so a client can render its own throw from the echoed event and stay in
 step with everyone else, rather than animating locally and hoping.
 
+#### The payload GPokr Tools sends (`type: "gpe.throw"`)
+
+The server never parses `payload`, so this half is a convention between clients
+rather than an API. **ui2 has to match it** for a throw to render between a ui2
+player and an extension player.
+
+```json
+{ "v": 1, "s": 8412, "q": [["chip"], ["wait", 500], ["beer"], ["bone"]] }
+```
+
+| Field | Meaning |
+|---|---|
+| `v` | schema version, currently `1`. A different major is ignored outright. |
+| `s` | random seed. Every viewer derives its randomness from it, so all clients show the *same* throw rather than each rolling its own. |
+| `q` | the sequence, played in order. |
+
+A step is `[name]` for an object or `["wait", ms]` for a pause. **One row is one
+object** — there is no count. A `[name, n]` from another client is honoured as a
+single object, not n of them.
+
+Receivers must not trust any of it: the payload is whatever someone chose to POST,
+and anyone can `curl` this endpoint. GPokr Tools clamps to
+
+- ≤ 25 rows, of which at most **15 may be objects** — the animation cost lands on
+  every client at the table, not just the sender's
+- each `wait` ≤ 3000 ms, whole sequence ≤ 15 s
+- unknown item names skipped rather than fatal, so an older build survives objects
+  added later
+- one running sequence per sender, three overall
+
+Note for ui2: don't `await` a long sequence inside `onEventInteraction` — the event
+queue waits on the returned Promise, so a scripted throw would stall game events
+behind it.
+
 ### Chat message ids & reactions
 
 Every `ChatEvent` now carries a server-assigned `messageId`: a per-table sequence,

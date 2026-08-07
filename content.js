@@ -369,7 +369,11 @@
     // curl this endpoint — so nothing here is trusted: a sequence is clamped into
     // these bounds or dropped, never taken at face value.
     const Q_MAX_STEPS = 25;
-    const Q_MAX_COUNT = 10;      // items per step
+    // One object per row, so a step is just its name: no count to multiply, which
+    // is what made a short sequence able to put hundreds of objects in the air.
+    // A ceiling on the whole sequence, because the cost of animating them lands on
+    // everyone at the table, not just the sender. Pauses don't count — not objects.
+    const Q_MAX_ITEMS = 15;
     const Q_MAX_WAIT_MS = 3000;  // per pause
     const Q_MAX_TOTAL_MS = 15000;
     const Q_MAX_PAYLOAD = 1024;  // the server's own cap; a longer one is a lie
@@ -536,6 +540,19 @@
     // are recycled between hands, and a throw only needs to be right for the
     // second it's in the air.
     function renderThrow(itemKey, fromName, toName, denom) {
+        // Nothing animates in a hidden tab, so nothing may START in one. The
+        // renderers drive off requestAnimationFrame, which the browser PAUSES while
+        // the tab is in the background: the loop stops stepping, but events keep
+        // arriving, so objects pile into the scene motionless and then all play at
+        // once the moment you switch back. Dropping is right rather than deferring —
+        // an interaction is a live moment between two players, and replaying five
+        // minutes of them on return is worse than having missed them.
+        //
+        // Every animated interaction funnels through here — inbound event, local
+        // echo, and any future game-driven script — so this is the gate for all of
+        // them, not just chips. It sits above playSound too: hearing throws you
+        // can't see would be its own bug.
+        if (document.hidden) return Promise.resolve(false);
         const item = INTERACT_ITEMS[itemKey];
         if (!item) return Promise.resolve(false); // newer client threw something we don't have
         return item.ensure().then((ok) => {
@@ -590,9 +607,19 @@
         const toUserId = userIdForName(targetName);
         if (!toUserId) return Promise.resolve(false); // no profile link -> no id to aim at
         const q = [];
+        let items = 0;
         for (const step of steps || []) {
             if (!Array.isArray(step) || !step.length) continue;
-            q.push(step[1] == null ? [String(step[0])] : [String(step[0]), step[1] | 0]);
+            const name = String(step[0]);
+            if (name === "wait") {
+                q.push([name, step[1] | 0]);
+            } else {
+                // Same ceiling the receiver enforces, so we never send objects that
+                // would simply be discarded on arrival.
+                if (items >= Q_MAX_ITEMS) break;
+                items += 1;
+                q.push([name]);   // no count: one row is one object
+            }
             if (q.length >= Q_MAX_STEPS) break;
         }
         if (!q.length) return Promise.resolve(false);
@@ -684,7 +711,8 @@
         if ((obj.v | 0) !== INTERACT_V) return null; // unknown schema: leave it alone
         if (!Array.isArray(obj.q) || !obj.q.length) return null;
         const q = [];
-        let total = 0;
+        let total = 0;   // ms of pause
+        let items = 0;   // objects thrown
         for (const step of obj.q.slice(0, Q_MAX_STEPS)) {
             if (!Array.isArray(step) || typeof step[0] !== "string") continue;
             const name = step[0];
@@ -697,8 +725,11 @@
                 continue;
             }
             if (!INTERACT_ITEMS[name]) continue; // item from a newer client: skip, keep the rest
-            const count = Math.max(1, Math.min(Q_MAX_COUNT, step[1] == null ? 1 : step[1] | 0));
-            q.push([name, count]);
+            if (items >= Q_MAX_ITEMS) break;     // sequence is full: ignore the rest
+            // Any count that arrives is deliberately ignored — one row, one object.
+            // A client still sending [name, 5] gets one, not five.
+            items += 1;
+            q.push([name]);
         }
         return q.length ? { seed: obj.s | 0, q: q } : null;
     }
@@ -710,6 +741,7 @@
     function playInteraction(ev) {
         if (!COIN_TOSS) return; // receiving is part of the same opt-out as sending
         if (!ev || ev.type !== INTERACT_TYPE) return;
+        if (document.hidden) return;   // renderThrow would refuse anyway; skip the bookkeeping
         const fromId = Number(ev.fromUserId) || 0;
         if (!fromId) return;
         if (runningInteractions.has(fromId) || runningInteractions.size >= Q_MAX_RUNNING) return;
@@ -723,19 +755,24 @@
 
         runningInteractions.set(fromId, true);
         let chain = Promise.resolve();
+        // Re-checked per step, not just at the start: a 15 s sequence only has to be
+        // a second in when you switch away. Once hidden, the rest is abandoned —
+        // pauses included, so the sender's slot frees now instead of being held
+        // while background-throttled timers (~1/s) walk out a timeline nobody sees.
         for (const [name, arg] of parsed.q) {
             if (name === "wait") {
-                chain = chain.then(() => new Promise((res) => setTimeout(res, arg)));
+                chain = chain.then(() => document.hidden
+                    ? null
+                    : new Promise((res) => setTimeout(res, arg)));
                 continue;
             }
-            for (let i = 0; i < arg; i++) {
-                chain = chain.then(() => {
-                    const denom = denoms && denoms.length
-                        ? denoms[Math.floor(rand() * denoms.length)].denom
-                        : undefined;
-                    return renderThrow(name, fromName, toName, denom);
-                });
-            }
+            chain = chain.then(() => {
+                if (document.hidden) return false;
+                const denom = denoms && denoms.length
+                    ? denoms[Math.floor(rand() * denoms.length)].denom
+                    : undefined;
+                return renderThrow(name, fromName, toName, denom);
+            });
         }
         // Release the sender's slot when the sequence finishes — but NEVER rely on
         // that alone. A renderer that hangs (a model load that neither resolves
@@ -747,7 +784,7 @@
         // for the throws themselves.
         const release = () => runningInteractions.delete(fromId);
         let budget = 4000;
-        for (const [name, arg] of parsed.q) budget += (name === "wait") ? arg : arg * 900;
+        for (const [name, arg] of parsed.q) budget += (name === "wait") ? arg : 900;
         const watchdog = setTimeout(release, Math.min(budget, Q_MAX_TOTAL_MS + 12000));
         chain.then(
             () => { clearTimeout(watchdog); release(); },
@@ -1157,17 +1194,12 @@
             o.textContent = it.glyph + " " + it.label;
             item.appendChild(o);
         }
-        const count = document.createElement("input");
-        count.type = "number";
-        count.className = "gpe-tester-num";
-        count.min = "1"; count.max = String(Q_MAX_COUNT); count.step = "1"; count.value = "1";
         const addThrow = document.createElement("button");
         addThrow.type = "button";
         addThrow.className = "gpe-tester-add";
         addThrow.textContent = "+ throw";
-        addThrow.addEventListener("click", () => addTesterStep([item.value, clampInt(count.value, 1, Q_MAX_COUNT, 1)]));
+        addThrow.addEventListener("click", () => addTesterStep([item.value]));
         throwRow.appendChild(item);
-        throwRow.appendChild(count);
         throwRow.appendChild(addThrow);
         panel.appendChild(throwRow);
 
@@ -1248,8 +1280,20 @@
         }
     }
 
+    // One object per row, so this is simply how many object rows there are. Pauses
+    // aren't objects and don't count toward the ceiling.
+    function testerItemCount() {
+        let n = 0;
+        for (const s of testerSteps) if (s[0] !== "wait") n++;
+        return n;
+    }
+
     function addTesterStep(step) {
-        if (testerSteps.length >= Q_MAX_STEPS) return; // same ceiling the wire enforces
+        if (testerSteps.length >= Q_MAX_STEPS) return;   // same ceilings the wire enforces
+        if (step[0] !== "wait" && testerItemCount() >= Q_MAX_ITEMS) {
+            flashTesterStatus("full — " + Q_MAX_ITEMS + " items max");
+            return;
+        }
         testerSteps.push(step);
         renderTesterSteps();
     }
@@ -1355,20 +1399,7 @@
                         item.appendChild(o);
                     }
                     item.addEventListener("change", () => { step[0] = item.value; syncTesterStatus(); });
-
-                    const count = document.createElement("input");
-                    count.type = "number";
-                    count.className = "gpe-tester-num";
-                    count.min = "1"; count.max = String(Q_MAX_COUNT); count.step = "1";
-                    count.value = String(step[1] == null ? 1 : step[1]);
-                    count.title = "how many (max " + Q_MAX_COUNT + ")";
-                    count.addEventListener("change", () => {
-                        const v = clampInt(count.value, 1, Q_MAX_COUNT, 1);
-                        count.value = String(v);
-                        step[1] = v;
-                        syncTesterStatus();
-                    });
-                    chip.append(item, count);
+                    chip.append(item);
                 }
 
                 const rm = document.createElement("button");
@@ -1429,7 +1460,12 @@
         else if (!amSeated()) msg = "take a seat to send";
         else if (!sel || !sel.value) msg = "no target";
         else if (!testerSteps.length) msg = "add a step";
-        else { msg = testerSteps.length + " step" + (testerSteps.length === 1 ? "" : "s") + " ready"; ok = true; }
+        else {
+            const n = testerItemCount();
+            msg = testerSteps.length + " step" + (testerSteps.length === 1 ? "" : "s")
+                + " · " + n + "/" + Q_MAX_ITEMS + " items";
+            ok = true;
+        }
         if (send) send.disabled = !ok;
         if (status && !(status._gpeHoldUntil && Date.now() < status._gpeHoldUntil)) status.textContent = msg;
     }
@@ -3661,19 +3697,14 @@
             "theirs. Cosmetic only — it never affects the game. Requires a seat."],
     ];
 
-    // The "chain" button (scripted-interaction tester) rides on the interactions
-    // row, but only for us — it's a dev/authoring tool, not a player feature.
-    function isChainUser() {
-        const me = (getMyName() || "").trim().toLowerCase();
-        return me === "takitus" || me === "jwilsons";
-    }
+    // The interaction-creator button rides on the interactions row. It used to be
+    // hidden behind a hardcoded username check while it was a dev tool; it's a
+    // player feature now, so everyone gets it.
     let chainBtn = null;
-    // Keep it shown only to the right user and lit while the panel is open. Called
-    // both when settings change and from the 1.5s tab poll, since the login name
-    // may only appear after the tabs are first built.
+    // Lit while the panel is open. Called both when settings change and from the
+    // 1.5s tab poll.
     function updateChainBtn() {
         if (!chainBtn) return;
-        chainBtn.style.display = isChainUser() ? "" : "none";
         chainBtn.classList.toggle("gpe-active", SHOW_TESTER);
     }
 
