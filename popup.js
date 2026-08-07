@@ -5,7 +5,6 @@
     "use strict";
 
     const SETTINGS_KEY = "gpe_settings";
-    const CARD_STORE_KEY = "gpe_card_images_v2";
     const SESSION_KEY = "gpe_session";
     const TOGGLE_IDS = ["showOdds", "showStats", "darkMode", "shareHand", "localTest", "hotkeys", "showBetButtons"];
     // Toggles that default on when nothing was ever saved (opt-out, not opt-in).
@@ -25,29 +24,17 @@
         statusEl.className = isError ? "err" : "";
     }
 
-    // A learned entry is a card code ("As", "Td"...) mapping to a data: image.
-    function validCard(key, val) {
-        return /^[2-9TJQKA][cdhs]$/.test(key) && typeof val === "string" && val.startsWith("data:");
-    }
-
-    function renderStore(store) {
-        const n = Object.keys(store).length;
-        $("cardCount").textContent = n + " / 52 card images learned";
-        $("barFill").style.width = Math.round((n / 52) * 100) + "%";
-    }
-
     // ---------- settings ----------
     // Kept as a whole object so saving one field never clobbers the others
     // (e.g. a toggle change must not wipe the bet-button config).
     let settings = {};
     function saveSettings() { chrome.storage.local.set({ [SETTINGS_KEY]: settings }); }
 
-    chrome.storage.local.get([SETTINGS_KEY, CARD_STORE_KEY, SESSION_KEY], (res) => {
+    chrome.storage.local.get([SETTINGS_KEY, SESSION_KEY], (res) => {
         settings = res[SETTINGS_KEY] || {};
         TOGGLE_IDS.forEach((id) => { $(id).checked = toggleChecked(id); });
         applyPopupTheme();
         renderBetRows();
-        renderStore(res[CARD_STORE_KEY] || {});
         renderSession(res[SESSION_KEY]);
     });
 
@@ -200,9 +187,6 @@
     // and mirror settings changed from the in-page toggles.
     chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== "local") return;
-        if (changes[CARD_STORE_KEY]) {
-            renderStore(changes[CARD_STORE_KEY].newValue || {});
-        }
         if (changes[SETTINGS_KEY]) {
             settings = changes[SETTINGS_KEY].newValue || {};
             TOGGLE_IDS.forEach((id) => { $(id).checked = toggleChecked(id); });
@@ -247,42 +231,4 @@
         chrome.storage.local.set({ [SESSION_KEY]: fresh }, () => renderSession(fresh));
     });
 
-    // ---------- card store export / import ----------
-    $("exportBtn").addEventListener("click", () => {
-        chrome.storage.local.get([CARD_STORE_KEY], (res) => {
-            const store = res[CARD_STORE_KEY] || {};
-            const n = Object.keys(store).length;
-            if (!n) { setStatus("nothing learned yet", true); return; }
-            navigator.clipboard.writeText(JSON.stringify(store))
-                .then(() => setStatus("copied " + n + " cards to clipboard"))
-                .catch((e) => setStatus("copy failed: " + e.message, true));
-        });
-    });
-
-    $("importBtn").addEventListener("click", () => {
-        const box = $("importBox");
-        if (box.hidden) { box.hidden = false; box.focus(); return; }
-        let incoming;
-        try { incoming = JSON.parse(box.value); } catch (e) {
-            setStatus("not valid JSON", true);
-            return;
-        }
-        chrome.storage.local.get([CARD_STORE_KEY], (res) => {
-            const store = res[CARD_STORE_KEY] || {};
-            let added = 0, skipped = 0;
-            for (const key of Object.keys(incoming || {})) {
-                if (!validCard(key, incoming[key])) { skipped++; continue; }
-                if (store[key]) continue; // first write wins, same as learning
-                store[key] = incoming[key];
-                added++;
-            }
-            chrome.storage.local.set({ [CARD_STORE_KEY]: store }, () => {
-                renderStore(store);
-                box.hidden = true;
-                box.value = "";
-                setStatus("imported " + added + " new card" + (added === 1 ? "" : "s") +
-                    (skipped ? " (" + skipped + " invalid skipped)" : ""));
-            });
-        });
-    });
 })();

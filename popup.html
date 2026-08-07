@@ -14,15 +14,6 @@
     label { display: block; cursor: pointer; user-select: none; margin: 4px 0; }
     label input { vertical-align: middle; margin-right: 6px; }
     hr { border: none; border-top: 1px solid #ddd; margin: 10px 0; }
-    #cardCount { color: #444; }
-    .bar {
-        height: 6px;
-        background: #e4e4e4;
-        border-radius: 3px;
-        overflow: hidden;
-        margin: 4px 0 8px;
-    }
-    #barFill { height: 100%; width: 0; background: #4c9aff; transition: width 200ms ease; }
     .row { display: flex; gap: 6px; }
     .row button {
         flex: 1;
@@ -34,13 +25,6 @@
         cursor: pointer;
     }
     .row button:hover { background: #f0f0f0; }
-    #importBox {
-        width: 100%;
-        box-sizing: border-box;
-        height: 56px;
-        margin-top: 6px;
-        font: 11px/1.3 Menlo, Consolas, monospace;
-    }
     #status { font-size: 11px; color: #2a7a2a; min-height: 14px; margin-top: 4px; }
     #status.err { color: #b33; }
     .sec-title { font-weight: 600; margin: 2px 0 4px; }
@@ -79,16 +63,14 @@
     /* popup's own dark theme, driven by the same setting */
     body.dark { background: #1f2530; color: #d2d8e2; }
     body.dark hr { border-top-color: #39455a; }
-    body.dark .hint, body.dark #cardCount, body.dark #sessionNet { color: #93a0b4; }
-    body.dark .bar { background: #2c3543; }
+    body.dark .hint, body.dark #sessionNet { color: #93a0b4; }
     body.dark .row button, body.dark .bet-row .del {
         background: #2a3342;
         color: #d2d8e2;
         border-color: #45526b;
     }
     body.dark .row button:hover { background: #344056; }
-    body.dark .bet-row input[type=number], body.dark .bet-row select,
-    body.dark #importBox {
+    body.dark .bet-row input[type=number], body.dark .bet-row select {
         background: #262e3b;
         color: #d2d8e2;
         border-color: #44516a;
@@ -134,15 +116,6 @@ Top/bottom picks the column above or below the bet field; drag ⠿ to reorder.</
 <canvas id="sessionChart" width="256" height="48"></canvas>
 <div class="row"><button id="sessionReset">Reset session</button></div>
 
-<hr>
-
-<div id="cardCount">…</div>
-<div class="bar"><div id="barFill"></div></div>
-<div class="row">
-    <button id="exportBtn">Copy JSON</button>
-    <button id="importBtn">Import…</button>
-</div>
-<textarea id="importBox" placeholder='Paste exported JSON, then press Import again' hidden></textarea>
 <div id="status"></div>
 
 <script src="popup.js"></script>

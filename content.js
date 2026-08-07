@@ -1128,7 +1128,7 @@
         const wait = document.createElement("input");
         wait.type = "number";
         wait.className = "gpe-tester-num";
-        wait.min = "0"; wait.max = String(Q_MAX_WAIT_MS); wait.step = "100"; wait.value = "500";
+        wait.min = "0"; wait.max = String(Q_MAX_WAIT_MS); wait.step = "100"; wait.value = "100";
         const unit = document.createElement("span");
         unit.className = "gpe-tester-unit";
         unit.textContent = "ms";
@@ -1320,11 +1320,6 @@
         return null;
     }
 
-    // ---------- card store (learning) ----------
-    // v2: the v1 store got poisoned by learning from other players' showdown cards.
-    // Kept in memory; persisted to chrome.storage.local so the popup can show
-    // progress and export/import it. (Was page localStorage; migrated on first run.)
-    const CARD_STORE_KEY = "gpe_card_images_v2";
     const SUIT_GLYPH = { c: "♣", d: "♦", h: "♥", s: "♠" };
     const RANK_LABEL = { T: "10" };
 
@@ -1346,19 +1341,6 @@
     // address them how you'd actually address them).
     const NICKS_KEY = "gpe_player_nicknames";
     let playerNicks = {}; // name -> nickname
-
-    let cardStore = {};
-    function loadCardStore() { return cardStore; }
-    function saveCardStore(store) {
-        cardStore = store;
-        if (EXT_STORE) { try { EXT_STORE.set({ [CARD_STORE_KEY]: store }); } catch (e) {} }
-        else { try { localStorage.setItem(CARD_STORE_KEY, JSON.stringify(store)); } catch (e) {} }
-    }
-
-    function legacyLocalStorageCardStore() {
-        try { return JSON.parse(localStorage.getItem(CARD_STORE_KEY)) || {}; }
-        catch (e) { return {}; }
-    }
 
     // "all in" used to be a hardcoded, always-on cap on the top column. Now
     // it's a real config entry. For anyone who had customized their buttons
@@ -1384,10 +1366,9 @@
             // content script down. The chrome.storage path below is async and so
             // was never affected — which is why only this fallback was broken.
             setTimeout(() => applySettings(legacyLocalStorageSettings()), 0);
-            cardStore = legacyLocalStorageCardStore();
             return;
         }
-        EXT_STORE.get(["gpe_settings", CARD_STORE_KEY, PLAYER_STATS_KEY, NOTES_KEY, NICKS_KEY], (res) => {
+        EXT_STORE.get(["gpe_settings", PLAYER_STATS_KEY, NOTES_KEY, NICKS_KEY], (res) => {
             if (res.gpe_settings) {
                 const s = res.gpe_settings;
                 if (!s.betAllInMigrated) { migrateAllIn(s); EXT_STORE.set({ gpe_settings: s }); }
@@ -1401,20 +1382,11 @@
             playerStats = res[PLAYER_STATS_KEY] || {};
             playerNotes = res[NOTES_KEY] || {};
             playerNicks = res[NICKS_KEY] || {};
-            let stored = res[CARD_STORE_KEY];
-            if (!stored) {
-                stored = legacyLocalStorageCardStore();
-                if (Object.keys(stored).length) EXT_STORE.set({ [CARD_STORE_KEY]: stored });
-            }
-            // first-write-wins across the async load: persisted entries beat
-            // anything this session learned before the callback fired.
-            cardStore = Object.assign({}, cardStore, stored);
             updateOddsHud();
         });
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area !== "local") return;
             if (changes.gpe_settings) { applySettings(changes.gpe_settings.newValue || {}); updateOddsHud(); }
-            if (changes[CARD_STORE_KEY]) cardStore = changes[CARD_STORE_KEY].newValue || {};
             if (changes[PLAYER_STATS_KEY]) playerStats = changes[PLAYER_STATS_KEY].newValue || {};
             if (changes[NOTES_KEY]) playerNotes = changes[NOTES_KEY].newValue || {};
             if (changes[NICKS_KEY]) { playerNicks = changes[NICKS_KEY].newValue || {}; updateStatBadges(); }
@@ -1791,68 +1763,6 @@
         placeOddsHud(hud);
     }
 
-    let lastSeenHand = "";
-    function learnMyCards() {
-        if (handHasEnded()) return;
-        const hand = readMyHand();
-        if (!hand) { lastSeenHand = ""; return; }
-        // Wait until the same hand has been read on two consecutive polls, so the
-        // seat <img>s have caught up with the log (they update a beat later).
-        const key = hand.join("");
-        const stable = key === lastSeenHand;
-        lastSeenHand = key;
-        if (!stable) return;
-        const pair = findMySeatCards();
-        if (!pair || pair[0].src === pair[1].src) return;
-        const store = loadCardStore();
-        let changed = false;
-        changed = learnInto(store, hand[0], pair[0]) || changed;
-        changed = learnInto(store, hand[1], pair[1]) || changed;
-        if (changed) saveCardStore(store);
-    }
-
-    // Board cards are public: map the logged board (deal order) onto the visible
-    // community-card slots, left to right. Up to 5 learned images per hand.
-    let lastSeenBoard = "";
-    function learnBoardCards() {
-        const board = parseBoard();
-        if (!board.length) { lastSeenBoard = ""; return; }
-        const key = board.join("");
-        const stable = key === lastSeenBoard;
-        lastSeenBoard = key;
-        if (!stable) return; // same two-poll settling as learnMyCards
-        const imgs = Array.from(document.querySelectorAll("img.gpokr-communityCard"))
-            .filter((im) => im.getBoundingClientRect().width > 0)
-            .sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x);
-        if (imgs.length < board.length) return;
-        const store = loadCardStore();
-        let changed = false;
-        for (let i = 0; i < board.length; i++) changed = learnInto(store, board[i], imgs[i]) || changed;
-        if (changed) saveCardStore(store);
-    }
-
-    // Showdown reveals are public too: "NAME shows [Ah, Kd]" + that seat's face-up imgs.
-    let lastSeenShows = "";
-    function learnShowdownCards() {
-        const shows = currentHandScope()
-            .map((t) => t.match(/^(.+?) shows \[([^,\]]+),\s*([^\]]+)\]/i))
-            .filter(Boolean);
-        if (!shows.length) { lastSeenShows = ""; return; }
-        const key = shows.map((m) => m[0]).join("|");
-        const stable = key === lastSeenShows;
-        lastSeenShows = key;
-        if (!stable) return;
-        const store = loadCardStore();
-        let changed = false;
-        for (const m of shows) {
-            const pair = findSeatCardsByName(m[1].trim());
-            if (!pair || pair[0].src === pair[1].src) continue;
-            changed = learnInto(store, normCard(m[2]), pair[0]) || changed;
-            changed = learnInto(store, normCard(m[3]), pair[1]) || changed;
-        }
-        if (changed) saveCardStore(store);
-    }
-
     // ---------- hand token (checksum speed-bump) ----------
     // Rolling hash -> 3 base-36 chars. Kept intact so the legacy [gh:..] token
     // still verifies; the new format layers name + game id on top via handToken.
@@ -1960,19 +1870,41 @@
     }
 
     // ---------- rendering shared hands ----------
-    function makeCardEl(card) {
-        const store = loadCardStore();
-        if (store[card]) {
-            const img = document.createElement("img");
-            img.src = store[card];
-            img.className = "gpe-shared-card";
-            return img;
-        }
+    // The site publishes every card as a plain image, keyed exactly the way
+    // parseCard already spells them: rank uppercase, suit lowercase ("Ah", "Th",
+    // "5h"). Verified all 52 resolve, image/png, cached a year.
+    //
+    // This replaced a learned store. The site draws its own cards as data: URIs,
+    // so there was no URL to read and the extension used to correlate the game log
+    // with the images in your seat to bank the base64 — which meant a card you had
+    // never personally been dealt could not be drawn at all (shared hands fell back
+    // to text), and v1 of that store was poisoned by learning from other players'
+    // showdowns. A canonical URL makes both failure modes impossible.
+    const CARD_IMG_BASE = "https://img.iogc.org/GPokr/cards/";
+    function cardImageUrl(card) { return CARD_IMG_BASE + card + ".png"; }
+
+    // Text card, styled with the suit glyph. No longer the common case — it is the
+    // fallback for an image that will not load (offline, 404, blocked).
+    function makeTextCardEl(card) {
         const rank = card[0], suit = card[1];
         const div = document.createElement("div");
         div.className = "gpe-shared-card gpe-text-card gpe-suit-" + suit;
         div.textContent = (RANK_LABEL[rank] || rank) + (SUIT_GLYPH[suit] || "");
         return div;
+    }
+
+    function makeCardEl(card) {
+        if (!/^[2-9TJQKA][cdhs]$/.test(card)) return makeTextCardEl(card);
+        const img = document.createElement("img");
+        img.className = "gpe-shared-card";
+        img.alt = card;
+        // Swap in the text card if the image never arrives, so a blocked or offline
+        // fetch degrades to what this used to draw rather than to a gap.
+        img.addEventListener("error", () => {
+            if (img.parentNode) img.parentNode.replaceChild(makeTextCardEl(card), img);
+        }, { once: true });
+        img.src = cardImageUrl(card);
+        return img;
     }
 
     // A small caption pinned under the shared cards, naming the made hand.
@@ -2323,29 +2255,6 @@
     function getMyName() {
         const el = document.querySelector(".iogc-LoginPanel-nameHeading");
         return el && el.textContent.trim() ? el.textContent.trim() : null;
-    }
-
-    // A seat's two hole-card <img>s, identified by name (visible panel only).
-    function findSeatCardsByName(name) {
-        if (!name) return null;
-        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
-            if (getSeatName(p) !== name) continue;
-            const c0 = p.querySelector(".gpokr-Card0 img");
-            const c1 = p.querySelector(".gpokr-Card1 img");
-            if (c0 && c1 && c0.getBoundingClientRect().width > 0) return [c0, c1];
-        }
-        return null;
-    }
-    function findMySeatCards() { return findSeatCardsByName(getMyName()); }
-
-    function faceUpImg(im) {
-        return !!im && im.src.startsWith("data:") && im.src.length > 800;
-    }
-    // First write wins; never overwrite a learned card.
-    function learnInto(store, card, img) {
-        if (!faceUpImg(img) || store[card]) return false;
-        store[card] = img.src;
-        return true;
     }
 
     // Render my hand locally only (no chat) — anchored to my own avatar by name,
@@ -4254,9 +4163,6 @@
 
     function pollHandState() {
         updateHandScope(); // accumulate the full hand across polls (survives log trimming)
-        learnMyCards();
-        learnBoardCards();
-        learnShowdownCards();
         updateOddsHud();
         addBetSizeButtons();
         trackRoster();
