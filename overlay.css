@@ -614,12 +614,20 @@ img.iogc-PlayerPanel-avatar.gpe-coin-hit {
 #gpe-interact-tester {
     position: fixed;
     z-index: 99999;
-    width: 232px;
+    width: 224px;
     box-sizing: border-box;
     background: rgba(255, 255, 255, 0.97);
     color: #2a3f55;
     border: 1px solid #aac9e4;
-    font: 12px/1.4 Arial, sans-serif;
+    /* Base size for the whole panel — the rows, selects and inputs inherit it, so
+       this one value sets the density. */
+    font: 11px/1.35 Arial, sans-serif;
+    /* A column, so an explicit height (from the resize grabber) lands on the step
+       list rather than stretching every row. padding-bottom leaves space for the
+       grabber, which is pinned to the bottom edge. */
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 12px;
     border-radius: 12px;
     box-shadow: 0 4px 16px rgba(40, 80, 120, 0.28);
     padding: 8px;
@@ -633,7 +641,7 @@ img.iogc-PlayerPanel-avatar.gpe-coin-hit {
     cursor: move; /* the header is the drag handle */
     margin-bottom: 7px;
 }
-.gpe-tester-title { font-weight: bold; font-size: 12px; letter-spacing: 0.02em; }
+.gpe-tester-title { font-weight: bold; font-size: 11px; letter-spacing: 0.02em; }
 .gpe-tester-x {
     all: unset;
     box-sizing: border-box;
@@ -652,7 +660,7 @@ img.iogc-PlayerPanel-avatar.gpe-coin-hit {
     margin: 5px 0;
 }
 .gpe-tester-label { color: #6a819a; min-width: 44px; }
-.gpe-tester-unit { color: #8aa0b8; font-size: 11px; }
+.gpe-tester-unit { color: #8aa0b8; font-size: 10px; }
 .gpe-tester-target,
 .gpe-tester-item {
     flex: 1 1 auto;
@@ -704,6 +712,42 @@ img.iogc-PlayerPanel-avatar.gpe-coin-hit {
     background: rgba(234, 241, 248, 0.5);
 }
 .gpe-tester-empty { color: #93a6ba; font-style: italic; text-align: center; padding: 4px 0; }
+/* Takes whatever height the panel has left and scrolls inside it. min-height:0 is
+   required: a flex item defaults to min-height:auto, so without it the list would
+   refuse to shrink under its own content and push the footer out of the panel —
+   the same trap the chat pop-out hit. */
+.gpe-tester-steps { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.gpe-tester-head, .gpe-tester-row, .gpe-tester-foot { flex: 0 0 auto; }
+/* The 148px cap above keeps the panel compact while it is sized to its content.
+   Once the grabber has set an explicit height, that cap is exactly what stopped
+   the list from taking the new space — the panel grew and the extra fell below the
+   footer — so it lifts and the list absorbs the height instead. */
+#gpe-interact-tester.gpe-tester-sized .gpe-tester-steps { max-height: none; }
+
+/* The resize grabber: full width along the bottom edge, with a centred pill so it
+   reads as a grip rather than a border. */
+.gpe-tester-resize {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 11px;
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0 0 12px 12px;
+}
+.gpe-tester-resize::after {
+    content: "";
+    width: 26px;
+    height: 3px;
+    border-radius: 2px;
+    background: #c2d4e4;
+}
+.gpe-tester-resize:hover::after { background: #8fb0cc; }
+#gpe-interact-tester.gpe-resizing { box-shadow: 0 6px 20px rgba(40, 80, 120, 0.5); }
+#gpe-interact-tester.gpe-resizing .gpe-tester-resize::after { background: #4c9aff; }
 .gpe-tester-step {
     display: flex;
     align-items: center;
@@ -715,6 +759,36 @@ img.iogc-PlayerPanel-avatar.gpe-coin-hit {
     padding: 3px 4px 3px 7px;
 }
 .gpe-tester-step-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The row now holds live controls, so it needs to lay them out rather than just a
+   label and an ✕: the object select takes the slack, the number stays fixed, and
+   the step index and remove button sit at the ends. */
+.gpe-tester-step { justify-content: flex-start; }
+.gpe-tester-step-n {
+    flex: 0 0 auto;
+    min-width: 12px;
+    color: #8ea3b8;
+    font-size: 9px;
+    text-align: right;
+}
+/* The reorder grip. Its own cursor, and it arms row dragging on mousedown so the
+   selects and number inputs beside it stay clickable. */
+.gpe-tester-drag {
+    flex: 0 0 auto;
+    cursor: grab;
+    color: #a7bacd;
+    font-size: 11px;
+    line-height: 1;
+    padding: 0 1px;
+}
+.gpe-tester-drag:active { cursor: grabbing; }
+.gpe-tester-step:hover .gpe-tester-drag { color: #6a819a; }
+.gpe-tester-step { justify-content: flex-start; gap: 4px; padding: 2px 4px 2px 3px; }
+.gpe-tester-step .gpe-tester-item { flex: 1 1 auto; min-width: 0; font-size: 10px; padding: 1px 3px; }
+.gpe-tester-step .gpe-tester-num { flex: 0 0 auto; width: 46px; font-size: 10px; padding: 1px 3px; }
+.gpe-tester-step .gpe-tester-step-x { margin-left: auto; }
+/* Insertion line above the drop target, same cue as the bet/chat editors. */
+.gpe-tester-step.gpe-dragover { box-shadow: 0 -2px 0 0 #4c9aff; }
+.gpe-tester-step.gpe-dragging { opacity: 0.5; }
 .gpe-tester-step-x {
     all: unset;
     box-sizing: border-box;
@@ -733,7 +807,7 @@ img.iogc-PlayerPanel-avatar.gpe-coin-hit {
     gap: 6px;
     margin-top: 8px;
 }
-.gpe-tester-status { flex: 1 1 auto; min-width: 0; color: #6a819a; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gpe-tester-status { flex: 1 1 auto; min-width: 0; color: #6a819a; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gpe-tester-clear {
     all: unset;
     box-sizing: border-box;

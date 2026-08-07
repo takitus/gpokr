@@ -20,6 +20,7 @@
     let DARK_MODE = false;
     let SHOW_TESTER = false;      // interaction-tester panel: scripted-throw builder (opt-in dev tool)
     let testerPos = null;         // dragged position of the tester panel (persisted as settings.testerPos)
+    let testerHeight = 0;         // dragged height, 0 = size to content (settings.testerHeight)
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
     let TABLE_3D = false;        // replace the flat felt with a live 3D render (opt-in)
@@ -155,6 +156,9 @@
         COIN_TOSS = !(s && s.coinToss === false); // opt-out
         updateInteractButtons(); // add/remove the per-seat buttons for the new value
         SHOW_TESTER = !!(s && s.showTester); // opt-in
+        const th = parseInt(s && s.testerHeight, 10);
+        testerHeight = (isFinite(th) && th >= 150) ? Math.min(th, 2000) : 0;
+        applyTesterHeight(testerPanel, testerHeight);
         const tpos = s && s.testerPos;
         testerPos = (tpos && typeof tpos.left === "number" && typeof tpos.top === "number")
             ? { left: tpos.left, top: tpos.top } : null;
@@ -375,46 +379,51 @@
     // opts) shape so the sequencer doesn't care which is which. Unknown keys
     // arriving from a newer client are skipped, not fatal — that's what lets an
     // item be added without coordinating a release.
+    // The chip is hand-written: its art is minted by chips3d, not loaded from a
+    // model. Everything else is a row in 3d/props3d.js's catalog — motion, model,
+    // size, sound, cooldown — so adding an object touches that catalog and nothing
+    // here. Merged at boot rather than duplicated.
     const INTERACT_ITEMS = {
         chip: {
             label: "chip",
             glyph: "🪙",
             cooldownMs: INTERACT_COOLDOWN_MS,   // just the server's own limit
-            sound: true,   // the site's own chip clatter; a beer hitting someone shouldn't use it
+            launchSound: "fold",                 // the whoosh as it leaves
+            sound: "bet",                        // ...and the site's own chip clatter on impact
             ensure: ensureCoin3d,
             throw: (from, to, table, opts) => window.GPE_COIN && GPE_COIN.toss(from, to, table, opts),
         },
-        beer: {
-            label: "beer",
-            glyph: "🍺",
-            // Longer than the server needs: one sits on the rail for ten seconds,
-            // so letting them stack every 2s would bury the table in glasses.
-            cooldownMs: 10000,
-            flinch: false,  // it slides over and sits on the rail; nobody gets hit
-            ensure: ensureBeer3d,
-            throw: (from, to, table, opts) => window.GPE_BEER && GPE_BEER.toss(from, to, table, opts),
-        },
-        flower: {
-            label: "flower",
-            glyph: "💐",
-            // It drifts down for a few seconds and lingers, so — like the beer — a
-            // 2s spam would pile a bouquet of them over one seat.
-            cooldownMs: 8000,
-            flinch: false,  // a gift floating down, not a hit; the avatar doesn't recoil
-            ensure: ensureFlower3d,
-            throw: (from, to, table, opts) => window.GPE_FLOWER && GPE_FLOWER.toss(from, to, table, opts),
-        },
-        glove: {
-            label: "glove",
-            glyph: "🧤",
-            cooldownMs: INTERACT_COOLDOWN_MS,   // a quick slap; just the server's own limit
-            // flinch left default (true): the slap shakes the avatar exactly like a
-            // chip strike does, via the onHit callback.
-            ensure: ensureGlove3d,
-            throw: (from, to, table, opts) => window.GPE_GLOVE && GPE_GLOVE.toss(from, to, table, opts),
-        },
     };
-    const INTERACT_ORDER = ["chip", "beer", "flower", "glove"]; // menu order, not object key order
+    let INTERACT_ORDER = ["chip"];   // menu order, not object key order
+
+    // Fold the props catalog in. Called on boot and again if props3d shows up late
+    // (the site build fetches it), so the menu grows as soon as it can.
+    function syncInteractCatalog() {
+        const props = window.GPE_PROPS;
+        if (!props || !props.catalog) return false;
+        let added = false;
+        for (const key of props.order) {
+            if (INTERACT_ITEMS[key]) continue;
+            const spec = props.catalog[key];
+            if (!spec) continue;
+            INTERACT_ITEMS[key] = {
+                label: spec.label || key,
+                glyph: spec.glyph || "•",
+                cooldownMs: spec.cooldownMs || INTERACT_COOLDOWN_MS,
+                sound: spec.sound || null,
+                launchSound: spec.launchSound || null,
+                // flinch defaults true, as it did before: a thrown thing shakes the
+                // avatar unless the object says otherwise.
+                flinch: spec.flinch !== false,
+                ensure: () => ensureProps3d().then((ok) => (ok ? props.ready(key) : false)),
+                throw: (from, to, table, opts) =>
+                    window.GPE_PROPS && GPE_PROPS.toss(key, from, to, table, opts),
+            };
+            if (INTERACT_ORDER.indexOf(key) < 0) INTERACT_ORDER.push(key);
+            added = true;
+        }
+        return added;
+    }
 
     // The renderer lives in three extra files (vendor/three.iife.js, 3d/chips3d.js
     // for the chip artwork, and 3d/coin3d.js). As an extension all three are
@@ -441,64 +450,25 @@
         return coinLoad;
     }
 
-    // The beer rides on coin3d's physics (it registers itself as a projectile), so
-    // it needs that loaded first, then its model fetched before a throw can play.
-    // Both are awaited, which is what keeps a scripted sequence's timing right.
-    let beerLoad = null;
-    function ensureBeer3d() {
-        if (window.GPE_BEER) return GPE_BEER.ready();
-        if (!beerLoad) {
-            beerLoad = ensureCoin3d()
+    // One loader for every model-based object: props3d owns the catalog, so this
+    // no longer grows by a function per item. It rides on coin3d (registering
+    // projectiles, borrowing the layer and clock), so that has to be up first.
+    let propsLoad = null;
+    function ensureProps3d() {
+        if (window.GPE_PROPS) return Promise.resolve(true);
+        if (!propsLoad) {
+            propsLoad = ensureCoin3d()
                 .then((ok) => {
                     if (!ok) return false;
-                    if (window.GPE_BEER) return true;
-                    if (!SELF_SRC) return false; // extension: it's a content script already
+                    if (window.GPE_PROPS) return true;
+                    if (!SELF_SRC) return false;   // extension: it is a content script already
                     const base = SELF_SRC.replace(/[^/]*$/, "");
-                    return loadScript(base + "3d/beer3d.js").then(() => !!window.GPE_BEER);
+                    return loadScript(base + "3d/props3d.js").then(() => !!window.GPE_PROPS);
                 })
-                .then((ok) => (ok && window.GPE_BEER ? GPE_BEER.ready() : false))
-                .catch(() => { beerLoad = null; return false; });
+                .then((ok) => { if (ok) syncInteractCatalog(); return ok; })
+                .catch(() => { propsLoad = null; return false; });
         }
-        return beerLoad;
-    }
-
-    // Flower and glove are the same shape as the beer: extra actors on coin3d's
-    // shared layer, each a model that must be fetched before it can play. Same
-    // load-once-then-await-ready dance, so a scripted step waits for the model.
-    let flowerLoad = null;
-    function ensureFlower3d() {
-        if (window.GPE_FLOWER) return GPE_FLOWER.ready();
-        if (!flowerLoad) {
-            flowerLoad = ensureCoin3d()
-                .then((ok) => {
-                    if (!ok) return false;
-                    if (window.GPE_FLOWER) return true;
-                    if (!SELF_SRC) return false; // extension: it's a content script already
-                    const base = SELF_SRC.replace(/[^/]*$/, "");
-                    return loadScript(base + "3d/flower3d.js").then(() => !!window.GPE_FLOWER);
-                })
-                .then((ok) => (ok && window.GPE_FLOWER ? GPE_FLOWER.ready() : false))
-                .catch(() => { flowerLoad = null; return false; });
-        }
-        return flowerLoad;
-    }
-
-    let gloveLoad = null;
-    function ensureGlove3d() {
-        if (window.GPE_GLOVE) return GPE_GLOVE.ready();
-        if (!gloveLoad) {
-            gloveLoad = ensureCoin3d()
-                .then((ok) => {
-                    if (!ok) return false;
-                    if (window.GPE_GLOVE) return true;
-                    if (!SELF_SRC) return false; // extension: it's a content script already
-                    const base = SELF_SRC.replace(/[^/]*$/, "");
-                    return loadScript(base + "3d/glove3d.js").then(() => !!window.GPE_GLOVE);
-                })
-                .then((ok) => (ok && window.GPE_GLOVE ? GPE_GLOVE.ready() : false))
-                .catch(() => { gloveLoad = null; return false; });
-        }
-        return gloveLoad;
+        return propsLoad;
     }
 
     // An element's rect, or null when it isn't laid out (GWT keeps hidden
@@ -514,22 +484,53 @@
     // go in. Reusing it means the toss sounds like the rest of the table instead
     // of shipping a second, slightly-different chip noise. Same origin as the
     // page, so this is just a media element, nothing is fetched cross-site.
-    const CHIP_SOUND_URL = "/gpokr2/sound/bet.mp3";
-    let chipSound = null;
-    function playChipSound() {
-        try {
-            if (!chipSound) {
-                chipSound = new Audio(CHIP_SOUND_URL);
-                chipSound.preload = "auto";
+    // The site's own sound set, so an interaction sounds like the rest of the table
+    // instead of shipping our own audio. Its GWT module loads these from
+    // /<module>/sound/<name>.mp3 — bet, slide_chips, shuffle_deck, check, fold.
+    // Which one an object uses is a property of the OBJECT, not of its animation: a
+    // bone and a chip can share the throw and still land differently.
+    const SOUND_BASE = "/gpokr2/sound/";
+    const SOUND_VOICES = 4;      // overlapping plays before it starts reusing
+    const SOUND_NAMES = ["bet", "check", "fold"];   // warmed at boot
+    const soundPool = Object.create(null);          // name -> { els, next }
+
+    // A POOL of preloaded elements per sound, rather than cloneNode() per play.
+    // cloneNode copies the src but not the decoded audio, so every play used to
+    // re-load and re-decode before making a sound — which is why a launch sound
+    // fired at the same instant as the animation still arrived noticeably late.
+    // These are loaded once and rewound on reuse, so play() starts immediately.
+    // Several voices because two objects landing together must not cut each other
+    // off: one element can only be at one position at a time.
+    function soundVoices(name) {
+        let pool = soundPool[name];
+        if (!pool) {
+            const els = [];
+            for (let i = 0; i < SOUND_VOICES; i++) {
+                const el = new Audio(SOUND_BASE + name + ".mp3");
+                el.preload = "auto";
+                el.volume = 0.55;
+                try { el.load(); } catch (e) {}   // decode now, not at play time
+                els.push(el);
             }
-            // Cloned per play so two chips landing together don't cut each other
-            // off (one element can only be at one position at a time).
-            const a = chipSound.cloneNode();
-            a.volume = 0.55;
-            const p = a.play();
-            if (p && p.catch) p.catch(() => {}); // autoplay policy / offline: just stay quiet
+            pool = soundPool[name] = { els: els, next: 0 };
+        }
+        return pool;
+    }
+
+    function playSound(name) {
+        if (!name) return;
+        try {
+            const pool = soundVoices(name);
+            const el = pool.els[pool.next];
+            pool.next = (pool.next + 1) % pool.els.length;
+            el.currentTime = 0;                    // rewind rather than reload
+            const p = el.play();
+            if (p && p.catch) p.catch(() => {});   // autoplay policy / offline: stay quiet
         } catch (e) {}
     }
+
+    // Decode them up front so the first throw of a session isn't the slow one.
+    function warmSounds() { for (const n of SOUND_NAMES) { try { soundVoices(n); } catch (e) {} } }
 
     // Everything is re-resolved at throw time rather than captured earlier: seats
     // are recycled between hands, and a throw only needs to be right for the
@@ -539,18 +540,23 @@
         if (!item) return Promise.resolve(false); // newer client threw something we don't have
         return item.ensure().then((ok) => {
             if (!ok) return false;
+            // First thing once the renderer is ready — ahead of the avatar/table
+            // lookups below, so the whoosh leads the animation rather than trailing it.
+            playSound(item.launchSound);
             const target = findAvatarByName(toName);
             const to = liveRect(target);
             if (!to) return false; // target left the table mid-sequence
             const from = fromName ? liveRect(findAvatarByName(fromName)) : null; // null -> from the near rail
             const table = liveRect(document.querySelector(".iogc-GameWindow-table"));
+            // Two moments, two sounds, both per object: launchSound (played above, as
+            // the step begins) and `sound` on impact. Either may be omitted.
             // onHit is the chip striking someone; onArrive is the beer reaching
             // the rail. Same callback either way, but an item can opt out of the
             // recoil and the clatter — a beer sliding over is a friendly gesture,
             // not a hit, so it lands quietly and just sits there.
             const landed = () => {
                 if (item.flinch !== false) flinchAvatar(target);
-                if (item.sound) playChipSound();
+                playSound(item.sound);   // per object: a bone should not clatter like a chip
             };
             return !!item.throw(from, to, table, {
                 denom: denom,
@@ -998,6 +1004,8 @@
     // aid rather than a table feature: it drives the exact same wire path a menu
     // click does, so whatever it builds is a real, everyone-sees-it throw.
     let testerPanel = null;
+    let testerDrag = null;        // index being dragged while reordering steps
+    let activeResize = null;      // in-progress vertical resize of a panel
     let testerSteps = []; // the sequence being built: [ ["chip",3], ["wait",500], ["beer",1], ... ]
 
     // Clamp a form value to whole [lo, hi], falling back to dflt on garbage.
@@ -1013,6 +1021,34 @@
     // scales past one panel without stacking listeners — same lesson as the odds
     // HUD, generalised.
     let activeDrag = null; // { el, offX, offY, posKey, lastPos } while a drag is in progress
+    // Vertical resize from a grabber along the panel's bottom edge. Same shape as
+    // makeDraggable — arm on mousedown, track on the shared window listeners — so
+    // there is one place where a pointer gesture on a panel is committed and saved.
+    const TESTER_MIN_H = 150;
+
+    // Height and the marker class travel together: the class is what lifts the step
+    // list's content-sized max-height (see overlay.css), so setting one without the
+    // other leaves the panel tall with the list still capped and dead space below.
+    function applyTesterHeight(panel, h) {
+        if (!panel) return;
+        if (h) {
+            panel.style.height = h + "px";
+            panel.classList.add("gpe-tester-sized");
+        } else {
+            panel.style.height = "";
+            panel.classList.remove("gpe-tester-sized");
+        }
+    }
+    function makeVResizable(el, handle, sizeKey) {
+        handle.addEventListener("mousedown", (e) => {
+            if (e.button !== 0) return;
+            const r = el.getBoundingClientRect();
+            activeResize = { el, startY: e.clientY, startH: r.height, top: r.top, sizeKey, lastH: null };
+            el.classList.add("gpe-resizing");
+            e.preventDefault();
+        });
+    }
+
     function makeDraggable(el, handle, posKey) {
         handle.addEventListener("mousedown", (e) => {
             if (e.button !== 0) return;
@@ -1025,6 +1061,16 @@
         });
     }
     window.addEventListener("mousemove", (e) => {
+        if (activeResize) {
+            const el = activeResize.el;
+            // Bounded by the viewport below the panel's top, so it can never be
+            // dragged taller than the screen it lives on.
+            const max = Math.max(TESTER_MIN_H, window.innerHeight - activeResize.top - 8);
+            const h = Math.min(max, Math.max(TESTER_MIN_H, activeResize.startH + (e.clientY - activeResize.startY)));
+            applyTesterHeight(el, h);
+            activeResize.lastH = h;
+            return;
+        }
         if (!activeDrag) return;
         const el = activeDrag.el;
         const p = clampToViewport(e.clientX - activeDrag.offX, e.clientY - activeDrag.offY,
@@ -1034,6 +1080,12 @@
         activeDrag.lastPos = p;
     });
     window.addEventListener("mouseup", () => {
+        if (activeResize) {
+            activeResize.el.classList.remove("gpe-resizing");
+            if (activeResize.lastH && activeResize.sizeKey) saveSetting(activeResize.sizeKey, activeResize.lastH);
+            activeResize = null;
+            return;
+        }
         if (!activeDrag) return;
         activeDrag.el.classList.remove("gpe-dragging");
         if (activeDrag.lastPos && activeDrag.posKey) saveSetting(activeDrag.posKey, activeDrag.lastPos);
@@ -1064,7 +1116,7 @@
         head.className = "gpe-tester-head";
         const title = document.createElement("span");
         title.className = "gpe-tester-title";
-        title.textContent = "interaction tester";
+        title.textContent = "interaction creator";
         const x = document.createElement("button");
         x.type = "button";
         x.className = "gpe-tester-x";
@@ -1166,7 +1218,16 @@
         foot.appendChild(send);
         panel.appendChild(foot);
 
+        // Grabber along the bottom edge: vertical only, since the width is set by
+        // the controls inside.
+        const grip = document.createElement("div");
+        grip.className = "gpe-tester-resize";
+        grip.title = "drag to resize";
+        panel.appendChild(grip);
+
         document.body.appendChild(panel);
+        applyTesterHeight(panel, testerHeight);
+        makeVResizable(panel, grip, "testerHeight");
         placeTester(panel);
         makeDraggable(panel, head, "testerPos");
         renderTesterSteps();
@@ -1176,6 +1237,7 @@
     // sensible default down the left edge, clear of the odds HUD.
     function placeTester(panel) {
         if (activeDrag && activeDrag.el === panel) return; // don't fight an active drag
+        if (activeResize && activeResize.el === panel) return; // ...or an active resize
         if (testerPos) {
             const p = clampToViewport(testerPos.left, testerPos.top, panel.offsetWidth, panel.offsetHeight);
             panel.style.left = p.left + "px";
@@ -1205,21 +1267,116 @@
             testerSteps.forEach((step, i) => {
                 const chip = document.createElement("div");
                 chip.className = "gpe-tester-step";
-                const label = document.createElement("span");
-                label.className = "gpe-tester-step-label";
+
+                // Reordering, the same way the bet and chat editors do it: a handle
+                // arms draggable on mousedown so the row's own inputs stay
+                // selectable, and the drop target draws an insertion line above.
+                const handle = document.createElement("span");
+                handle.className = "gpe-drag gpe-tester-drag";
+                handle.textContent = "⠿";
+                handle.title = "drag to reorder";
+                handle.addEventListener("mousedown", () => { chip.draggable = true; });
+                chip.addEventListener("dragstart", (e) => {
+                    testerDrag = i;
+                    chip.classList.add("gpe-dragging");
+                    e.dataTransfer.effectAllowed = "move";
+                });
+                chip.addEventListener("dragend", () => {
+                    chip.draggable = false;
+                    chip.classList.remove("gpe-dragging");
+                    testerDrag = null;
+                });
+                chip.addEventListener("dragover", (e) => {
+                    e.preventDefault();
+                    if (testerDrag !== null && testerDrag !== i) chip.classList.add("gpe-dragover");
+                });
+                chip.addEventListener("dragleave", () => chip.classList.remove("gpe-dragover"));
+                chip.addEventListener("drop", (e) => {
+                    e.preventDefault();
+                    chip.classList.remove("gpe-dragover");
+                    if (testerDrag === null || testerDrag === i) return;
+                    const moved = testerSteps.splice(testerDrag, 1)[0];
+                    testerSteps.splice(i, 0, moved);
+                    testerDrag = null;
+                    renderTesterSteps();   // indices shifted: rebuild
+                });
+                chip.appendChild(handle);
+
+                const n = document.createElement("span");
+                n.className = "gpe-tester-step-n";
+                n.textContent = (i + 1) + ".";
+                chip.appendChild(n);
+
+                // Every row is editable in place. Edits write straight back into
+                // testerSteps on `change` and deliberately DON'T re-render: rebuilding
+                // the list under a field you're typing in would drop focus (and the
+                // caret) mid-keystroke. Only add/remove re-renders, since those shift
+                // the indices these closures capture.
                 if (step[0] === "wait") {
-                    label.textContent = (i + 1) + ". ⏸ wait " + step[1] + "ms";
+                    const pause = document.createElement("span");
+                    pause.className = "gpe-tester-step-label";
+                    pause.textContent = "⏸";
+                    const ms = document.createElement("input");
+                    ms.type = "number";
+                    ms.className = "gpe-tester-num";
+                    ms.min = "0"; ms.max = String(Q_MAX_WAIT_MS); ms.step = "100";
+                    ms.value = String(step[1]);
+                    ms.title = "pause before the next step (max " + Q_MAX_WAIT_MS + "ms)";
+                    ms.addEventListener("change", () => {
+                        const v = clampInt(ms.value, 0, Q_MAX_WAIT_MS, 0);
+                        ms.value = String(v);       // show the clamp rather than silently differing
+                        step[1] = v;
+                        syncTesterStatus();
+                    });
+                    const unit = document.createElement("span");
+                    unit.className = "gpe-tester-unit";
+                    unit.textContent = "ms";
+                    chip.append(pause, ms, unit);
                 } else {
-                    const it = INTERACT_ITEMS[step[0]];
-                    label.textContent = (i + 1) + ". " + (it ? it.glyph + " " + it.label : step[0]) + " ×" + step[1];
+                    // Two fields: which object, and how many of it.
+                    const item = document.createElement("select");
+                    item.className = "gpe-tester-item";
+                    for (const key of INTERACT_ORDER) {
+                        const it = INTERACT_ITEMS[key];
+                        const o = document.createElement("option");
+                        o.value = key;
+                        o.textContent = it.glyph + " " + it.label;
+                        if (key === step[0]) o.selected = true;
+                        item.appendChild(o);
+                    }
+                    // A step naming an object this build doesn't have (an older saved
+                    // sequence, say) keeps its value rather than silently becoming
+                    // whatever happens to be first in the list.
+                    if (!INTERACT_ITEMS[step[0]]) {
+                        const o = document.createElement("option");
+                        o.value = step[0];
+                        o.textContent = step[0] + " (unknown)";
+                        o.selected = true;
+                        item.appendChild(o);
+                    }
+                    item.addEventListener("change", () => { step[0] = item.value; syncTesterStatus(); });
+
+                    const count = document.createElement("input");
+                    count.type = "number";
+                    count.className = "gpe-tester-num";
+                    count.min = "1"; count.max = String(Q_MAX_COUNT); count.step = "1";
+                    count.value = String(step[1] == null ? 1 : step[1]);
+                    count.title = "how many (max " + Q_MAX_COUNT + ")";
+                    count.addEventListener("change", () => {
+                        const v = clampInt(count.value, 1, Q_MAX_COUNT, 1);
+                        count.value = String(v);
+                        step[1] = v;
+                        syncTesterStatus();
+                    });
+                    chip.append(item, count);
                 }
+
                 const rm = document.createElement("button");
                 rm.type = "button";
                 rm.className = "gpe-tester-step-x";
                 rm.textContent = "✕";
                 rm.title = "remove step";
                 rm.addEventListener("click", () => { testerSteps.splice(i, 1); renderTesterSteps(); });
-                chip.appendChild(label);
                 chip.appendChild(rm);
                 list.appendChild(chip);
             });
@@ -5976,6 +6133,10 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     // No-op as an extension (the manifest installs the tap at document_start, in
     // the page's own world, which is the only way to beat the client's socket).
     ensureWsMonitor();
+    warmSounds();
+    // As an extension props3d is already a content script, so its catalog is here
+    // immediately; the site build fetches it, so the 1.5s poll retries below.
+    syncInteractCatalog();
     // We load after the session frame has already gone by, so ask rather than wait
     // for the announcement. Keeps asking until answered: a socket reconnect (table
     // change, dropped connection) starts a new session we may need to hear about.
@@ -6003,6 +6164,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
             clearInterval(boot);
             setInterval(() => {
                 watchChat(); addPicker(); addSplashButton(); addChatPopoutButton(); ensureSidePanelTabs(); ensureLobbyTools();
+                if (syncInteractCatalog()) updateInteractButtons();   // menu grew
                 ensureSideSections(); watchProfileMenuButton(); pollHandState();
             }, 1500);
         }

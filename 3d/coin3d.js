@@ -457,7 +457,14 @@
             const sc = 1 + c.h / 1400;   // a touch bigger the higher it is
             c.mesh.position.set(c.p.x, -(c.p.y - lift), 2 + c.h * 0.02);
             c.mesh.quaternion.copy(c.q);
-            c.mesh.scale.setScalar(sc);
+            // Multiply the projectile's OWN scale rather than replacing it. The chip
+            // is built at 1:1 so this is a no-op for it, but a loaded model arrives
+            // pre-scaled to a sensible on-screen size (props3d normalizes arbitrary
+            // authoring units — one model measured ~445,000 units across, another
+            // 0.7) and setScalar() threw that away. Everything then rendered at raw
+            // model size: invisible for two of them, tiny for one, huge for another.
+            const base = (c.mesh.userData && c.mesh.userData.gpeBaseScale) || 1;
+            c.mesh.scale.setScalar(base * sc);
             // Fade multiplies the material's AUTHORED opacity rather than
             // replacing it: a loaded model can have genuinely translucent parts
             // (beer.glb's glass is baseColorFactor alpha 0.4) and forcing those to

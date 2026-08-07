@@ -37,7 +37,7 @@
 	},
 	{
 	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"],
-	  "js": ["vendor/three.iife.js", "3d/chips3d.js", "3d/table3d.js", "3d/coin3d.js", "3d/beer3d.js", "3d/flower3d.js", "3d/glove3d.js", "odds.js", "content.js"],
+	  "js": ["vendor/three.iife.js", "3d/chips3d.js", "3d/table3d.js", "3d/coin3d.js", "3d/props3d.js", "odds.js", "content.js"],
 	  "css": ["overlay.css", "dark.css"],
 	  "run_at": "document_idle"
 	}

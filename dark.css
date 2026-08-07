@@ -508,6 +508,11 @@ html.gpe-dark #gpe-interact-tester {
 }
 html.gpe-dark .gpe-tester-title { color: #eef2f7; }
 html.gpe-dark .gpe-tester-label { color: #8a97ab; }
+html.gpe-dark .gpe-tester-step-n { color: #6f7c8e; }
+html.gpe-dark .gpe-tester-drag { color: #5d6a7e; }
+html.gpe-dark .gpe-tester-resize::after { background: #3c4a61; }
+html.gpe-dark .gpe-tester-resize:hover::after { background: #5c7ea8; }
+html.gpe-dark .gpe-tester-step:hover .gpe-tester-drag { color: #8a97ab; }
 html.gpe-dark .gpe-tester-unit,
 html.gpe-dark .gpe-tester-status { color: #8a97ab; }
 html.gpe-dark .gpe-tester-x { color: #8a97ab; }
