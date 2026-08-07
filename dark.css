@@ -472,6 +472,49 @@ html.gpe-dark #gpe-interact-panel .gpe-interact-item { color: #e6ebf2; }
 html.gpe-dark #gpe-interact-panel .gpe-interact-item:hover { background: #344056; }
 html.gpe-dark #gpe-interact-panel .gpe-interact-item.gpe-interact-cool { color: #8a97ab; }
 html.gpe-dark #gpe-interact-panel .gpe-interact-item.gpe-interact-cool:hover { background: transparent; }
+
+/* interaction tester: dark card matching the odds HUD */
+html.gpe-dark #gpe-interact-tester {
+    background: rgba(30, 37, 48, 0.97);
+    color: #cfd6e0;
+    border-color: #3c4a61;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+}
+html.gpe-dark .gpe-tester-title { color: #eef2f7; }
+html.gpe-dark .gpe-tester-label { color: #8a97ab; }
+html.gpe-dark .gpe-tester-unit,
+html.gpe-dark .gpe-tester-status { color: #8a97ab; }
+html.gpe-dark .gpe-tester-x { color: #8a97ab; }
+html.gpe-dark .gpe-tester-x:hover { color: #ff8a7a; background: rgba(255, 255, 255, 0.08); }
+html.gpe-dark .gpe-tester-target,
+html.gpe-dark .gpe-tester-item,
+html.gpe-dark .gpe-tester-num {
+    background: #262e3b;
+    color: #d2d8e2;
+    border-color: #44516a;
+}
+html.gpe-dark .gpe-tester-add {
+    background: #2a3342;
+    color: #d2d8e2;
+    border-color: #45526b;
+}
+html.gpe-dark .gpe-tester-add:hover { background: #344056; }
+html.gpe-dark .gpe-tester-steps {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: #34404f;
+}
+html.gpe-dark .gpe-tester-empty { color: #6f7c8e; }
+html.gpe-dark .gpe-tester-step {
+    background: #262e3b;
+    border-color: #38445a;
+}
+html.gpe-dark .gpe-tester-step-x { color: #7f8b9c; }
+html.gpe-dark .gpe-tester-step-x:hover { color: #ff8a7a; background: rgba(255, 255, 255, 0.08); }
+html.gpe-dark .gpe-tester-clear { color: #8a97ab; }
+html.gpe-dark .gpe-tester-clear:hover { background: rgba(255, 255, 255, 0.07); }
+html.gpe-dark .gpe-tester-send { background: #3a6ea5; color: #f2f6fb; }
+html.gpe-dark .gpe-tester-send:hover { background: #34638f; }
+html.gpe-dark .gpe-tester-send:disabled { background: #3a4557; color: #7f8b9c; }
 html.gpe-dark .gpe-toggle { color: #b9c2cf; }
 html.gpe-dark .gpe-toggle:has(input:disabled) { color: #5d6a7e; }
 html.gpe-dark .gpe-share-last {

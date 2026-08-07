@@ -18,6 +18,8 @@
     let SHOW_STATS = false;
     let HOTKEYS = false;
     let DARK_MODE = false;
+    let SHOW_TESTER = false;      // interaction-tester panel: scripted-throw builder (opt-in dev tool)
+    let testerPos = null;         // dragged position of the tester panel (persisted as settings.testerPos)
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
     let TABLE_3D = false;        // replace the flat felt with a live 3D render (opt-in)
@@ -152,6 +154,11 @@
         syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
         COIN_TOSS = !(s && s.coinToss === false); // opt-out
         updateInteractButtons(); // add/remove the per-seat buttons for the new value
+        SHOW_TESTER = !!(s && s.showTester); // opt-in
+        const tpos = s && s.testerPos;
+        testerPos = (tpos && typeof tpos.left === "number" && typeof tpos.top === "number")
+            ? { left: tpos.left, top: tpos.top } : null;
+        updateInteractTester(); // create/remove/reposition the tester panel for the new value
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
             BET_CONFIG = cfg;
@@ -249,7 +256,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel, #gpe-interact-tester"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -917,6 +924,314 @@
                 if (interactPanel && interactPanel._gpeTarget === name) closeInteractMenu();
             }
         }
+    }
+
+    // ---------- interaction tester (scripted-throw builder) ----------
+    // A draggable panel for composing an arbitrary throw SEQUENCE and firing it at
+    // a chosen seat — the manual counterpart to sendInteraction's "scripted
+    // interactions" seam. Opt-in from the tools tab, because it's a dev/testing
+    // aid rather than a table feature: it drives the exact same wire path a menu
+    // click does, so whatever it builds is a real, everyone-sees-it throw.
+    let testerPanel = null;
+    let testerSteps = []; // the sequence being built: [ ["chip",3], ["wait",500], ["beer",1], ... ]
+
+    // Clamp a form value to whole [lo, hi], falling back to dflt on garbage.
+    function clampInt(v, lo, hi, dflt) {
+        const n = parseInt(v, 10);
+        if (!isFinite(n)) return dflt;
+        return Math.min(hi, Math.max(lo, n));
+    }
+
+    // Generic drag: `handle` moves `el` (which must be position:fixed), persisting
+    // the resting spot to settings[posKey]. The move/up listeners are global and
+    // bound once (below), dispatching to whichever panel is mid-drag, so this
+    // scales past one panel without stacking listeners — same lesson as the odds
+    // HUD, generalised.
+    let activeDrag = null; // { el, offX, offY, posKey, lastPos } while a drag is in progress
+    function makeDraggable(el, handle, posKey) {
+        handle.addEventListener("mousedown", (e) => {
+            if (e.button !== 0) return;
+            // A drag starts on the header's empty space, not on its buttons.
+            if (e.target.closest("button, input, select, textarea")) return;
+            const r = el.getBoundingClientRect();
+            activeDrag = { el, offX: e.clientX - r.left, offY: e.clientY - r.top, posKey, lastPos: null };
+            el.classList.add("gpe-dragging");
+            e.preventDefault(); // no text selection while dragging
+        });
+    }
+    window.addEventListener("mousemove", (e) => {
+        if (!activeDrag) return;
+        const el = activeDrag.el;
+        const p = clampToViewport(e.clientX - activeDrag.offX, e.clientY - activeDrag.offY,
+            el.offsetWidth, el.offsetHeight);
+        el.style.left = p.left + "px";
+        el.style.top = p.top + "px";
+        activeDrag.lastPos = p;
+    });
+    window.addEventListener("mouseup", () => {
+        if (!activeDrag) return;
+        activeDrag.el.classList.remove("gpe-dragging");
+        if (activeDrag.lastPos && activeDrag.posKey) saveSetting(activeDrag.posKey, activeDrag.lastPos);
+        activeDrag = null;
+    });
+
+    // Idempotent: create/remove the panel to match the setting, then refresh the
+    // parts that track the live table (target list, send-ability). Safe to call
+    // from the 300ms poll.
+    function updateInteractTester() {
+        if (!SHOW_TESTER) {
+            if (testerPanel) { testerPanel.remove(); testerPanel = null; }
+            return;
+        }
+        if (!testerPanel || !testerPanel.isConnected) buildTester();
+        syncTesterTargets();
+        syncTesterStatus();
+    }
+
+    function buildTester() {
+        const panel = document.createElement("div");
+        panel.id = "gpe-interact-tester";
+        testerPanel = panel;
+
+        // Header doubles as the drag handle (cursor:move), with a close that just
+        // flips the setting off — same as unticking the tools-tab option.
+        const head = document.createElement("div");
+        head.className = "gpe-tester-head";
+        const title = document.createElement("span");
+        title.className = "gpe-tester-title";
+        title.textContent = "interaction tester";
+        const x = document.createElement("button");
+        x.type = "button";
+        x.className = "gpe-tester-x";
+        x.textContent = "✕";
+        x.title = "close (turns the option off)";
+        x.addEventListener("click", () => saveSetting("showTester", false));
+        head.appendChild(title);
+        head.appendChild(x);
+        panel.appendChild(head);
+
+        // Who to throw at.
+        const targetRow = document.createElement("div");
+        targetRow.className = "gpe-tester-row";
+        const tlabel = document.createElement("span");
+        tlabel.className = "gpe-tester-label";
+        tlabel.textContent = "Target";
+        const target = document.createElement("select");
+        target.className = "gpe-tester-target";
+        target.addEventListener("change", syncTesterStatus);
+        targetRow.appendChild(tlabel);
+        targetRow.appendChild(target);
+        panel.appendChild(targetRow);
+
+        // The sequence being built.
+        const list = document.createElement("div");
+        list.className = "gpe-tester-steps";
+        panel.appendChild(list);
+
+        // Add-a-throw: item dropdown + count + button.
+        const throwRow = document.createElement("div");
+        throwRow.className = "gpe-tester-row";
+        const item = document.createElement("select");
+        item.className = "gpe-tester-item";
+        for (const key of INTERACT_ORDER) {
+            const it = INTERACT_ITEMS[key];
+            const o = document.createElement("option");
+            o.value = key;
+            o.textContent = it.glyph + " " + it.label;
+            item.appendChild(o);
+        }
+        const count = document.createElement("input");
+        count.type = "number";
+        count.className = "gpe-tester-num";
+        count.min = "1"; count.max = String(Q_MAX_COUNT); count.step = "1"; count.value = "1";
+        const addThrow = document.createElement("button");
+        addThrow.type = "button";
+        addThrow.className = "gpe-tester-add";
+        addThrow.textContent = "+ throw";
+        addThrow.addEventListener("click", () => addTesterStep([item.value, clampInt(count.value, 1, Q_MAX_COUNT, 1)]));
+        throwRow.appendChild(item);
+        throwRow.appendChild(count);
+        throwRow.appendChild(addThrow);
+        panel.appendChild(throwRow);
+
+        // Add-a-pause: ms + button.
+        const pauseRow = document.createElement("div");
+        pauseRow.className = "gpe-tester-row";
+        const plabel = document.createElement("span");
+        plabel.className = "gpe-tester-label";
+        plabel.textContent = "Pause";
+        const wait = document.createElement("input");
+        wait.type = "number";
+        wait.className = "gpe-tester-num";
+        wait.min = "0"; wait.max = String(Q_MAX_WAIT_MS); wait.step = "100"; wait.value = "500";
+        const unit = document.createElement("span");
+        unit.className = "gpe-tester-unit";
+        unit.textContent = "ms";
+        const addPause = document.createElement("button");
+        addPause.type = "button";
+        addPause.className = "gpe-tester-add";
+        addPause.textContent = "+ pause";
+        addPause.addEventListener("click", () => {
+            const ms = clampInt(wait.value, 0, Q_MAX_WAIT_MS, 0);
+            if (ms > 0) addTesterStep(["wait", ms]);
+        });
+        pauseRow.appendChild(plabel);
+        pauseRow.appendChild(wait);
+        pauseRow.appendChild(unit);
+        pauseRow.appendChild(addPause);
+        panel.appendChild(pauseRow);
+
+        // Status + clear + send.
+        const foot = document.createElement("div");
+        foot.className = "gpe-tester-foot";
+        const status = document.createElement("span");
+        status.className = "gpe-tester-status";
+        const clear = document.createElement("button");
+        clear.type = "button";
+        clear.className = "gpe-tester-clear";
+        clear.textContent = "clear";
+        clear.addEventListener("click", () => { testerSteps = []; renderTesterSteps(); });
+        const send = document.createElement("button");
+        send.type = "button";
+        send.className = "gpe-tester-send";
+        send.textContent = "Send";
+        send.addEventListener("click", sendTesterSequence);
+        foot.appendChild(status);
+        foot.appendChild(clear);
+        foot.appendChild(send);
+        panel.appendChild(foot);
+
+        document.body.appendChild(panel);
+        placeTester(panel);
+        makeDraggable(panel, head, "testerPos");
+        renderTesterSteps();
+    }
+
+    // Fixed position: the dragged spot if there is one (clamped on-screen), else a
+    // sensible default down the left edge, clear of the odds HUD.
+    function placeTester(panel) {
+        if (activeDrag && activeDrag.el === panel) return; // don't fight an active drag
+        if (testerPos) {
+            const p = clampToViewport(testerPos.left, testerPos.top, panel.offsetWidth, panel.offsetHeight);
+            panel.style.left = p.left + "px";
+            panel.style.top = p.top + "px";
+        } else {
+            panel.style.left = "14px";
+            panel.style.top = "130px";
+        }
+    }
+
+    function addTesterStep(step) {
+        if (testerSteps.length >= Q_MAX_STEPS) return; // same ceiling the wire enforces
+        testerSteps.push(step);
+        renderTesterSteps();
+    }
+
+    function renderTesterSteps() {
+        if (!testerPanel) return;
+        const list = testerPanel.querySelector(".gpe-tester-steps");
+        list.textContent = "";
+        if (!testerSteps.length) {
+            const empty = document.createElement("div");
+            empty.className = "gpe-tester-empty";
+            empty.textContent = "no steps — add a throw or a pause";
+            list.appendChild(empty);
+        } else {
+            testerSteps.forEach((step, i) => {
+                const chip = document.createElement("div");
+                chip.className = "gpe-tester-step";
+                const label = document.createElement("span");
+                label.className = "gpe-tester-step-label";
+                if (step[0] === "wait") {
+                    label.textContent = (i + 1) + ". ⏸ wait " + step[1] + "ms";
+                } else {
+                    const it = INTERACT_ITEMS[step[0]];
+                    label.textContent = (i + 1) + ". " + (it ? it.glyph + " " + it.label : step[0]) + " ×" + step[1];
+                }
+                const rm = document.createElement("button");
+                rm.type = "button";
+                rm.className = "gpe-tester-step-x";
+                rm.textContent = "✕";
+                rm.title = "remove step";
+                rm.addEventListener("click", () => { testerSteps.splice(i, 1); renderTesterSteps(); });
+                chip.appendChild(label);
+                chip.appendChild(rm);
+                list.appendChild(chip);
+            });
+        }
+        syncTesterStatus();
+    }
+
+    // Repopulate the target dropdown from the seated players (minus me), keeping
+    // the current pick when it's still there. Rebuilds only when the set actually
+    // changed, so an open dropdown / a stable selection isn't disturbed every poll.
+    function syncTesterTargets() {
+        if (!testerPanel) return;
+        const sel = testerPanel.querySelector(".gpe-tester-target");
+        if (!sel || document.activeElement === sel) return; // don't yank an open dropdown
+        const me = getMyName();
+        const names = [];
+        for (const n of seatedNames()) if (n !== me) names.push(n);
+        names.sort();
+        const key = names.join("|");
+        if (sel._gpeKey === key) return;
+        const prev = sel.value;
+        sel._gpeKey = key;
+        sel.textContent = "";
+        if (!names.length) {
+            const o = document.createElement("option");
+            o.value = ""; o.textContent = "(no other players)";
+            sel.appendChild(o);
+        }
+        for (const n of names) {
+            const o = document.createElement("option");
+            o.value = n;
+            o.textContent = displayName(n);
+            sel.appendChild(o);
+        }
+        if (names.indexOf(prev) !== -1) sel.value = prev;
+        syncTesterStatus();
+    }
+
+    // The one-line readout beside Send: why a send would fail, or how many steps
+    // are queued. A recent send result (flashTesterStatus) holds the line briefly
+    // so the poll doesn't wipe it before it's read.
+    function syncTesterStatus() {
+        if (!testerPanel) return;
+        const status = testerPanel.querySelector(".gpe-tester-status");
+        const send = testerPanel.querySelector(".gpe-tester-send");
+        const sel = testerPanel.querySelector(".gpe-tester-target");
+        let msg, ok = false;
+        if (!COIN_TOSS) msg = "turn on \"interactions\"";
+        else if (!canInteract) msg = "bridge not ready";
+        else if (!amSeated()) msg = "take a seat to send";
+        else if (!sel || !sel.value) msg = "no target";
+        else if (!testerSteps.length) msg = "add a step";
+        else { msg = testerSteps.length + " step" + (testerSteps.length === 1 ? "" : "s") + " ready"; ok = true; }
+        if (send) send.disabled = !ok;
+        if (status && !(status._gpeHoldUntil && Date.now() < status._gpeHoldUntil)) status.textContent = msg;
+    }
+
+    function flashTesterStatus(text) {
+        if (!testerPanel) return;
+        const status = testerPanel.querySelector(".gpe-tester-status");
+        if (!status) return;
+        status.textContent = text;
+        status._gpeHoldUntil = Date.now() + 2000;
+    }
+
+    // Fire the built sequence: one POST for the whole thing (the wire coalesces it
+    // — one throw per item, pauses between — and the server's 2s cooldown would
+    // eat a per-item burst). Nothing renders here; it plays when the broadcast
+    // comes back, exactly as a menu throw does.
+    function sendTesterSequence() {
+        if (!testerPanel) return;
+        const sel = testerPanel.querySelector(".gpe-tester-target");
+        const name = sel && sel.value;
+        if (!name || !testerSteps.length) return;
+        const steps = testerSteps.map((s) => s.slice()); // copy: sendInteraction reads it as-is
+        flashTesterStatus("sending…");
+        sendInteraction(name, steps).then((sent) => flashTesterStatus(sent ? "sent ✓" : "dropped ✗"));
     }
 
     // Match the first emoji in a message — ANY emoji, not just the picker set.
@@ -2980,6 +3295,11 @@
             "avatar, for throwing a chip from your seat that bounces off them " +
             "and lands on the felt. Everyone at the table sees it, and you see " +
             "theirs. Cosmetic only — it never affects the game. Requires a seat."],
+        ["gpe-show-tester", "interaction tester", "showTester", () => SHOW_TESTER,
+            "A draggable panel for scripting a sequence of throws (chips, beers, " +
+            "pauses) at a chosen seat and firing them in one go. Dev/testing aid — " +
+            "it uses the same wire path as the interact menu, so everyone sees it. " +
+            "Requires a seat and \"interactions\" on."],
     ];
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
@@ -5085,6 +5405,7 @@
     setInterval(() => {
         updateStatBadges(); updateHoverToppers(); tagTurnHighlights(); applyBetReadout(); applyFoldDimming();
         updateInteractButtons(); // interact buttons track their avatars as seats move
+        updateInteractTester(); // keep the tester's target list + send-ability current
         patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
         placeSplashButton(); // follows the pot total as it changes
         syncTable3d(); // keep the 3D felt attached across GWT re-renders

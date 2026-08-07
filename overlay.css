@@ -497,6 +497,157 @@ img.iogc-PlayerPanel-avatar.gpe-coin-hit {
 .gpe-odds-marginal { color: #a87b00; }
 .gpe-odds-fold { color: #c43c2e; }
 
+/* ---- Interaction tester: a draggable panel for scripting throw sequences.
+   Styled like the odds HUD (light card, navy text) so it reads as one toolset. ---- */
+#gpe-interact-tester {
+    position: fixed;
+    z-index: 99999;
+    width: 232px;
+    box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.97);
+    color: #2a3f55;
+    border: 1px solid #aac9e4;
+    font: 12px/1.4 Arial, sans-serif;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(40, 80, 120, 0.28);
+    padding: 8px;
+    user-select: none;
+}
+#gpe-interact-tester.gpe-dragging { box-shadow: 0 6px 20px rgba(40, 80, 120, 0.5); opacity: 0.97; }
+.gpe-tester-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: move; /* the header is the drag handle */
+    margin-bottom: 7px;
+}
+.gpe-tester-title { font-weight: bold; font-size: 12px; letter-spacing: 0.02em; }
+.gpe-tester-x {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    color: #8aa0b8;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 5px;
+}
+.gpe-tester-x:hover { color: #c43c2e; background: rgba(0, 0, 0, 0.06); }
+.gpe-tester-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 5px 0;
+}
+.gpe-tester-label { color: #6a819a; min-width: 44px; }
+.gpe-tester-unit { color: #8aa0b8; font-size: 11px; }
+.gpe-tester-target,
+.gpe-tester-item {
+    flex: 1 1 auto;
+    min-width: 0;
+    box-sizing: border-box;
+    background: #fff;
+    color: #2a3f55;
+    border: 1px solid #bcd0e4;
+    border-radius: 6px;
+    padding: 3px 5px;
+    font: inherit;
+}
+.gpe-tester-item { flex: 0 1 auto; }
+.gpe-tester-num {
+    box-sizing: border-box;
+    width: 52px;
+    background: #fff;
+    color: #2a3f55;
+    border: 1px solid #bcd0e4;
+    border-radius: 6px;
+    padding: 3px 4px;
+    font: inherit;
+}
+.gpe-tester-add {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    margin-left: auto;
+    background: #eaf1f8;
+    color: #33587c;
+    border: 1px solid #bcd0e4;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+.gpe-tester-add:hover { background: #dce8f4; }
+.gpe-tester-add:active { background: #cfe0f0; }
+.gpe-tester-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 148px;
+    overflow-y: auto;
+    margin: 7px 0;
+    padding: 5px;
+    border: 1px solid #d9e5f0;
+    border-radius: 8px;
+    background: rgba(234, 241, 248, 0.5);
+}
+.gpe-tester-empty { color: #93a6ba; font-style: italic; text-align: center; padding: 4px 0; }
+.gpe-tester-step {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    background: #fff;
+    border: 1px solid #d9e5f0;
+    border-radius: 6px;
+    padding: 3px 4px 3px 7px;
+}
+.gpe-tester-step-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gpe-tester-step-x {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    color: #a0b1c4;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 5px;
+    flex: 0 0 auto;
+}
+.gpe-tester-step-x:hover { color: #c43c2e; background: rgba(0, 0, 0, 0.06); }
+.gpe-tester-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+}
+.gpe-tester-status { flex: 1 1 auto; min-width: 0; color: #6a819a; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gpe-tester-clear {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    color: #6a819a;
+    font-size: 11px;
+    padding: 4px 7px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+}
+.gpe-tester-clear:hover { background: rgba(0, 0, 0, 0.05); }
+.gpe-tester-send {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    background: #2f6fb0;
+    color: #fff;
+    border-radius: 7px;
+    padding: 5px 14px;
+    font-weight: bold;
+    font-size: 12px;
+}
+.gpe-tester-send:hover { background: #2a63a0; }
+.gpe-tester-send:active { background: #255890; }
+.gpe-tester-send:disabled { background: #b7c6d6; color: #eef3f8; cursor: default; }
+
 /* ---- Per-player toppers: the stats tab (above the avatar) and the hover
    info tab (above the name/chips panel) share one "tab" look. ---- */
 .gpe-stat-badge,
