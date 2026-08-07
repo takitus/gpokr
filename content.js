@@ -1657,13 +1657,17 @@
         return null;
     }
 
-    // My pocket cards for the current/most-recent hand.
-    function readMyHand() {
-        const pocket = currentHandScope().find((t) => /pocket cards/i.test(t));
+    // My pocket cards, from a given scope. Taking the scope as an argument (rather
+    // than reading the log) is what lets a finished hand be re-rendered later, once
+    // the DOM has moved on to the next one.
+    function myHandFromScope(scope) {
+        const pocket = (scope || []).find((t) => /pocket cards/i.test(t));
         if (!pocket) return null;
         const m = pocket.match(/\[([^,]+),\s*([^\]]+)\]/);
         return m ? [m[1].trim(), m[2].trim()] : null;
     }
+    // My pocket cards for the current/most-recent hand.
+    function readMyHand() { return myHandFromScope(currentHandScope()); }
 
     // End-of-hand signal: prefer the showdown "shows [..]" line; fall back to "wins pot".
     // (Fold-only hands have no showdown, so they only produce a pot award.)
@@ -2142,10 +2146,12 @@
     // don't (inferred as the current amount-to-match), and blinds aren't logged
     // (seeded to SB/BB = the occupied seats clockwise after the button). Assumes
     // "raises $N" is the raise-TO total. -> approximate, but sums to the pot.
-    function parseHandDetail() {
-        const scope = fullHandScope(); // complete hand, even if the DOM log trimmed early lines
+    // `snap` is a hand snapshot (see handSnapshot); omitted, everything is read
+    // live for the hand in progress.
+    function parseHandDetail(snap) {
+        const scope = (snap && snap.scope) || fullHandScope(); // complete hand, even if the DOM log trimmed early lines
         const num = (s) => parseInt(String(s).replace(/,/g, ""), 10) || 0;
-        const seatOf = seatNameMap();
+        const seatOf = (snap && snap.seatOf) || seatNameMap();
         const P = {}, order = [];
         const rec = (n) => {
             if (!P[n]) { P[n] = { name: n, streets: [0, 0, 0, 0], foldStreet: null, cards: null }; order.push(n); }
@@ -2158,8 +2164,8 @@
         if (!order.length) return null;
 
         // Blinds: SB = first occupied seat clockwise after the button, BB = next.
-        const { sb, bb } = parseBlinds();
-        const btnSeat = buttonSeatIndex();
+        const { sb, bb } = (snap && snap.blinds) || parseBlinds();
+        const btnSeat = snap ? snap.btnSeat : buttonSeatIndex();
         let sbName = null, bbName = null, btnName = null;
         const seated = order.filter((n) => seatOf[n] != null).sort((a, b) => seatOf[a] - seatOf[b]);
         if (btnSeat != null && seated.length) {
@@ -2225,9 +2231,15 @@
         // keeps only the latest hand's streets (and caps at 5) so a table-switch
         // log merge can't render a 6- or 7-card board.
         const board = boardFromScope(scope);
-        let myCards = null;
-        const pocket = scope.find((t) => /pocket cards/i.test(t));
-        if (pocket) { const m = pocket.match(/\[([^,]+),\s*([^\]]+)\]/); if (m) myCards = [normCard(m[1]), normCard(m[2])]; }
+        const mine = myHandFromScope(scope);
+        const myCards = mine ? [normCard(mine[0]), normCard(mine[1])] : null;
+
+        // Cards a peer revealed with our own share feature, for players the log
+        // never showed. Only id-bound reveals are eligible (decodeHand has checked
+        // the sender and the hand id), so a pasted or replayed hand can't write
+        // cards into someone else's row.
+        const peers = peerRevealsFor(snap && snap.gameId);
+        if (peers) for (const n of order) if (!P[n].cards && peers.has(n)) P[n].cards = peers.get(n);
 
         const players = order.map((n) => ({
             name: n, cards: P[n].cards, foldStreet: P[n].foldStreet, streets: P[n].streets,
@@ -2320,11 +2332,14 @@
     // betting breakdown. When I'm the winner the trophy moves onto my own column
     // and the third column becomes the runner-up. Returns the element (or null).
     // Local view only.
-    function buildHandSummaryRow() {
-        const detail = parseHandDetail();
-        // Prefer the detail's complete-scope reads (survive log trimming); fall back otherwise.
-        const mine = (detail && detail.myCards) ? detail.myCards : (readMyHand() || []).map(normCard);
-        const board = detail ? detail.board : parseBoard();
+    function buildHandSummaryRow(snap) {
+        const detail = parseHandDetail(snap);
+        // Prefer the detail's complete-scope reads (survive log trimming); fall back
+        // to the snapshot, and only then to the live log.
+        const scope = snap ? snap.scope : null;
+        const fallbackMine = scope ? myHandFromScope(scope) : readMyHand();
+        const mine = (detail && detail.myCards) ? detail.myCards : (fallbackMine || []).map(normCard);
+        const board = detail ? detail.board : (scope ? boardFromScope(scope) : parseBoard());
         const win = detail && detail.winner ? detail : null;
         if (!mine.length && !board.length && !win) return null; // nothing to show
         const me = getMyName();
@@ -2394,6 +2409,98 @@
     // the hand boundary (and doubles as the divider). Older summaries stay put, so
     // you can scroll back. Falls back to inserting before the new "Starting Hand".
     let pendingLogSummary = null;
+
+    // Everything the summary is built from, frozen at the end of the hand. Held so
+    // the panel can be rebuilt later, when the log has moved on to the next hand
+    // and none of this could be read again.
+    function handSnapshot() {
+        return {
+            epoch: handEpoch,
+            scope: fullHandScope().slice(),
+            seatOf: seatNameMap(),
+            btnSeat: buttonSeatIndex(),
+            blinds: parseBlinds(),
+            gameId: currentGameId(),
+        };
+    }
+
+    // Cards peers revealed through our share feature, keyed by hand id. Separate
+    // from the log's own "shows [..]" lines and only ever written by a reveal that
+    // passed decodeHand's sender+hand-id checks.
+    const peerReveals = new Map();     // gameId -> Map(name -> [c1, c2])
+    function peerRevealsFor(gameId) {
+        return gameId == null ? null : peerReveals.get(String(gameId)) || null;
+    }
+    function notePeerReveal(gameId, name, cards) {
+        if (gameId == null || !name || !cards || cards.length !== 2) return false;
+        const key = String(gameId);
+        let m = peerReveals.get(key);
+        if (!m) { m = new Map(); peerReveals.set(key, m); }
+        if (m.has(name)) return false;
+        m.set(name, cards);
+        if (peerReveals.size > 8) peerReveals.delete(peerReveals.keys().next().value); // keep a few hands
+        return true;
+    }
+
+    // A hand is "over" well before everything about it is known: gpokr reveals
+    // showdown hands a beat apart, a hand won without a showdown can be shown
+    // voluntarily afterwards, and a peer's "share last hand" arrives whenever they
+    // click it — sometimes after the next hand has started. So the summary is not a
+    // one-shot capture: while any of that is still landing it gets rebuilt, in place
+    // if it has already been dropped into the log.
+    let summarySnap = null;
+    let summaryEl = null;      // the live panel: pending, or already in the log
+    let summarySig = "";       // what it currently reflects
+    let summaryEpoch = -1;     // which hand it belongs to
+    let handEpoch = 0;         // bumped at every new-hand edge
+
+    // The parts of a hand the panel actually draws. Cheap to compare, and changes
+    // exactly when a rebuild would look different — including the pot line, which
+    // can arrive after the first reveal.
+    function summarySignature(snap) {
+        const parts = [];
+        for (const line of snap.scope) {
+            if (/ shows \[|wins (?:main|side) pot|^Dealing (?:flop|turn|river)/i.test(line)) parts.push(line);
+        }
+        const peers = peerRevealsFor(snap.gameId);
+        if (peers) for (const [n, c] of peers) parts.push("peer:" + n + ":" + c.join(""));
+        return parts.join("|");
+    }
+
+    // fromLive: re-read the hand from the log (only valid while it's still the most
+    // recent one). Otherwise the stored snapshot is reused, which is what a late
+    // peer reveal needs.
+    function refreshHandSummary(fromLive) {
+        if (!HAND_SUMMARY) return;
+        if (fromLive) summarySnap = handSnapshot();
+        const snap = summarySnap;
+        if (!snap) return;
+        const sig = summarySignature(snap);
+        // Whether the panel we're holding is this snapshot's, NOT whether a new hand
+        // has begun: a reveal that lands during the next hand still belongs to the
+        // old panel and has to patch it where it sits.
+        const newHand = summaryEpoch !== snap.epoch;
+        if (!newHand && summaryEl && sig === summarySig) return; // nothing new to draw
+        const el = buildHandSummaryRow(snap);
+        if (!el) return;
+        if (!newHand && summaryEl && summaryEl.isConnected) {
+            // Already in the log: swap it in place, carrying over whether the
+            // per-player breakdown was expanded so a rebuild doesn't shut it.
+            if (summaryEl.querySelector(".gpe-log-detail:not([hidden])")) {
+                const d = el.querySelector(".gpe-log-detail");
+                const t = el.querySelector(".gpe-log-toggle");
+                if (d) d.removeAttribute("hidden");
+                if (t) t.textContent = "▾";
+            }
+            summaryEl.replaceWith(el);
+        } else {
+            pendingLogSummary = el;   // goes in when the next hand starts
+        }
+        summaryEl = el;
+        summarySig = sig;
+        summaryEpoch = snap.epoch;
+    }
+
     function flushPendingLogSummary() {
         if (!pendingLogSummary) return;
         const container = document.querySelector(".iogc-MessagePanel-messages");
@@ -3542,7 +3649,6 @@
     // ---------- end-of-hand watcher (auto-share + harvest, once per hand) ----------
     let sharedThisHand = false;
     let harvestedThisHand = false;
-    let loggedCardsThisHand = false;
     let lastEnded = false;
     // Snapshot of my most-recently-completed hand, for the inline "share last
     // hand" button (which reveals it during the gap before the next flop).
@@ -3558,7 +3664,10 @@
     function resetHandScope() {
         handScopeBuf = [];
         pendingLogSummary = null;
-        loggedCardsThisHand = false; sharedThisHand = false; harvestedThisHand = false;
+        summarySnap = null; summaryEl = null; summarySig = ""; summaryEpoch = -1;
+        handEpoch++;
+        peerReveals.clear();
+        sharedThisHand = false; harvestedThisHand = false;
         lastHandCaptured = false; lastHandShare = null; sharedLastGameId = null;
         lastEnded = false;
     }
@@ -3589,8 +3698,14 @@
     function renderDecoded(sender, dec) {
         const bucket = dec.gameId == null ? "v1" : dec.gameId;
         const member = dec.gameId == null ? sender + "|" + cardBody(dec.cards) : sender;
-        if (sender !== getMyName() && !alreadyShown(bucket, member))
-            showHandForName(sender, dec.cards, dec.label || handLabelFor(dec.cards));
+        if (sender === getMyName() || alreadyShown(bucket, member)) return;
+        showHandForName(sender, dec.cards, dec.label || handLabelFor(dec.cards));
+        // Someone showing their hand after the round is the same event as a
+        // showdown, so it belongs in that hand's summary too — which may already be
+        // sitting in the log by the time they click. Legacy shares carry no hand id
+        // and are deliberately not eligible: there'd be no way to know which hand
+        // they belong to.
+        if (notePeerReveal(dec.gameId, sender, (dec.cards || []).map(normCard))) refreshHandSummary(false);
     }
 
     // A share can reach the chat before this client has registered the hand's
@@ -4359,7 +4474,8 @@
 
         const ended = handHasEnded();
         if (!ended && lastEnded) {
-            sharedThisHand = false; harvestedThisHand = false; loggedCardsThisHand = false; lastHandCaptured = false; // new hand began -> reset guards
+            sharedThisHand = false; harvestedThisHand = false; lastHandCaptured = false; // new hand began -> reset guards
+            handEpoch++;              // the next summary is a different hand's, never a rebuild of this one
             flushPendingLogSummary(); // drop the finished hand's cards in before this new hand
             // Keep [playername] through the bustout hand and one grace hand, then
             // drop it so "gg" never addresses a player who left several hands ago.
@@ -4375,10 +4491,9 @@
             harvestHand(currentHandScope());
         }
 
-        if (ended && !loggedCardsThisHand && HAND_SUMMARY) {
-            loggedCardsThisHand = true;
-            pendingLogSummary = buildHandSummaryRow(); // captured now; inserted when the next hand starts
-        }
+        // Built on the first poll after the hand ends and kept up to date from
+        // there: late reveals are the norm, not the exception.
+        if (ended && HAND_SUMMARY) refreshHandSummary(true);
 
         // Snapshot my finished hand for the "share last hand" button, regardless
         // of the auto-share settings. Retries across polls until the Replay line
