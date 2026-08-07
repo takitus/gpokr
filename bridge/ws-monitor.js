@@ -46,7 +46,12 @@
 
     // Event typeNames we forward to content.js. Deliberately tiny — see note 1
     // above. Everything else is counted and discarded.
-    var WANTED = { InteractionEvent: true };
+    // ChatEvent rides along because reactions ARE chat events (type 5), keyed by a
+    // messageId that exists nowhere in the DOM — the client renders lines, not ids.
+    // Chat is public at the table and already sitting in the page's DOM, so passing
+    // it over a page-readable channel exposes nothing new. Hole cards still must
+    // not (see note 1 above).
+    var WANTED = { InteractionEvent: true, ChatEvent: true };
 
     var api = {
         // typeName -> how many have arrived. Counts only: safe to leave exposed.
@@ -175,9 +180,17 @@
                 ev: {
                     typeName: name,
                     type: ev.type,
+                    // interactions
                     payload: ev.payload,
                     fromUserId: ev.fromUserId,
                     toUserId: ev.toUserId,
+                    // chat and reactions: messageId is what a reaction targets,
+                    // targetMessageId is what a type-5 event points back at.
+                    message: ev.message,
+                    name: ev.name,
+                    id: ev.id,
+                    messageId: ev.messageId,
+                    targetMessageId: ev.targetMessageId,
                 },
             });
         }
@@ -194,7 +207,8 @@
     // caller (any page script can post to this) can achieve is a cosmetic throw
     // that the server already rate-limits to one per 2s.
     var INTERACT_URL = "/api/gpokr/table/interact";
-    var MAX_TYPE = 32, MAX_PAYLOAD = 1024;
+    var REACT_URL = "/api/gpokr/table/react";
+    var MAX_TYPE = 32, MAX_PAYLOAD = 1024, MAX_REACTION = 32;
 
     function handleCommand(d) {
         if (!d) return;
@@ -204,7 +218,37 @@
             if (clientId) post({ __gpe: "gpe-ready", canSend: true });
             return;
         }
-        if (d.__gpe !== "gpe-send" || d.kind !== "interact") return;
+        if (d.__gpe !== "gpe-send") return;
+
+        // Reacting: a second fixed URL, not a general-purpose one. Same reasoning
+        // as interact — a hostile caller gets to add an emoji to a chat line, which
+        // the site already lets anyone do, and nothing more.
+        if (d.kind === "react") {
+            var rr = { __gpe: "gpe-sent", id: d.id, ok: false, status: 0 };
+            if (!clientId) return;   // silent: see the note below
+            var reaction = d.reaction, messageId = d.messageId;
+            // 32 chars rather than 1: one emoji can be a long ZWJ sequence.
+            if (typeof reaction !== "string" || !reaction || reaction.length > MAX_REACTION) {
+                rr.why = "bad reaction"; return post(rr);
+            }
+            // messageId 0 means a pre-upgrade server stamped it: not reactable.
+            if (typeof messageId !== "number" || !isFinite(messageId) || messageId <= 0) {
+                rr.why = "bad messageId"; return post(rr);
+            }
+            try {
+                fetch(REACT_URL, {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json", "IOGC-Client-ID": clientId },
+                    body: JSON.stringify({ messageId: Math.floor(messageId), reaction: reaction }),
+                }).then(function (r) {
+                    rr.ok = r.ok; rr.status = r.status; post(rr);
+                }, function () { rr.why = "network"; post(rr); });
+            } catch (e) { rr.why = "threw"; post(rr); }
+            return;
+        }
+
+        if (d.kind !== "interact") return;
         var reply = { __gpe: "gpe-sent", id: d.id, ok: false, status: 0 };
         // FIRST, before anything can be replied to: this file runs in EVERY
         // same-origin frame (all_frames), and only the one that saw the socket has

@@ -347,6 +347,118 @@
     color: #2f4f2a !important;
 }
 
+/* Pop-out button: same footprint as the emote button it sits beside. */
+/* The action bar is a GWT table, so the button can't just float right in a flex
+   row — it is absolutely positioned against the bar instead. */
+.gpe-controls-host { position: relative; }
+#gpe-popout-btn {
+    all: unset;
+    box-sizing: border-box;
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 3;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 6px;
+    opacity: 0.65;
+}
+#gpe-popout-btn:hover { opacity: 1; background: rgba(0, 0, 0, 0.07); }
+
+/* ---- Chat reactions ---- */
+/* The strip is hidden until the line is hovered, so a quiet chat pane looks
+   exactly as it did before. Both it and the badges are inline, so reacting never
+   changes a line's height in what is a narrow, scroll-heavy column. */
+.gpe-react-host { position: relative; }
+/* Floats OVER the line rather than sitting in it. Inline, it reflowed the text
+   every time the pointer crossed a line — messages jumped and wrapped as the strip
+   appeared and vanished. Absolute keeps the line's layout completely still, so
+   hovering down the pane is calm. Pinned to the right edge with a matching
+   backdrop so it stays legible over whatever text it covers. */
+.gpe-react-add {
+    display: none;
+    position: absolute;
+    right: 1px;
+    top: 50%;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    padding: 1px 3px;
+    border-radius: 9px;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+    z-index: 2;
+}
+.gpe-react-host:hover > .gpe-react-add { display: inline-block; }
+.gpe-react-quick {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 1px 2px;
+    border-radius: 4px;
+    opacity: 0.55;
+}
+.gpe-react-quick:hover { opacity: 1; background: rgba(0, 0, 0, 0.08); }
+.gpe-react-more { font-size: 10px; }
+
+.gpe-react-bar {
+    margin-left: 5px;
+    white-space: normal;   /* wrap rather than widen the pane */
+}
+.gpe-react-badge {
+    display: inline-block;
+    margin: 0 2px 0 0;
+    padding: 0 4px;
+    font-size: 11px;
+    line-height: 15px;
+    border-radius: 8px;
+    background: #eceff3;
+    border: 1px solid #d3d9e2;
+    cursor: default;
+    user-select: none;
+}
+/* Mine reads differently, so you can see at a glance what you've already sent. */
+.gpe-react-badge.gpe-react-mine {
+    background: #dbe8f7;
+    border-color: #8fb4dd;
+}
+
+/* Full picker for reactions — same grid as the emote picker, positioned per line. */
+#gpe-react-panel {
+    position: fixed;
+    z-index: 99999;
+    background: #fff;
+    border: 1px solid #cfcfcf;
+    border-radius: 10px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    padding: 8px;
+    display: none;
+    grid-template-columns: repeat(8, 30px);
+    grid-auto-rows: 30px;
+    gap: 3px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+#gpe-react-panel.gpe-open { display: grid; }
+#gpe-react-panel button {
+    all: unset;
+    box-sizing: border-box;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#gpe-react-panel button:hover { background: #f0f0f0; }
+
 /* ---- Interact menu (what to throw) ---- */
 #gpe-interact-panel {
     position: fixed;

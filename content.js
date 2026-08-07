@@ -256,7 +256,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel, #gpe-interact-tester"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel, #gpe-interact-tester, #gpe-react-panel, .gpe-react-add, .gpe-react-bar"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -607,8 +607,19 @@
     // seat, so leaking it into a page-readable channel would let any ad script on
     // gpokr.com fold the user's hand. So we don't ask for the credential, we ask the
     // bridge to make the one cosmetic call.
+    // Same narrow channel as a throw, different command: the bridge owns the
+    // IOGC-Client-ID header and we never see it.
+    function sendReactionViaBridge(messageId, reaction) {
+        return bridgeSend({ kind: "react", messageId: messageId, reaction: reaction });
+    }
+
+    // One request/reply exchange with the bridge, shared by every command it
+    // accepts. Resolves false rather than hanging if no bridge answers — the site
+    // build may have loaded too late to hook anything, and a caller waiting on a
+    // promise that never settles is the failure mode that already cost us a
+    // permanently muted player once.
     let sendSeq = 0;
-    function sendViaBridge(toUserId, payload) {
+    function bridgeSend(cmd) {
         return new Promise((resolve) => {
             const id = ++sendSeq;
             let done = false;
@@ -623,22 +634,17 @@
                 if (e.origin !== location.origin) return;
                 const d = e.data;
                 if (!d || d.__gpe !== "gpe-sent" || d.id !== id) return;
-                if (!d.ok && d.why) console.warn("[gpe] interaction not sent — " + d.why);
+                if (!d.ok && d.why) console.warn("[gpe] " + cmd.kind + " not sent — " + d.why);
                 finish(!!d.ok);
             };
             window.addEventListener("message", onReply);
-            // No bridge (site build too late to hook, or injection blocked) means no
-            // reply ever comes; fail rather than hang the caller.
             const timer = setTimeout(() => finish(false), 4000);
-            window.postMessage({
-                __gpe: "gpe-send",
-                kind: "interact",
-                id: id,
-                type: INTERACT_TYPE,
-                toUserId: toUserId,
-                payload: payload,
-            }, location.origin);
+            window.postMessage(Object.assign({ __gpe: "gpe-send", id: id }, cmd), location.origin);
         });
+    }
+
+    function sendViaBridge(toUserId, payload) {
+        return bridgeSend({ kind: "interact", type: INTERACT_TYPE, toUserId: toUserId, payload: payload });
     }
 
     // Name -> numeric user id, off the profile links the page already shows
@@ -774,6 +780,7 @@
         }
         if (d.__gpe !== "gpe-ws" || !d.ev) return;
         if (d.ev.typeName === "InteractionEvent") playInteraction(d.ev);
+        else if (d.ev.typeName === "ChatEvent") onChatEvent(d.ev);
     });
 
     // As an extension the tap is a document_start MAIN-world content script (it
@@ -2433,6 +2440,20 @@
         linkifyChat(node, nameEl); // make URLs clickable (leaves textContent intact)
         const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
 
+        // Pair this line with the tapped event that explains it, so it can be
+        // reacted to and so incoming reactions know where to land. Only possible
+        // when the tap is running; without it the line is simply not reactable.
+        if (canInteract) {
+            const msgId = claimMessageId(node, name, text);
+            if (msgId) {
+                node._gpeMsgId = msgId;
+                node.classList.add("gpe-react-host");
+                nodeByMsgId.set(msgId, node);
+                addReactionControls(node, msgId);
+                renderReactions(msgId);   // reactions can beat the line itself
+            }
+        }
+
         // Verify against the sender's name (blocks copy-paste onto another
         // player) and this table's live hand ids (blocks stale/replayed shares).
         const ids = [currentGameId(), curGameId, prevGameId];
@@ -2449,11 +2470,230 @@
         if (glyph) showEmoteForName(name, glyph);
     }
 
+    // ---------- chat reactions ----------
+    // Reactions are keyed by the server's messageId. The DOM has no such thing —
+    // the client renders lines, and its registry drops type-5 events entirely, so
+    // an incoming reaction never reaches the pane at all. Both halves therefore
+    // depend on pairing each tapped ChatEvent with the line the client renders for
+    // it.
+    //
+    // Pairing is by CONTENT, not arrival order: the pane also carries lines with no
+    // event behind them ("NAME is here", our own rendered shares), and matching
+    // positionally would silently drift by one and attach every reaction to the
+    // wrong message. Unmatched events simply expire.
+    const QUICK_REACTIONS = ["👍", "😂", "🔥"];
+    // ChatType, read off the client's own dispatch rather than guessed. It renders
+    // 1/2/4 itself from the NAME and ignores `message` entirely, which is exactly why
+    // an arrive/leave event has a sender and no text:
+    //   0 chat   1 arrive ("is here")   2 leave ("has left")
+    //   3 system (name may be null)     4 new signup      5 reaction
+    // (Confirms the API note for ui2: SYSTEM really is 3 and NEW really is 4.)
+    const CHAT_TYPE = { CHAT: 0, ARRIVE: 1, LEAVE: 2, SYSTEM: 3, NEW: 4, REACTION: 5 };
+    const REACTION_CHAT_TYPE = CHAT_TYPE.REACTION;
+    const PENDING_CHAT_MAX = 40;
+    const PENDING_CHAT_MS = 15000;     // an event whose line never arrived
+
+    let pendingChat = [];              // tapped events awaiting their DOM line
+    const nodeByMsgId = new Map();     // messageId -> the line's element
+    const reactionsByMsgId = new Map();// messageId -> Map(emoji -> Set(name))
+
+    // What to show for an event. Presence and system events carry no message text —
+    // the client composes their wording from the name alone — so rendering them as
+    // "NAME:" with an empty body (which is what the popout did) is simply wrong.
+    function chatLineFor(ev) {
+        const name = String(ev.name || "");
+        const text = String(ev.message || "");
+        switch (Number(ev.type)) {
+            case CHAT_TYPE.CHAT:   return { name: name, text: text, msgId: Number(ev.messageId) || 0 };
+            case CHAT_TYPE.ARRIVE: return { name: "", text: name + " is here" };
+            case CHAT_TYPE.LEAVE:  return { name: "", text: name + " has left" };
+            case CHAT_TYPE.NEW:    return { name: "", text: name + " has signed up. Welcome " + name + "!" };
+            case CHAT_TYPE.SYSTEM: return { name: "", text: name ? name + ": " + text : text };
+            default:               return text ? { name: name, text: text } : null;  // unknown + empty: skip
+        }
+    }
+
+    function onChatEvent(ev) {
+        const msgId = Number(ev.messageId) || 0;
+        if (Number(ev.type) === REACTION_CHAT_TYPE) {
+            noteReaction(Number(ev.targetMessageId) || 0, ev.message, ev.name);
+            return;
+        }
+        // The popout renders from here, not from the DOM, so it gets every message
+        // the server sent us — including ones the pane may have scrolled away.
+        const line = chatLineFor(ev);
+        if (line) noteChatLine(line);
+        if (!msgId) return;   // pre-upgrade server: nothing to react to
+        // Only real chat is reactable: the point of pairing a line to a messageId is
+        // reacting to what someone SAID, not to them walking in or out.
+        if (Number(ev.type) !== CHAT_TYPE.CHAT) return;
+        pendingChat.push({ msgId, name: String(ev.name || ""), text: String(ev.message || ""), at: Date.now() });
+        const cutoff = Date.now() - PENDING_CHAT_MS;
+        pendingChat = pendingChat.filter((p) => p.at >= cutoff).slice(-PENDING_CHAT_MAX);
+    }
+
+    // Claim the tapped event that best explains this line. Same sender AND the
+    // line contains the event's text, newest first — repeated identical messages
+    // ("ok", "gg") are common, so the newest unclaimed one is the right guess.
+    function claimMessageId(node, name, text) {
+        for (let i = pendingChat.length - 1; i >= 0; i--) {
+            const p = pendingChat[i];
+            if (p.name !== name) continue;
+            if (p.text && text.indexOf(p.text) < 0) continue;
+            pendingChat.splice(i, 1);
+            return p.msgId;
+        }
+        return 0;
+    }
+
+    function noteReaction(msgId, emoji, who) {
+        if (!msgId || typeof emoji !== "string" || !emoji) return;
+        let byEmoji = reactionsByMsgId.get(msgId);
+        if (!byEmoji) { byEmoji = new Map(); reactionsByMsgId.set(msgId, byEmoji); }
+        let names = byEmoji.get(emoji);
+        if (!names) { names = new Set(); byEmoji.set(emoji, names); }
+        names.add(String(who || "?"));
+        renderReactions(msgId);
+        updatePopoutReactions(msgId);
+    }
+
+    // Badges live in one trailing span, rebuilt wholesale — simpler than diffing,
+    // and the counts are tiny. Inline, so a reacted line stays one line.
+    function renderReactions(msgId) {
+        const node = nodeByMsgId.get(msgId);
+        if (!node || !node.isConnected) return;
+        const byEmoji = reactionsByMsgId.get(msgId);
+        let bar = node.querySelector(":scope > .gpe-react-bar");
+        if (!byEmoji || !byEmoji.size) { if (bar) bar.remove(); return; }
+        if (!bar) {
+            bar = document.createElement("span");
+            bar.className = "gpe-react-bar";
+            node.appendChild(bar);
+        }
+        bar.textContent = "";
+        const me = getMyName();
+        for (const [emoji, names] of byEmoji) {
+            const b = document.createElement("span");
+            b.className = "gpe-react-badge";
+            if (me && names.has(me)) b.classList.add("gpe-react-mine");
+            b.textContent = names.size > 1 ? emoji + " " + names.size : emoji;
+            b.title = Array.from(names).join(", ");
+            bar.appendChild(b);
+        }
+    }
+
+    // The hover strip: quick picks plus the full emote picker for everything else.
+    function addReactionControls(node, msgId) {
+        if (node.querySelector(":scope > .gpe-react-add")) return;
+        const add = document.createElement("span");
+        add.className = "gpe-react-add";
+        for (const emoji of QUICK_REACTIONS) {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "gpe-react-quick";
+            b.textContent = emoji;
+            b.title = "react with " + emoji;
+            b.addEventListener("click", (e) => {
+                e.preventDefault(); e.stopPropagation();
+                sendReaction(msgId, emoji);
+            });
+            add.appendChild(b);
+        }
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "gpe-react-quick gpe-react-more";
+        more.textContent = "➕";
+        more.title = "react with any emoji";
+        more.addEventListener("click", (e) => {
+            e.preventDefault(); e.stopPropagation();
+            openReactionPicker(more, msgId);
+        });
+        add.appendChild(more);
+        node.appendChild(add);
+    }
+
+    // Reuses the emote picker's panel shape rather than inventing a second one.
+    let reactionPicker = null;
+    function openReactionPicker(anchorEl, msgId) {
+        if (!reactionPicker || !reactionPicker.isConnected) {
+            const panel = document.createElement("div");
+            panel.id = "gpe-react-panel";
+            EMOTES.forEach((glyph) => {
+                const b = document.createElement("button");
+                b.type = "button";
+                b.textContent = glyph;
+                b.addEventListener("click", (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    sendReaction(panel._gpeMsgId, glyph);
+                    panel.classList.remove("gpe-open");
+                });
+                panel.appendChild(b);
+            });
+            document.body.appendChild(panel);
+            reactionPicker = panel;
+        }
+        const panel = reactionPicker;
+        panel._gpeMsgId = msgId;
+        panel.classList.add("gpe-open");
+        const r = anchorEl.getBoundingClientRect();
+        const pr = panel.getBoundingClientRect();
+        // Prefer above the line: the chat pane sits at the bottom of the window.
+        panel.style.left = Math.max(4, Math.min(r.left, window.innerWidth - pr.width - 4)) + "px";
+        panel.style.top = (r.top - pr.height - 6 > 4 ? r.top - pr.height - 6 : r.bottom + 6) + "px";
+    }
+
+    document.addEventListener("mousedown", (e) => {
+        if (!reactionPicker || !reactionPicker.classList.contains("gpe-open")) return;
+        if (reactionPicker.contains(e.target) || (e.target.classList && e.target.classList.contains("gpe-react-more"))) return;
+        reactionPicker.classList.remove("gpe-open");
+    });
+
+    // Optimistic, unlike a throw: a reaction has no animation to be honest about,
+    // the badge IS the feedback, and the echo simply confirms what we drew. The
+    // server has no rate limit here (parity with chat), so a failed send just
+    // leaves the optimistic badge to be corrected by reality on the next event.
+    function sendReaction(msgId, emoji) {
+        if (!msgId || !emoji) return;
+        const me = getMyName();
+        if (me) noteReaction(msgId, emoji, me);
+        sendReactionViaBridge(msgId, emoji);
+    }
+
+    // Lines already in the pane when we start. The tap runs from document_start but
+    // content.js only at document_idle, so the events for the first second or two of
+    // chat are sitting in pendingChat while their lines are already on screen — the
+    // MutationObserver will never see those. Stamp them here.
+    //
+    // Stamping ONLY: handleChatMessage also fires emote overlays and renders shares,
+    // and replaying that over existing lines would pop overlays for messages the
+    // user already watched arrive.
+    function stampExistingChatLines() {
+        if (!canInteract) return;
+        for (const node of document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML")) {
+            if (node._gpeMsgId) continue;
+            const nameEl = node.querySelector("b");
+            if (!nameEl) continue;   // presence lines have no sender and no event
+            const name = nameEl.textContent.trim();
+            const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
+            const msgId = claimMessageId(node, name, text);
+            if (!msgId) continue;
+            node._gpeMsgId = msgId;
+            node.classList.add("gpe-react-host");
+            nodeByMsgId.set(msgId, node);
+            addReactionControls(node, msgId);
+            renderReactions(msgId);
+        }
+    }
+
     function watchChat() {
         const chat = document.querySelector(".iogc-ChatPanel-messages");
         if (!chat) return false;
-        if (chat._gpeWatched) return true;
+        if (chat._gpeWatched) {
+            stampExistingChatLines();   // canInteract may only have arrived just now
+            return true;
+        }
         chat._gpeWatched = true;
+        stampExistingChatLines();
         const observer = new MutationObserver((mutations) => {
             for (const m of mutations) {
                 for (const added of m.addedNodes) {
@@ -5131,6 +5371,348 @@
         if (backdrop) backdrop.style.display = "none";
     }
 
+    // ---------- chat popout ----------
+    // A real browser window you can drag to another monitor. Built from the tapped
+    // event stream rather than mirroring the site's chat pane: we already receive
+    // every ChatEvent with its sender, text and messageId, so the popout is a first
+    // class view instead of a scraped copy — and reactions work in it for free.
+    //
+    // The window is about:blank, which inherits our origin, so this tab builds and
+    // updates its DOM directly. Nothing runs inside it: no script injection, no CSP
+    // to satisfy, no content-script match rules. It is a passive view owned here.
+    const CHAT_LOG_MAX = 300;
+    const POPOUT_NAME = "gpe-chat-popout";
+    const chatLog = [];              // {msgId, name, text}
+    let popout = null;
+    const popoutRows = new Map();    // messageId -> row element inside the popout
+
+    function popoutAlive() {
+        try { return !!(popout && !popout.closed && popout.document && popout.document.body); }
+        catch (e) { return false; }  // window navigated away from our origin
+    }
+
+    function noteChatLine(entry) {
+        chatLog.push(entry);
+        if (chatLog.length > CHAT_LOG_MAX) chatLog.splice(0, chatLog.length - CHAT_LOG_MAX);
+        if (popoutAlive()) appendPopoutRow(entry);
+    }
+
+    // Everything the popout needs, inlined: it can't load overlay.css (that isn't a
+    // web-accessible resource, and wiring one up for a window we fully control would
+    // be pointless). Follows the page's current theme.
+    function popoutCss(dark) {
+        const bg = dark ? "#161a22" : "#ffffff";
+        const fg = dark ? "#e6ebf2" : "#222222";
+        const dim = dark ? "#8a97ab" : "#6b7280";
+        const line = dark ? "#2b3648" : "#e5e7eb";
+        const chip = dark ? "#2b3648" : "#eceff3";
+        const chipBorder = dark ? "#3c4a61" : "#d3d9e2";
+        const mine = dark ? "#33465e" : "#dbe8f7";
+        const mineBorder = dark ? "#5c7ea8" : "#8fb4dd";
+        const inputBg = dark ? "#1f2530" : "#ffffff";
+        return `
+html,body{margin:0;padding:0;background:${bg};color:${fg};font:13px/1.45 Arial,Helvetica,sans-serif}
+/* Viewport units, not height:100%: the chain html->body->flex only resolves
+   reliably in standards mode, and 100vh is immune to how the document was made.
+   overflow:hidden on body so the WINDOW never scrolls — only the log does. */
+html{height:100%}
+body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
+/* min-height:0 is the whole fix for the send row sliding below the fold: a flex
+   item defaults to min-height:auto, so the log refused to shrink under its own
+   content and pushed the body taller than the window. */
+#log{flex:1 1 auto;min-height:0;overflow-y:auto;padding:8px 10px}
+.row{padding:2px 0;border-bottom:1px solid ${line};position:relative;word-wrap:break-word}
+.row:last-child{border-bottom:none}
+.who{font-weight:bold}
+.txt{margin-left:4px}
+.sys{color:${dim};font-style:italic}
+.bar{margin-left:6px}
+.badge{display:inline-block;margin:0 3px 0 0;padding:0 5px;font-size:11px;line-height:17px;border-radius:9px;
+  background:${chip};border:1px solid ${chipBorder};cursor:default;user-select:none}
+.badge.mine{background:${mine};border-color:${mineBorder}}
+.add{display:none;position:absolute;right:2px;top:50%;transform:translateY(-50%);white-space:nowrap;
+  padding:1px 4px;border-radius:10px;background:${bg};box-shadow:0 1px 5px rgba(0,0,0,.35);z-index:2}
+.row:hover>.add{display:inline-block}
+.add button{all:unset;cursor:pointer;font-size:14px;line-height:1;padding:1px 3px;border-radius:5px;opacity:.75}
+.add button:hover{opacity:1}
+#ctrls{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px 8px 0}
+.ctrl{all:unset;cursor:pointer;font:12px Arial,sans-serif;color:${fg};background:${chip};
+  border:1px solid ${chipBorder};border-radius:6px;padding:3px 8px;line-height:1.3}
+.ctrl:hover{border-color:${mineBorder}}
+#send{flex:0 0 auto;display:flex;gap:6px;padding:8px;border-top:1px solid ${line}}
+#send input{flex:1;box-sizing:border-box;padding:6px 8px;font:13px Arial,sans-serif;color:${fg};
+  background:${inputBg};border:1px solid ${chipBorder};border-radius:6px}
+#send button{all:unset;cursor:pointer;padding:6px 12px;border-radius:6px;background:${chip};
+  border:1px solid ${chipBorder};font:12px Arial,sans-serif;color:${fg}}
+#picker{position:fixed;display:none;grid-template-columns:repeat(8,30px);grid-auto-rows:30px;gap:3px;
+  padding:8px;background:${bg};border:1px solid ${chipBorder};border-radius:10px;
+  box-shadow:0 6px 22px rgba(0,0,0,.45);max-height:230px;overflow-y:auto;z-index:5}
+#picker.open{display:grid}
+#picker button{all:unset;cursor:pointer;font-size:18px;width:30px;height:30px;border-radius:6px;
+  display:flex;align-items:center;justify-content:center}
+#picker button:hover{background:${chip}}
+#stale{display:none;padding:6px 10px;background:#7f1d1d;color:#fff;font-size:12px}
+`;
+    }
+
+    function buildPopout(w) {
+        const dark = document.documentElement.classList.contains("gpe-dark");
+        const d = w.document;
+        // Written with a doctype rather than assembled into the blank document:
+        // about:blank has none, which lands the window in QUIRKS mode where the
+        // percentage-height chain misbehaves. One write, then DOM as usual.
+        d.open();
+        d.write("<!doctype html><html><head><meta charset=\"utf-8\"><title>GPokr chat</title></head><body></body></html>");
+        d.close();
+        const style = d.createElement("style");
+        style.textContent = popoutCss(dark);
+        d.head.appendChild(style);
+        const body = d.body;
+        const stale = d.createElement("div");
+        stale.id = "stale";
+        stale.textContent = "the gpokr tab this was opened from has gone — reopen it there";
+        const log = d.createElement("div");
+        log.id = "log";
+        const sendRow = d.createElement("div");
+        sendRow.id = "send";
+        const input = d.createElement("input");
+        input.type = "text";
+        input.placeholder = "message…";
+        const btn = d.createElement("button");
+        btn.textContent = "Send";
+        const picker = d.createElement("div");
+        picker.id = "picker";
+
+        // The same controls as the in-page row. Built here rather than cloned: the
+        // nodes have to belong to the popout's document, and the behaviour comes from
+        // reusing chatButtonMessage()/sendMessage() so tokens like [playername]
+        // resolve exactly as they do in the page.
+        const ctrls = d.createElement("div");
+        ctrls.id = "ctrls";
+        const emote = d.createElement("button");
+        emote.className = "ctrl";
+        emote.textContent = "😀";
+        emote.title = "send an emote";
+        emote.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const p = picker;
+            p._msgId = 0;              // 0 = send as a message, not as a reaction
+            p.classList.add("open");
+            const r = emote.getBoundingClientRect();
+            const ph = p.offsetHeight || 200;
+            p.style.left = Math.max(4, Math.min(r.left, w.innerWidth - 260)) + "px";
+            p.style.top = (r.top - ph - 6 > 4 ? r.top - ph - 6 : r.bottom + 6) + "px";
+        });
+        ctrls.appendChild(emote);
+        w._gpeCtrls = ctrls;
+
+        // Sending goes back through the page's own chat input (sendMessage), so the
+        // popout needs no API of its own and inherits whatever the site allows.
+        const submit = () => {
+            const text = input.value.trim();
+            if (!text) return;
+            input.value = "";
+            sendMessage(text);
+        };
+        btn.addEventListener("click", submit);
+        input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+
+        EMOTES.forEach((glyph) => {
+            const b = d.createElement("button");
+            b.textContent = glyph;
+            b.addEventListener("click", () => {
+                const id = picker._msgId;
+                picker.classList.remove("open");
+                // Opened from a line: react to it. Opened from the emote button:
+                // send it as a message, same as the in-page picker does.
+                if (id) sendReaction(id, glyph);
+                else sendMessage(glyph);
+            });
+            picker.appendChild(b);
+        });
+        body.addEventListener("mousedown", (e) => {
+            if (picker.classList.contains("open") && !picker.contains(e.target)) picker.classList.remove("open");
+        });
+
+        body.append(stale, log, ctrls, sendRow, picker);
+        sendRow.append(input, btn);
+        w._gpeLog = log;
+        renderPopoutChatButtons(w);
+        w._gpePicker = picker;
+        return w;
+    }
+
+    // Mirrors renderChatButtons() into the popout. Kept as its own function so the
+    // popout can be refreshed when the user edits their buttons in the page.
+    function renderPopoutChatButtons(w) {
+        if (!w || !w._gpeCtrls) return;
+        const d = w.document;
+        const ctrls = w._gpeCtrls;
+        // Wipe everything after the emote button and rebuild.
+        while (ctrls.children.length > 1) ctrls.removeChild(ctrls.lastChild);
+        CHAT_CONFIG.forEach((b) => {
+            const btn = d.createElement("button");
+            btn.className = "ctrl quick";
+            btn.textContent = b.name || b.text;
+            btn.title = b.text;
+            btn.addEventListener("click", () => {
+                const msg = chatButtonMessage(b.text);   // resolves [playername] etc. live
+                if (msg) sendMessage(msg);
+            });
+            ctrls.appendChild(btn);
+        });
+    }
+
+    function appendPopoutRow(entry) {
+        const w = popout, d = w.document, log = w._gpeLog;
+        if (!log) return;
+        const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
+        const row = d.createElement("div");
+        row.className = "row";
+        if (entry.name) {
+            const who = d.createElement("span");
+            who.className = "who";
+            who.textContent = entry.name + ":";
+            const txt = d.createElement("span");
+            txt.className = "txt";
+            txt.textContent = entry.text;
+            row.append(who, txt);
+        } else {
+            row.className = "row sys";
+            row.textContent = entry.text;
+        }
+        if (entry.msgId) {
+            const add = d.createElement("span");
+            add.className = "add";
+            for (const emoji of QUICK_REACTIONS.concat(["➕"])) {
+                const b = d.createElement("button");
+                b.textContent = emoji;
+                b.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    if (emoji === "➕") {
+                        const p = w._gpePicker;
+                        p._msgId = entry.msgId;
+                        p.classList.add("open");
+                        const r = b.getBoundingClientRect();
+                        const ph = p.offsetHeight || 200;
+                        p.style.left = Math.max(4, Math.min(r.left - 120, w.innerWidth - 260)) + "px";
+                        p.style.top = (r.top - ph - 6 > 4 ? r.top - ph - 6 : r.bottom + 6) + "px";
+                    } else {
+                        sendReaction(entry.msgId, emoji);
+                    }
+                });
+                add.appendChild(b);
+            }
+            row.appendChild(add);
+            popoutRows.set(entry.msgId, row);
+        }
+        log.appendChild(row);
+        if (atBottom) log.scrollTop = log.scrollHeight;   // don't yank the view if they scrolled up
+        if (entry.msgId) updatePopoutReactions(entry.msgId);
+    }
+
+    function updatePopoutReactions(msgId) {
+        if (!popoutAlive()) return;
+        const row = popoutRows.get(msgId);
+        if (!row || !row.isConnected) return;
+        const d = popout.document;
+        const byEmoji = reactionsByMsgId.get(msgId);
+        let bar = row.querySelector(".bar");
+        if (!byEmoji || !byEmoji.size) { if (bar) bar.remove(); return; }
+        if (!bar) {
+            bar = d.createElement("span");
+            bar.className = "bar";
+            const add = row.querySelector(".add");
+            row.insertBefore(bar, add || null);
+        }
+        bar.textContent = "";
+        const me = getMyName();
+        for (const [emoji, names] of byEmoji) {
+            const b = d.createElement("span");
+            b.className = "badge" + (me && names.has(me) ? " mine" : "");
+            b.textContent = names.size > 1 ? emoji + " " + names.size : emoji;
+            b.title = Array.from(names).join(", ");
+            bar.appendChild(b);
+        }
+    }
+
+    function renderPopoutAll() {
+        if (!popoutAlive()) return;
+        popoutRows.clear();
+        popout._gpeLog.textContent = "";
+        for (const entry of chatLog) appendPopoutRow(entry);
+        popout._gpeLog.scrollTop = popout._gpeLog.scrollHeight;
+    }
+
+    // Seed from the lines already on screen, so a freshly opened popout isn't empty.
+    // These have no messageId (their events predate us or were never matched), so
+    // they show but can't be reacted to — same honesty rule as the in-page pane.
+    function seedChatLog() {
+        if (chatLog.length) return;
+        for (const node of document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML")) {
+            const nameEl = node.querySelector("b");
+            const text = nameEl
+                ? node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "")
+                : node.textContent.trim();
+            if (!text) continue;
+            chatLog.push({ msgId: node._gpeMsgId || 0, name: nameEl ? nameEl.textContent.trim() : "", text });
+        }
+    }
+
+    function openChatPopout() {
+        seedChatLog();
+        // A NAMED window: clicking again focuses the existing one instead of
+        // stacking duplicates, and a page reload re-attaches to the same window
+        // rather than orphaning it.
+        let w = null;
+        try {
+            w = window.open("", POPOUT_NAME, "popup=yes,width=440,height=660");
+        } catch (e) { w = null; }
+        if (!w) {
+            console.warn("[gpe] chat popout blocked — allow popups for gpokr.com");
+            return;
+        }
+        popout = w;
+        buildPopout(w);
+        renderPopoutAll();
+        try { w.focus(); } catch (e) {}
+    }
+
+    // If this tab goes away the popout can't be fed any more; say so in it rather
+    // than leaving a window that silently stops updating.
+    window.addEventListener("beforeunload", () => {
+        if (!popoutAlive()) return;
+        try {
+            const s = popout.document.getElementById("stale");
+            if (s) s.style.display = "block";
+        } catch (e) {}
+    });
+
+    // Lives at the far right of the action bar (pot / fold / call / raise), not in
+    // the chat row. GWT rebuilds that bar between hands, so this is re-checked on
+    // the poll and re-attaches when its host is replaced — same approach as the
+    // splash button.
+    function addChatPopoutButton() {
+        const bar = document.querySelector(".iogc-Controls");
+        if (!bar) return;
+        const existing = document.getElementById("gpe-popout-btn");
+        if (existing && existing.parentElement === bar) return;
+        if (existing) existing.remove();   // stale: the bar was rebuilt under it
+        bar.classList.add("gpe-controls-host");   // positioning context for the button
+
+        const b = document.createElement("button");
+        b.id = "gpe-popout-btn";
+        b.type = "button";
+        b.title = "pop chat out into its own window (drag it to another monitor)";
+        b.textContent = "⧉";
+        b.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();   // the bar's own cells have handlers
+            openChatPopout();
+        });
+        bar.appendChild(b);
+    }
+
     // ---------- UI: emote picker ----------
     function addPicker() {
         const input = getChatInput();
@@ -5506,6 +6088,7 @@
         const ready = watchChat();
         addPicker();
         addSplashButton();
+        addChatPopoutButton();
         ensureSidePanelTabs();
         ensureLobbyTools();
         ensureSideSections();
@@ -5513,7 +6096,7 @@
         if (ready) {
             clearInterval(boot);
             setInterval(() => {
-                watchChat(); addPicker(); addSplashButton(); ensureSidePanelTabs(); ensureLobbyTools();
+                watchChat(); addPicker(); addSplashButton(); addChatPopoutButton(); ensureSidePanelTabs(); ensureLobbyTools();
                 ensureSideSections(); watchProfileMenuButton(); pollHandState();
             }, 1500);
         }

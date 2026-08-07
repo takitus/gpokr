@@ -458,6 +458,32 @@ html.gpe-dark .gpe-bg-auto.gpe-on {
     color: #c7dab4 !important;
 }
 
+html.gpe-dark #gpe-popout-btn:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* Chat reactions — badge chips readable on the dark pane, and the picker matched
+   to the emote picker it mirrors. */
+html.gpe-dark .gpe-react-badge {
+    background: #2b3648;
+    border-color: #3c4a61;
+    color: #e6ebf2;
+}
+html.gpe-dark .gpe-react-badge.gpe-react-mine {
+    background: #33465e;
+    border-color: #5c7ea8;
+}
+html.gpe-dark .gpe-react-quick:hover { background: rgba(255, 255, 255, 0.12); }
+/* The floating strip needs the dark pane's own backdrop, not white. */
+html.gpe-dark .gpe-react-add {
+    background: #232c3a;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+}
+html.gpe-dark #gpe-react-panel {
+    background: #232c3a;
+    border-color: #3c4a61;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+}
+html.gpe-dark #gpe-react-panel button:hover { background: #344056; }
+
 /* Interact menu — same palette as the emote picker above, since they're the same
    kind of thing: a small popover hanging off a control. The cooling-down state
    keeps its dimming and simply must not light up on hover. */
