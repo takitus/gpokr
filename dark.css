@@ -531,6 +531,12 @@ html.gpe-dark .gpe-side-options .gpe-side-edit {
     border-color: #45526b;
 }
 html.gpe-dark .gpe-side-options .gpe-side-edit:hover { background: #344056; }
+html.gpe-dark .gpe-side-options .gpe-side-edit.gpe-active {
+    background: #23364e;
+    border-color: #4c9aff;
+    color: #9fc8ff;
+}
+html.gpe-dark .gpe-side-options .gpe-side-edit.gpe-active:hover { background: #294061; }
 html.gpe-dark .gpe-side-options .gpe-side-num {
     background: #262e3b;
     color: #d2d8e2;

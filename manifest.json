@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GPokr Tools",
-  "version": "2.2.3",
+  "version": "2.2.4",
   "description": "Dark mode, odds HUD, player stats & notes, table roster, bet sizing, session tracker, emotes, table interactions, and hand sharing.",
   "permissions": ["storage"],
   "icons": {
@@ -37,7 +37,7 @@
 	},
 	{
 	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"],
-	  "js": ["vendor/three.iife.js", "3d/chips3d.js", "3d/table3d.js", "3d/coin3d.js", "3d/beer3d.js", "odds.js", "content.js"],
+	  "js": ["vendor/three.iife.js", "3d/chips3d.js", "3d/table3d.js", "3d/coin3d.js", "3d/beer3d.js", "3d/flower3d.js", "3d/glove3d.js", "odds.js", "content.js"],
 	  "css": ["overlay.css", "dark.css"],
 	  "run_at": "document_idle"
 	}

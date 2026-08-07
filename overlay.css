@@ -1110,6 +1110,16 @@ tr.gpe-menu-off { display: none !important; }
     cursor: pointer;
 }
 .gpe-side-options .gpe-side-edit:hover { background: #f0f0f0; }
+/* "chain" button lit while its tester panel is open */
+.gpe-side-options .gpe-side-edit.gpe-active {
+    background: #e7f0fb;
+    border-color: #4c9aff;
+    color: #1f5fae;
+    font-weight: bold;
+}
+.gpe-side-options .gpe-side-edit.gpe-active:hover { background: #dbe8f8; }
+/* version badge relocated onto the odds-HUD row: shove it to the far right */
+.gpe-side-options .gpe-side-version { margin-left: auto; }
 /* inline "last N hands" number input on the bet-readout option row */
 .gpe-side-options .gpe-side-num {
     margin-left: auto;

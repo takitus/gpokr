@@ -394,8 +394,27 @@
             ensure: ensureBeer3d,
             throw: (from, to, table, opts) => window.GPE_BEER && GPE_BEER.toss(from, to, table, opts),
         },
+        flower: {
+            label: "flower",
+            glyph: "💐",
+            // It drifts down for a few seconds and lingers, so — like the beer — a
+            // 2s spam would pile a bouquet of them over one seat.
+            cooldownMs: 8000,
+            flinch: false,  // a gift floating down, not a hit; the avatar doesn't recoil
+            ensure: ensureFlower3d,
+            throw: (from, to, table, opts) => window.GPE_FLOWER && GPE_FLOWER.toss(from, to, table, opts),
+        },
+        glove: {
+            label: "glove",
+            glyph: "🧤",
+            cooldownMs: INTERACT_COOLDOWN_MS,   // a quick slap; just the server's own limit
+            // flinch left default (true): the slap shakes the avatar exactly like a
+            // chip strike does, via the onHit callback.
+            ensure: ensureGlove3d,
+            throw: (from, to, table, opts) => window.GPE_GLOVE && GPE_GLOVE.toss(from, to, table, opts),
+        },
     };
-    const INTERACT_ORDER = ["chip", "beer"]; // menu order, not object key order
+    const INTERACT_ORDER = ["chip", "beer", "flower", "glove"]; // menu order, not object key order
 
     // The renderer lives in three extra files (vendor/three.iife.js, 3d/chips3d.js
     // for the chip artwork, and 3d/coin3d.js). As an extension all three are
@@ -441,6 +460,45 @@
                 .catch(() => { beerLoad = null; return false; });
         }
         return beerLoad;
+    }
+
+    // Flower and glove are the same shape as the beer: extra actors on coin3d's
+    // shared layer, each a model that must be fetched before it can play. Same
+    // load-once-then-await-ready dance, so a scripted step waits for the model.
+    let flowerLoad = null;
+    function ensureFlower3d() {
+        if (window.GPE_FLOWER) return GPE_FLOWER.ready();
+        if (!flowerLoad) {
+            flowerLoad = ensureCoin3d()
+                .then((ok) => {
+                    if (!ok) return false;
+                    if (window.GPE_FLOWER) return true;
+                    if (!SELF_SRC) return false; // extension: it's a content script already
+                    const base = SELF_SRC.replace(/[^/]*$/, "");
+                    return loadScript(base + "3d/flower3d.js").then(() => !!window.GPE_FLOWER);
+                })
+                .then((ok) => (ok && window.GPE_FLOWER ? GPE_FLOWER.ready() : false))
+                .catch(() => { flowerLoad = null; return false; });
+        }
+        return flowerLoad;
+    }
+
+    let gloveLoad = null;
+    function ensureGlove3d() {
+        if (window.GPE_GLOVE) return GPE_GLOVE.ready();
+        if (!gloveLoad) {
+            gloveLoad = ensureCoin3d()
+                .then((ok) => {
+                    if (!ok) return false;
+                    if (window.GPE_GLOVE) return true;
+                    if (!SELF_SRC) return false; // extension: it's a content script already
+                    const base = SELF_SRC.replace(/[^/]*$/, "");
+                    return loadScript(base + "3d/glove3d.js").then(() => !!window.GPE_GLOVE);
+                })
+                .then((ok) => (ok && window.GPE_GLOVE ? GPE_GLOVE.ready() : false))
+                .catch(() => { gloveLoad = null; return false; });
+        }
+        return gloveLoad;
     }
 
     // An element's rect, or null when it isn't laid out (GWT keeps hidden
@@ -3295,12 +3353,23 @@
             "avatar, for throwing a chip from your seat that bounces off them " +
             "and lands on the felt. Everyone at the table sees it, and you see " +
             "theirs. Cosmetic only — it never affects the game. Requires a seat."],
-        ["gpe-show-tester", "interaction tester", "showTester", () => SHOW_TESTER,
-            "A draggable panel for scripting a sequence of throws (chips, beers, " +
-            "pauses) at a chosen seat and firing them in one go. Dev/testing aid — " +
-            "it uses the same wire path as the interact menu, so everyone sees it. " +
-            "Requires a seat and \"interactions\" on."],
     ];
+
+    // The "chain" button (scripted-interaction tester) rides on the interactions
+    // row, but only for us — it's a dev/authoring tool, not a player feature.
+    function isChainUser() {
+        const me = (getMyName() || "").trim().toLowerCase();
+        return me === "takitus" || me === "jwilsons";
+    }
+    let chainBtn = null;
+    // Keep it shown only to the right user and lit while the panel is open. Called
+    // both when settings change and from the 1.5s tab poll, since the login name
+    // may only appear after the tabs are first built.
+    function updateChainBtn() {
+        if (!chainBtn) return;
+        chainBtn.style.display = isChainUser() ? "" : "none";
+        chainBtn.classList.toggle("gpe-active", SHOW_TESTER);
+    }
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
     // either UI updates the other through chrome.storage.
@@ -3310,6 +3379,7 @@
             if (box) box.checked = current();
         }
         syncBetWindowInputs();
+        updateChainBtn();
     }
 
     // The hand-count lives in two places (tools tab + bets tab); keep both in
@@ -3343,8 +3413,11 @@
         if (sideTab === "bets") renderBetsList();
         const tabs = inner.querySelector(":scope > .gpe-side-tabs");
         if (!tabs) return;
+        // The tab strip no longer holds the version badge, so its children are
+        // exactly the tab buttons — index-aligned with SIDE_TAB_ORDER.
         Array.from(tabs.children).forEach((b, i) =>
             b.classList.toggle("gpe-active", sideTab === SIDE_TAB_ORDER[i]));
+        updateChainBtn(); // the login name may have arrived since the tabs were built
     }
 
     // Instant hover popup — replaces the native `title` tooltip, which has an
@@ -3408,17 +3481,6 @@
             tabs.appendChild(b);
         });
 
-        // Version, top-right of the tab strip. In the tab row rather than the pane
-        // so it lines up with the tabs and doesn't push the options down.
-        const ver = buildVersion();
-        if (ver) {
-            const badge = document.createElement("span");
-            badge.className = "gpe-side-version";
-            badge.textContent = "v" + ver;
-            badge.title = "GPokr Tools " + ver + (SELF_SRC ? " (site build)" : "");
-            tabs.appendChild(badge);
-        }
-
         const pane = document.createElement("div");
         pane.className = "gpe-side-options";
         for (const [id, label, key, , tip] of SIDE_OPTIONS) {
@@ -3438,6 +3500,36 @@
                 // Hover-only: don't let a click on the icon toggle the checkbox.
                 info.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
                 row.appendChild(info);
+            }
+            // Version badge rides the first row (odds HUD), pushed to the far right
+            // — "top right of the panel", opposite the odds-HUD toggle. It's plain
+            // text, so swallow clicks that would otherwise toggle the checkbox.
+            if (id === "gpe-show-odds") {
+                const ver = buildVersion();
+                if (ver) {
+                    const badge = document.createElement("span");
+                    badge.className = "gpe-side-version";
+                    badge.textContent = "v" + ver;
+                    badge.title = "GPokr Tools " + ver + (SELF_SRC ? " (site build)" : "");
+                    badge.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+                    row.appendChild(badge);
+                }
+            }
+            // The interactions option gets a "chain" button — the scripted-throw
+            // tester — shown only to us (updateChainBtn gates it). Toggles the panel.
+            if (id === "gpe-coin-toss") {
+                const chain = document.createElement("button");
+                chain.type = "button";
+                chain.className = "gpe-side-edit gpe-chain-btn";
+                chain.textContent = "chain";
+                chain.title = "scripted-interaction builder";
+                chain.addEventListener("click", (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    saveSetting("showTester", !SHOW_TESTER);
+                });
+                row.appendChild(chain);
+                chainBtn = chain;
+                updateChainBtn();
             }
             // The bet-buttons option gets an inline editor (same config the popup edits).
             if (id === "gpe-bet-buttons") {
