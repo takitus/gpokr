@@ -56,7 +56,7 @@ mkdir -p "$STAGE/vendor" "$STAGE/3d" "$STAGE/bridge"
 # directory so the source archive can rebuild the same layout; esbuild's
 # --outbase=. below keeps 3d/ and vendor/ nested in the output.
 BUILT_TOP="content.js odds.js popup.js overlay.css dark.css"
-BUILT_3D="3d/chips3d.js 3d/table3d.js 3d/coin3d.js 3d/beer3d.js"
+BUILT_3D="3d/chips3d.js 3d/table3d.js 3d/coin3d.js 3d/beer3d.js 3d/flower3d.js 3d/glove3d.js"
 # The page-world WebSocket tap. Also a web_accessible_resource, because the
 # site-hosted build fetches it by URL instead of getting it as a content script.
 BUILT_BRIDGE="bridge/ws-monitor.js"
