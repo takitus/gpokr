@@ -454,20 +454,59 @@
         return coinLoad;
     }
 
+    // props3d.js is two things at once: a ~8KB catalog (names, glyphs, sounds,
+    // cooldowns) and the renderer that draws from it. The catalog is needed long
+    // before anything is drawn — the menu lists from it, and the RECEIVER checks
+    // incoming item names against it, so a build without the catalog silently drops
+    // every throw that isn't a chip. As an extension it's a content script and is
+    // simply there; in the site build it has to be fetched, and nothing else would
+    // ever fetch it: the only callers of ensureProps3d() are the catalog's own
+    // entries, so an empty catalog stayed empty forever and the menu never grew
+    // past "chip".
+    //
+    // Nothing in props3d.js touches THREE or coin3d at load time (both are read
+    // inside its functions), so the catalog can be pulled on its own and the heavy
+    // chain — vendor/three.iife.js and the renderers, ~800KB — stays deferred until
+    // something is actually thrown.
+    let catalogLoad = null;
+    function ensurePropsCatalog() {
+        if (window.GPE_PROPS) return Promise.resolve(true);
+        if (!SELF_SRC) return Promise.resolve(false);   // extension: it is a content script
+        if (!catalogLoad) {
+            const base = SELF_SRC.replace(/[^/]*$/, "");
+            catalogLoad = loadScript(base + "3d/props3d.js")
+                .then(() => {
+                    if (!window.GPE_PROPS) return false;
+                    if (syncInteractCatalog()) updateInteractButtons();   // the menu just grew
+                    return true;
+                })
+                .catch((err) => {
+                    console.warn("[gpe] interaction catalog unavailable — could not load " + err.message);
+                    catalogLoad = null;
+                    return false;
+                });
+        }
+        return catalogLoad;
+    }
+
     // One loader for every model-based object: props3d owns the catalog, so this
     // no longer grows by a function per item. It rides on coin3d (registering
     // projectiles, borrowing the layer and clock), so that has to be up first.
     let propsLoad = null;
     function ensureProps3d() {
-        if (window.GPE_PROPS) return Promise.resolve(true);
+        // BOTH, not just the catalog: with only props3d loaded (the site build
+        // fetches it at boot for the item list) an early return here would report
+        // ready and then draw nothing, warning "THREE is not loaded" per throw.
+        if (window.GPE_PROPS && window.GPE_COIN) return Promise.resolve(true);
         if (!propsLoad) {
             propsLoad = ensureCoin3d()
                 .then((ok) => {
                     if (!ok) return false;
                     if (window.GPE_PROPS) return true;
-                    if (!SELF_SRC) return false;   // extension: it is a content script already
-                    const base = SELF_SRC.replace(/[^/]*$/, "");
-                    return loadScript(base + "3d/props3d.js").then(() => !!window.GPE_PROPS);
+                    // Through the same loader, so a throw during the boot fetch joins
+                    // it rather than pulling props3d a second time (which would
+                    // re-register every projectile with coin3d).
+                    return ensurePropsCatalog();
                 })
                 .then((ok) => { if (ok) syncInteractCatalog(); return ok; })
                 .catch(() => { propsLoad = null; return false; });
@@ -6281,8 +6320,10 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     ensureWsMonitor();
     warmSounds();
     // As an extension props3d is already a content script, so its catalog is here
-    // immediately; the site build fetches it, so the 1.5s poll retries below.
+    // immediately; the site build fetches it now (the poll below also re-syncs, but
+    // only this kicks off the fetch).
     syncInteractCatalog();
+    ensurePropsCatalog();
     // We load after the session frame has already gone by, so ask rather than wait
     // for the announcement. Keeps asking until answered: a socket reconnect (table
     // change, dropped connection) starts a new session we may need to hear about.
