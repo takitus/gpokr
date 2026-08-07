@@ -73,16 +73,24 @@
     const FADE_MS = 700;
 
     // Chip faces are drawn to match the site's own chip art: a colored body with
-    // eight white edge spots, a big white inner disc, and the denomination in
-    // outlined gray. Every body color here was sampled off a screenshot of a live
-    // table, so the set matches what the site actually draws: $1 is grey (not the
-    // casino-standard white) and $5 is a deep red rather than an orange one.
+    // six white edge spots (EDGE_SPOTS below), a big white inner disc, and the
+    // denomination in outlined gray. Every body color here was sampled off a
+    // screenshot of a live table, so the set matches what the site actually draws:
+    // $1 is grey (not the casino-standard white), $5 is a deep red rather than an
+    // orange one, and the two largest are abbreviated ("2.5K" blue, "10K" pale
+    // green) exactly as the site abbreviates them.
     const CHIP_TYPES = [
-        { denom: 1,   body: "#8a8a8a" },
-        { denom: 5,   body: "#a82026" },
-        { denom: 25,  body: "#189040" },
-        { denom: 100, body: "#0d0d0d" },
-        { denom: 500, body: "#a4007c" },
+        { denom: 1,     body: "#8a8a8a" },
+        { denom: 5,     body: "#a82026" },
+        { denom: 25,    body: "#189040" },
+        { denom: 100,   body: "#0d0d0d" },
+        { denom: 500,   body: "#a4007c" },
+        // The site abbreviates the big two on the chip face rather than printing
+        // all the digits, so they carry explicit labels. Kept in ascending order.
+        // The 2500's blue takes the default glyph colour; the 10,000's pale green
+        // needs a darker one, because #606060 goes muddy on a body that light.
+        { denom: 2500,  body: "#5292d0", label: "2.5K" },
+        { denom: 10000, body: "#bde9a4", label: "10K", text: "#3c3c3c" },
     ];
     const CHIP_SPOT = "#f8f8f8";   // edge spots and inner disc
     const CHIP_TEXT = "#606060";   // denomination glyphs
@@ -147,7 +155,10 @@
         g.fill();
 
         // Denomination, shrunk to fit the disc, outlined the way the site's is.
-        const label = String(type.denom);
+        // A type may carry its own label: the site prints "10K", not "10000", and
+        // the auto-shrink would otherwise squeeze five digits into an unreadable
+        // smear.
+        const label = type.label != null ? String(type.label) : String(type.denom);
         const font = (px) => "bold " + px + "px Arial, Helvetica, sans-serif";
         let px = Math.round(R * 0.66);
         g.font = font(px);

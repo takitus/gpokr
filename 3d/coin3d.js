@@ -6,9 +6,10 @@
  * and drops onto the felt just in front of them, where it barely bounces before
  * falling flat.
  *
- * The chip itself is chips3d.js's artwork (GPE_CHIPS.art) — the same $1/$5/$25/
- * $100/$500 denominations the chip portal drops, drawn to match the site's own
- * chip art — so there is only ever one set of chips to keep in step.
+ * The chip itself is chips3d.js's artwork (GPE_CHIPS.art) — the same
+ * $1/$5/$25/$100/$500/$2.5K/$10K denominations the chip portal drops, drawn to match
+ * the site's own chip art — so there is only ever one set of chips to keep in
+ * step. Add a denomination there and it appears here without any change.
  *
  * Rendered into one full-viewport WebGL layer (canvas, pointer-events:none) that
  * sits over the page. Avatars and the table live in different corners of the GWT
