@@ -428,14 +428,9 @@ html.gpe-dark .gpe-emote-overlay {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
-/* end-of-hand card summary: panel a step lighter than the log so it pops */
-html.gpe-dark .gpe-log-cards {
-    background: #2b3648;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-}
-html.gpe-dark .gpe-log-cards .gpe-log-slot { border-color: rgba(255, 255, 255, 0.22); }
-html.gpe-dark .gpe-log-detail { border-top-color: rgba(255, 255, 255, 0.15); }
-html.gpe-dark .gpe-log-toggle:hover { background: rgba(255, 255, 255, 0.12); }
+/* end-of-hand card summary is styled like the poker table (green felt + leather
+   rail) in overlay.css; the same look reads in both light and dark mode, so no
+   dark-mode override is needed here. */
 
 /* emote picker + inline toggles */
 html.gpe-dark #gpe-picker-btn,
