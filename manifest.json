@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GPokr Tools",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "Dark mode, odds HUD, player stats & notes, table roster, bet sizing, session tracker, emotes, table interactions, and hand sharing.",
   "permissions": ["storage"],
   "icons": {
@@ -23,7 +23,7 @@
   "web_accessible_resources": [
 	{
 	  "resources": ["assets/*", "bridge/ws-monitor.js"],
-	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*", "https://kdice.com/*", "https://www.kdice.com/*"]
+	  "matches": ["https://gpokr.com/*", "https://www.gpokr.com/*"]
 	}
   ],
   "content_scripts": [

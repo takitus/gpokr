@@ -21,6 +21,8 @@
     let SHOW_TESTER = false;      // interaction-tester panel: scripted-throw builder (opt-in dev tool)
     let testerPos = null;         // dragged position of the tester panel (persisted as settings.testerPos)
     let testerHeight = 0;         // dragged height, 0 = size to content (settings.testerHeight)
+    let testerPause = 100;        // default gap after each new throw (settings.testerPause)
+    let testerDock = false;       // docked to the left of the table, mirroring the right rail (settings.testerDock)
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
     let TABLE_3D = false;        // replace the flat felt with a live 3D render (opt-in)
@@ -162,6 +164,11 @@
         const tpos = s && s.testerPos;
         testerPos = (tpos && typeof tpos.left === "number" && typeof tpos.top === "number")
             ? { left: tpos.left, top: tpos.top } : null;
+        const tp = parseInt(s && s.testerPause, 10);
+        testerPause = PAUSE_CHOICES.indexOf(tp) >= 0 ? tp : 100;
+        const wasDocked = testerDock;
+        testerDock = !!(s && s.testerDock);
+        if (testerDock !== wasDocked && testerPanel) placeTester(testerPanel); // docks or re-floats
         updateInteractTester(); // create/remove/reposition the tester panel for the new value
         const cfg = sanitizeBetConfig(s && s.betButtons);
         if (JSON.stringify(cfg) !== JSON.stringify(BET_CONFIG)) {
@@ -368,7 +375,10 @@
     // Receiver limits. The payload is whatever someone chose to POST — anyone can
     // curl this endpoint — so nothing here is trusted: a sequence is clamped into
     // these bounds or dropped, never taken at face value.
-    const Q_MAX_STEPS = 25;
+    // Rows, not objects: every throw row carries its own pause, so a full sequence
+    // is 15 objects plus the 14 gaps between them. The receiver counts objects
+    // (Q_MAX_ITEMS) — this only has to be roomy enough not to truncate a legal one.
+    const Q_MAX_STEPS = 30;
     // One object per row, so a step is just its name: no count to multiply, which
     // is what made a short sequence able to put hundreds of objects in the air.
     // A ceiling on the whole sequence, because the cost of animating them lands on
@@ -1082,7 +1092,50 @@
     let testerPanel = null;
     let testerDrag = null;        // index being dragged while reordering steps
     let activeResize = null;      // in-progress vertical resize of a panel
-    let testerSteps = []; // the sequence being built: [ ["chip",3], ["wait",500], ["beer",1], ... ]
+    // The sequence being built, as ROWS: [ {item: "chip", pause: 500}, ... ]. A row
+    // is one object plus the gap that follows it, which is how it reads on screen;
+    // rowsToSteps() flattens it to the wire's [name] / ["wait", ms] pairs. Pauses
+    // are no longer separate rows — they were always attached to a throw in
+    // practice, and adding them by hand was two steps for one idea.
+    let testerRows = [];
+    // Offered pauses, shortest first — 100ms is the one that actually gets used, so
+    // it's the default. Capped by the wire's own per-pause limit, so nothing here
+    // can build a sequence the receiver would clamp.
+    const PAUSE_CHOICES = [0, 100, 150, 250, 500, 750, 1000, 1500, 2000, 3000];
+    // Compact on purpose: docked, the whole row lives in ~173px beside the object
+    // name, and "500ms" was wide enough to truncate the thing being thrown.
+    function pauseLabel(ms) { return !ms ? "—" : (ms < 1000 ? ms + "ms" : (ms / 1000) + "s"); }
+    function buildPauseSelect(value, onChange) {
+        const sel = document.createElement("select");
+        sel.className = "gpe-tester-pause";
+        sel.title = "pause after this throw";
+        for (const ms of PAUSE_CHOICES) {
+            const o = document.createElement("option");
+            o.value = String(ms);
+            o.textContent = pauseLabel(ms);
+            if (ms === value) o.selected = true;
+            sel.appendChild(o);
+        }
+        sel.addEventListener("change", () => onChange(clampInt(sel.value, 0, Q_MAX_WAIT_MS, 0)));
+        return sel;
+    }
+
+    // Rows -> wire steps. The last row's pause is dropped: nothing follows it, and
+    // a trailing wait would only hold the sender's slot after the last object lands.
+    function rowsToSteps(rows) {
+        const out = [];
+        rows.forEach((r, i) => {
+            out.push([r.item]);
+            if (r.pause > 0 && i < rows.length - 1) out.push(["wait", r.pause]);
+        });
+        return out;
+    }
+    // What the receiver will actually wait through, for the status line and the cap.
+    function rowsPauseTotal(rows) {
+        let t = 0;
+        rows.forEach((r, i) => { if (i < rows.length - 1) t += r.pause || 0; });
+        return t;
+    }
 
     // Clamp a form value to whole [lo, hi], falling back to dflt on garbage.
     function clampInt(v, lo, hi, dflt) {
@@ -1128,6 +1181,7 @@
     function makeDraggable(el, handle, posKey) {
         handle.addEventListener("mousedown", (e) => {
             if (e.button !== 0) return;
+            if (el.classList.contains("gpe-tester-docked")) return; // a rail doesn't move
             // A drag starts on the header's empty space, not on its buttons.
             if (e.target.closest("button, input, select, textarea")) return;
             const r = el.getBoundingClientRect();
@@ -1174,9 +1228,13 @@
     function updateInteractTester() {
         if (!SHOW_TESTER) {
             if (testerPanel) { testerPanel.remove(); testerPanel = null; }
+            applyDockShift(0);   // closing the panel must give the page its centring back
             return;
         }
         if (!testerPanel || !testerPanel.isConnected) buildTester();
+        // The table moves: window resize, the site's own panels growing, fullscreen.
+        // Cheap enough to re-measure on the poll rather than guess at every cause.
+        if (testerDock) applyTesterDock(testerPanel);
         syncTesterTargets();
         syncTesterStatus();
     }
@@ -1193,6 +1251,12 @@
         const title = document.createElement("span");
         title.className = "gpe-tester-title";
         title.textContent = "interaction creator";
+        const dock = document.createElement("button");
+        dock.type = "button";
+        dock.className = "gpe-tester-dock";
+        dock.textContent = "⇤";
+        dock.title = "dock to the left of the table";
+        dock.addEventListener("click", () => saveSetting("testerDock", !testerDock));
         const x = document.createElement("button");
         x.type = "button";
         x.className = "gpe-tester-x";
@@ -1200,6 +1264,7 @@
         x.title = "close (turns the option off)";
         x.addEventListener("click", () => saveSetting("showTester", false));
         head.appendChild(title);
+        head.appendChild(dock);
         head.appendChild(x);
         panel.appendChild(head);
 
@@ -1221,9 +1286,11 @@
         list.className = "gpe-tester-steps";
         panel.appendChild(list);
 
-        // Add-a-throw: item dropdown + count + button.
+        // Add-a-throw: the object, the pause that will follow it, and the button.
+        // The pause here is the DEFAULT for new rows — set it once and every throw
+        // added afterwards inherits it (each row can still be changed on its own).
         const throwRow = document.createElement("div");
-        throwRow.className = "gpe-tester-row";
+        throwRow.className = "gpe-tester-row gpe-tester-addrow";
         const item = document.createElement("select");
         item.className = "gpe-tester-item";
         for (const key of INTERACT_ORDER) {
@@ -1233,41 +1300,25 @@
             o.textContent = it.glyph + " " + it.label;
             item.appendChild(o);
         }
+        const defPause = buildPauseSelect(testerPause, (ms) => {
+            testerPause = ms;
+            saveSetting("testerPause", ms);   // the default persists, the rows keep their own
+        });
+        defPause.title = "default pause for each new throw";
         const addThrow = document.createElement("button");
         addThrow.type = "button";
         addThrow.className = "gpe-tester-add";
-        addThrow.textContent = "+ throw";
-        addThrow.addEventListener("click", () => addTesterStep([item.value]));
+        addThrow.textContent = "+ add";
+        addThrow.addEventListener("click", () => addTesterRow(item.value));
+        // Object and the button on the top line, the default pause under them: the
+        // pause is a setting for what comes next, not part of the click.
         throwRow.appendChild(item);
         throwRow.appendChild(addThrow);
         panel.appendChild(throwRow);
-
-        // Add-a-pause: ms + button.
-        const pauseRow = document.createElement("div");
-        pauseRow.className = "gpe-tester-row";
-        const plabel = document.createElement("span");
-        plabel.className = "gpe-tester-label";
-        plabel.textContent = "Pause";
-        const wait = document.createElement("input");
-        wait.type = "number";
-        wait.className = "gpe-tester-num";
-        wait.min = "0"; wait.max = String(Q_MAX_WAIT_MS); wait.step = "100"; wait.value = "100";
-        const unit = document.createElement("span");
-        unit.className = "gpe-tester-unit";
-        unit.textContent = "ms";
-        const addPause = document.createElement("button");
-        addPause.type = "button";
-        addPause.className = "gpe-tester-add";
-        addPause.textContent = "+ pause";
-        addPause.addEventListener("click", () => {
-            const ms = clampInt(wait.value, 0, Q_MAX_WAIT_MS, 0);
-            if (ms > 0) addTesterStep(["wait", ms]);
-        });
-        pauseRow.appendChild(plabel);
-        pauseRow.appendChild(wait);
-        pauseRow.appendChild(unit);
-        pauseRow.appendChild(addPause);
-        panel.appendChild(pauseRow);
+        const defRow = document.createElement("div");
+        defRow.className = "gpe-tester-row gpe-tester-defrow";
+        defRow.appendChild(defPause);
+        panel.appendChild(defRow);
 
         // Status + clear + send.
         const foot = document.createElement("div");
@@ -1278,7 +1329,7 @@
         clear.type = "button";
         clear.className = "gpe-tester-clear";
         clear.textContent = "clear";
-        clear.addEventListener("click", () => { testerSteps = []; renderTesterSteps(); });
+        clear.addEventListener("click", () => { testerRows = []; renderTesterSteps(); });
         const send = document.createElement("button");
         send.type = "button";
         send.className = "gpe-tester-send";
@@ -1304,11 +1355,87 @@
         renderTesterSteps();
     }
 
+    // Docked, the panel stops being a floating card and becomes a rail on the other
+    // side of the table: same top and height as the game area, mirroring the site's
+    // own right-hand panels. On a wide screen that puts the table between two
+    // columns; on a narrow one there is nowhere to put it, so it stays floating
+    // rather than covering the felt.
+    const DOCK_MIN_W = 168;
+    const DOCK_GAP = 10;
+    function dockTarget() {
+        const game = document.querySelector(".iogc-GameWindow-container")
+            || document.querySelector(".iogc-GameWindow");
+        const r = game && game.getBoundingClientRect();
+        if (!r || r.width < 1) return null;
+        // Mirror the right rail's width when there is one, so both flanks match.
+        const rail = document.querySelector(".iogc-SidePanel-inner");
+        const railW = rail ? Math.round(rail.getBoundingClientRect().width) : 0;
+        const want = Math.max(DOCK_MIN_W, railW || 190);
+        // The shift already in place is room we're using, not room we've lost — count
+        // it back in, or docking would fight itself: shift right, measure less space,
+        // undock, shift back, measure more, dock...
+        const applied = document.documentElement.classList.contains("gpe-docked-shift")
+            ? parseInt(getComputedStyle(document.documentElement).getPropertyValue("--gpe-dock-shift"), 10) || 0
+            : 0;
+        const room = r.left + Math.round(applied / 2) - DOCK_GAP * 2;
+        if (room < DOCK_MIN_W) return null;                 // no space: stay floating
+        const w = Math.min(want, room);
+        return { left: Math.max(DOCK_GAP, r.left - DOCK_GAP - w), top: r.top, width: w, height: r.height };
+    }
+
+    // Docking puts a column to the left of a layout the site centres on its own, so
+    // without this the table ends up right of centre with the new panel hanging off
+    // the edge. Padding the body shifts the centred column by HALF the padding, which
+    // is exactly what re-centres the assembly: the play area lands in the middle with
+    // the two panels the same distance out from it.
+    function applyDockShift(width) {
+        const root = document.documentElement;
+        if (width) root.style.setProperty("--gpe-dock-shift", (width + DOCK_GAP) + "px");
+        else root.style.removeProperty("--gpe-dock-shift");
+        root.classList.toggle("gpe-docked-shift", !!width);
+    }
+
+    // The class carries the look; the geometry is inline because it tracks a live
+    // element. Kept together so the two can't disagree.
+    function applyTesterDock(panel) {
+        const d = testerDock ? dockTarget() : null;
+        panel.classList.toggle("gpe-tester-docked", !!d);
+        applyDockShift(d ? d.width : 0);
+        if (d) {
+            panel.style.left = d.left + "px";
+            panel.style.top = d.top + "px";
+            panel.style.width = d.width + "px";
+            panel.style.height = d.height + "px";
+        } else {
+            panel.style.width = "";
+            panel.style.height = "";
+            applyTesterHeight(panel, testerHeight);   // back to the dragged height
+            // Deliberately does NOT place the panel: placeTester() is what calls this,
+            // and calling back into it here recursed forever whenever docking was on
+            // but the screen was too narrow to honour it.
+        }
+        const btn = panel.querySelector(".gpe-tester-dock");
+        if (btn) {
+            btn.textContent = d ? "⇥" : "⇤";
+            btn.title = d ? "undock (float the panel)" : "dock to the left of the table";
+            btn.classList.toggle("gpe-active", !!d);
+        }
+        // Docked, it has no floating geometry to set: no drag, no height grabber.
+        const grip = panel.querySelector(".gpe-tester-resize");
+        if (grip) grip.style.display = d ? "none" : "";
+        return !!d;
+    }
+
     // Fixed position: the dragged spot if there is one (clamped on-screen), else a
     // sensible default down the left edge, clear of the odds HUD.
     function placeTester(panel) {
         if (activeDrag && activeDrag.el === panel) return; // don't fight an active drag
         if (activeResize && activeResize.el === panel) return; // ...or an active resize
+        // Always consulted, not just when docking is on: it is what CLEARS the docked
+        // class, the page shift and the fixed height when it's turned off. Gating the
+        // call on testerDock left an undocked panel still wearing the rail's styling
+        // with the page still pushed across.
+        if (applyTesterDock(panel)) return;   // docked: geometry comes from the table
         if (testerPos) {
             const p = clampToViewport(testerPos.left, testerPos.top, panel.offsetWidth, panel.offsetHeight);
             panel.style.left = p.left + "px";
@@ -1319,21 +1446,13 @@
         }
     }
 
-    // One object per row, so this is simply how many object rows there are. Pauses
-    // aren't objects and don't count toward the ceiling.
-    function testerItemCount() {
-        let n = 0;
-        for (const s of testerSteps) if (s[0] !== "wait") n++;
-        return n;
-    }
-
-    function addTesterStep(step) {
-        if (testerSteps.length >= Q_MAX_STEPS) return;   // same ceilings the wire enforces
-        if (step[0] !== "wait" && testerItemCount() >= Q_MAX_ITEMS) {
+    // One object per row, so the row count IS the object count.
+    function addTesterRow(item) {
+        if (testerRows.length >= Q_MAX_ITEMS) {
             flashTesterStatus("full — " + Q_MAX_ITEMS + " items max");
             return;
         }
-        testerSteps.push(step);
+        testerRows.push({ item: item, pause: testerPause });
         renderTesterSteps();
     }
 
@@ -1341,13 +1460,13 @@
         if (!testerPanel) return;
         const list = testerPanel.querySelector(".gpe-tester-steps");
         list.textContent = "";
-        if (!testerSteps.length) {
+        if (!testerRows.length) {
             const empty = document.createElement("div");
             empty.className = "gpe-tester-empty";
-            empty.textContent = "no steps — add a throw or a pause";
+            empty.textContent = "no throws yet — add one below";
             list.appendChild(empty);
         } else {
-            testerSteps.forEach((step, i) => {
+            testerRows.forEach((row, i) => {
                 const chip = document.createElement("div");
                 chip.className = "gpe-tester-step";
 
@@ -1378,8 +1497,8 @@
                     e.preventDefault();
                     chip.classList.remove("gpe-dragover");
                     if (testerDrag === null || testerDrag === i) return;
-                    const moved = testerSteps.splice(testerDrag, 1)[0];
-                    testerSteps.splice(i, 0, moved);
+                    const moved = testerRows.splice(testerDrag, 1)[0];
+                    testerRows.splice(i, 0, moved);
                     testerDrag = null;
                     renderTesterSteps();   // indices shifted: rebuild
                 });
@@ -1390,63 +1509,48 @@
                 n.textContent = (i + 1) + ".";
                 chip.appendChild(n);
 
-                // Every row is editable in place. Edits write straight back into
-                // testerSteps on `change` and deliberately DON'T re-render: rebuilding
-                // the list under a field you're typing in would drop focus (and the
-                // caret) mid-keystroke. Only add/remove re-renders, since those shift
-                // the indices these closures capture.
-                if (step[0] === "wait") {
-                    const pause = document.createElement("span");
-                    pause.className = "gpe-tester-step-label";
-                    pause.textContent = "⏸";
-                    const ms = document.createElement("input");
-                    ms.type = "number";
-                    ms.className = "gpe-tester-num";
-                    ms.min = "0"; ms.max = String(Q_MAX_WAIT_MS); ms.step = "100";
-                    ms.value = String(step[1]);
-                    ms.title = "pause before the next step (max " + Q_MAX_WAIT_MS + "ms)";
-                    ms.addEventListener("change", () => {
-                        const v = clampInt(ms.value, 0, Q_MAX_WAIT_MS, 0);
-                        ms.value = String(v);       // show the clamp rather than silently differing
-                        step[1] = v;
-                        syncTesterStatus();
-                    });
-                    const unit = document.createElement("span");
-                    unit.className = "gpe-tester-unit";
-                    unit.textContent = "ms";
-                    chip.append(pause, ms, unit);
-                } else {
-                    // Two fields: which object, and how many of it.
-                    const item = document.createElement("select");
-                    item.className = "gpe-tester-item";
-                    for (const key of INTERACT_ORDER) {
-                        const it = INTERACT_ITEMS[key];
-                        const o = document.createElement("option");
-                        o.value = key;
-                        o.textContent = it.glyph + " " + it.label;
-                        if (key === step[0]) o.selected = true;
-                        item.appendChild(o);
-                    }
-                    // A step naming an object this build doesn't have (an older saved
-                    // sequence, say) keeps its value rather than silently becoming
-                    // whatever happens to be first in the list.
-                    if (!INTERACT_ITEMS[step[0]]) {
-                        const o = document.createElement("option");
-                        o.value = step[0];
-                        o.textContent = step[0] + " (unknown)";
-                        o.selected = true;
-                        item.appendChild(o);
-                    }
-                    item.addEventListener("change", () => { step[0] = item.value; syncTesterStatus(); });
-                    chip.append(item);
+                // Two dropdowns: what to throw, and how long to wait after it. Edits
+                // write straight back into the row on `change` and deliberately DON'T
+                // re-render — rebuilding the list under an open dropdown would close
+                // it. Only add/remove/reorder re-renders, since those shift the
+                // indices these closures capture.
+                const item = document.createElement("select");
+                item.className = "gpe-tester-item";
+                for (const key of INTERACT_ORDER) {
+                    const it = INTERACT_ITEMS[key];
+                    const o = document.createElement("option");
+                    o.value = key;
+                    o.textContent = it.glyph + " " + it.label;
+                    if (key === row.item) o.selected = true;
+                    item.appendChild(o);
                 }
+                // A row naming an object this build doesn't have (an older saved
+                // sequence, say) keeps its value rather than silently becoming
+                // whatever happens to be first in the list.
+                if (!INTERACT_ITEMS[row.item]) {
+                    const o = document.createElement("option");
+                    o.value = row.item;
+                    o.textContent = row.item + " (unknown)";
+                    o.selected = true;
+                    item.appendChild(o);
+                }
+                item.addEventListener("change", () => { row.item = item.value; syncTesterStatus(); });
+
+                const pause = buildPauseSelect(row.pause, (ms) => { row.pause = ms; syncTesterStatus(); });
+                // The last row's pause is never played, so say so rather than let it
+                // look like a gap that will happen.
+                if (i === testerRows.length - 1) {
+                    pause.classList.add("gpe-tester-pause-moot");
+                    pause.title = "last throw — this pause isn't played";
+                }
+                chip.append(item, pause);
 
                 const rm = document.createElement("button");
                 rm.type = "button";
                 rm.className = "gpe-tester-step-x";
                 rm.textContent = "✕";
-                rm.title = "remove step";
-                rm.addEventListener("click", () => { testerSteps.splice(i, 1); renderTesterSteps(); });
+                rm.title = "remove throw";
+                rm.addEventListener("click", () => { testerRows.splice(i, 1); renderTesterSteps(); });
                 chip.appendChild(rm);
                 list.appendChild(chip);
             });
@@ -1498,12 +1602,19 @@
         else if (!canInteract) msg = "bridge not ready";
         else if (!amSeated()) msg = "take a seat to send";
         else if (!sel || !sel.value) msg = "no target";
-        else if (!testerSteps.length) msg = "add a step";
+        else if (!testerRows.length) msg = "add a throw";
         else {
-            const n = testerItemCount();
-            msg = testerSteps.length + " step" + (testerSteps.length === 1 ? "" : "s")
-                + " · " + n + "/" + Q_MAX_ITEMS + " items";
-            ok = true;
+            // The receiver stops replaying once the pauses pass Q_MAX_TOTAL_MS, so an
+            // over-long sequence doesn't fail — it silently loses its tail. Better to
+            // refuse to send it than to let that happen off-screen.
+            const total = rowsPauseTotal(testerRows);
+            if (total > Q_MAX_TOTAL_MS) {
+                msg = "over " + (Q_MAX_TOTAL_MS / 1000) + "s — shorten a pause";
+            } else {
+                msg = testerRows.length + "/" + Q_MAX_ITEMS + " items"
+                    + (total ? " · " + (total / 1000) + "s of pauses" : "");
+                ok = true;
+            }
         }
         if (send) send.disabled = !ok;
         if (status && !(status._gpeHoldUntil && Date.now() < status._gpeHoldUntil)) status.textContent = msg;
@@ -1525,8 +1636,9 @@
         if (!testerPanel) return;
         const sel = testerPanel.querySelector(".gpe-tester-target");
         const name = sel && sel.value;
-        if (!name || !testerSteps.length) return;
-        const steps = testerSteps.map((s) => s.slice()); // copy: sendInteraction reads it as-is
+        if (!name || !testerRows.length) return;
+        if (rowsPauseTotal(testerRows) > Q_MAX_TOTAL_MS) return; // the status says why
+        const steps = rowsToSteps(testerRows);
         flashTesterStatus("sending…");
         sendInteraction(name, steps).then((sent) => flashTesterStatus(sent ? "sent ✓" : "dropped ✗"));
     }

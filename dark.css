@@ -638,3 +638,34 @@ html.gpe-dark .gpe-side-tabs button.gpe-active {
     color: #e6ebf2;
     border-bottom-color: #6fb1e8;
 }
+
+/* ---- Interaction creator, docked: mirror the right rail in dark mode too ----
+   Floating, it is a dark card like the odds HUD (above). Docked, it is furniture
+   beside the table, so it takes the rail's own palette instead — the same
+   #1f2530 / #39455a this file gives .iogc-SidePanel-inner. The shadow has to be
+   named here rather than in overlay.css: the floating rule above is
+   `html.gpe-dark #id`, which outranks a plain `#id.class`. */
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked {
+    background: #1f2530;
+    border-color: #39455a;
+    color: #c3cad6;
+    box-shadow: none;
+}
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-title,
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-label,
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-status { color: #c3cad6; }
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-steps {
+    background: rgba(0, 0, 0, 0.18);
+    border-color: #39455a;
+}
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-empty { color: #7d8899; }
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked select,
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked input,
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-add,
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-clear,
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-send {
+    background: #2a3242;
+    color: #d6dce6;
+    border-color: #45526a;
+}
+html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-step { border-color: #39455a; }

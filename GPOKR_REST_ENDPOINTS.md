@@ -187,8 +187,10 @@ single object, not n of them.
 Receivers must not trust any of it: the payload is whatever someone chose to POST,
 and anyone can `curl` this endpoint. GPokr Tools clamps to
 
-- ≤ 25 rows, of which at most **15 may be objects** — the animation cost lands on
-  every client at the table, not just the sender's
+- ≤ 30 rows, of which at most **15 may be objects** — the animation cost lands on
+  every client at the table, not just the sender's. (30 rather than 15: every
+  object may be followed by a pause, so a full sequence is 15 objects and the 14
+  gaps between them.)
 - each `wait` ≤ 3000 ms, whole sequence ≤ 15 s
 - unknown item names skipped rather than fatal, so an older build survives objects
   added later

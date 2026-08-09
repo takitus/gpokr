@@ -734,6 +734,92 @@ img.iogc-PlayerPanel-avatar.gpe-coin-hit {
    footer — so it lifts and the list absorbs the height instead. */
 #gpe-interact-tester.gpe-tester-sized .gpe-tester-steps { max-height: none; }
 
+/* The pause dropdown sits beside the object on every row: narrower than the item,
+   and muted on the last row, where the gap is never played. */
+.gpe-tester-pause {
+    flex: 0 1 auto;
+    min-width: 0;
+    box-sizing: border-box;
+    background: #fff;
+    color: #2a3f55;
+    border: 1px solid #bcd0e4;
+    border-radius: 6px;
+    padding: 3px 4px;
+    font: inherit;
+}
+.gpe-tester-pause-moot { opacity: 0.5; }
+/* The dropdowns carry short, known strings — they don't need the panel's body size,
+   and at rail width the extra points were the difference between one line and two. */
+.gpe-tester-target, .gpe-tester-item, .gpe-tester-pause { font-size: 10px; padding: 2px 3px; }
+.gpe-tester-step { gap: 3px; }
+.gpe-tester-step .gpe-tester-item,
+.gpe-tester-step .gpe-tester-pause { font-size: 9.5px; padding: 1px 2px; }
+/* The object name gets the slack; the pause takes only what its labels need. */
+.gpe-tester-step .gpe-tester-item { flex: 1 1 auto; min-width: 0; }
+.gpe-tester-step .gpe-tester-pause { flex: 0 0 auto; width: 4.6em; }
+/* The add row's own pause is the default for new throws, so it sits under the
+   object rather than beside it — it applies to the next click, not this one. */
+.gpe-tester-addrow .gpe-tester-item { flex: 1 1 auto; }
+.gpe-tester-defrow { margin-top: -2px; }
+.gpe-tester-defrow .gpe-tester-pause { flex: 0 1 auto; }
+
+/* ---- Docked mode: the panel becomes a rail on the free side of the table ----
+   Geometry (left/top/width/height) is set inline from the game area's own box; this
+   is only the look, which deliberately mirrors the site's right-hand panels so a
+   full-screen layout reads as table-between-two-columns rather than a floating tool
+   that happens to be parked there. */
+#gpe-interact-tester.gpe-tester-docked {
+    /* the site's own .iogc-SidePanel-inner: white, 1px sides, heavier bottom edge */
+    background: #fff;
+    border: 1px solid #ccc;
+    border-bottom-width: 2px;
+    border-radius: 8px;
+    box-shadow: none;
+    cursor: default;
+}
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-head { cursor: default; }
+/* Docked height is the table's, so the list absorbs it the same way an explicitly
+   sized panel does — without this the 148px cap leaves dead space under the footer. */
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-steps { max-height: none; }
+/* At rail width every pixel in a row is spoken for, so the ordinal goes: the order
+   is already obvious from the stack, and the object name needs the room more. */
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-step-n { display: none; }
+/* A throw is one line: grip, object, its pause, remove. Everything below is sized
+   so that still holds at rail width. */
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-step { flex-wrap: nowrap; gap: 2px; }
+/* Every pixel here goes to the object name, which is the longest thing on the row
+   ("🥜 cashew") and the only one that can't be abbreviated. */
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-step-x { padding: 1px 2px; }
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-step .gpe-tester-pause { flex: 0 0 auto; }
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-step .gpe-tester-item { flex: 1 1 auto; min-width: 0; }
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-addrow .gpe-tester-item { flex: 1 1 auto; }
+/* The add row's pause sits on its own line beneath the object: it sets what the
+   NEXT throw gets, so it isn't part of the same click. */
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-defrow .gpe-tester-pause { flex: 1 1 auto; width: auto; }
+/* Same reason the footer wrapped its status to nothing: give it its own line. */
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-foot { flex-wrap: wrap; }
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-status { flex: 1 0 100%; margin-bottom: 4px; }
+/* clear + Send hug the right edge, with the status carrying the left. */
+.gpe-tester-foot { justify-content: flex-end; }
+.gpe-tester-foot .gpe-tester-clear { margin-left: auto; }
+#gpe-interact-tester.gpe-tester-docked .gpe-tester-foot .gpe-tester-clear { margin-left: 0; }
+.gpe-tester-dock {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    color: #8aa0b8;
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 4px;
+    margin-left: auto;
+    border-radius: 5px;
+}
+.gpe-tester-dock:hover { color: #33587c; background: rgba(0, 0, 0, 0.06); }
+.gpe-tester-dock.gpe-active { color: #33587c; background: rgba(51, 88, 124, 0.12); }
+/* The header's own spacing assumed two children; with three, the title keeps the
+   left and the buttons pack right. */
+.gpe-tester-head .gpe-tester-x { margin-left: 2px; }
+
 /* The resize grabber: full width along the bottom edge, with a centred pill so it
    reads as a grip rather than a border. */
 .gpe-tester-resize {
@@ -1777,4 +1863,13 @@ td:has(>table.iogc-ChatPanel-input) {
 }
 .gpe-bet-col button:hover {
     background: #f0f0f0;
+}
+/* ---- Docked: re-centre the site's own layout ----
+   The page centres a fixed-width column in the viewport. Padding the body narrows
+   the box that column centres in, moving it right by half the padding — which is
+   exactly the correction needed when a panel of that width is parked to its left.
+   Applied to <html> so it survives the site re-rendering anything inside body. */
+html.gpe-docked-shift body {
+    box-sizing: border-box;
+    padding-left: var(--gpe-dock-shift, 0px);
 }
