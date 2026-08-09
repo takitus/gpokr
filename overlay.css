@@ -266,14 +266,20 @@
 #gpe-splash-btn:hover { background: #f0f0f0; }
 #gpe-splash-btn.gpe-splash-busy { opacity: 0.45; }
 
-/* Celebrate: a personal interaction, sat just right of Splash in the same cell.
-   Icon-only (🎉) to stay compact; JS sets its `left` off Splash's edge. */
-#gpe-celebrate-btn {
-    all: unset;
-    box-sizing: border-box;
+/* Personal-interaction toolbar (Celebrate, Dance, ...), sat just right of Splash
+   in the same cell. Icon-only buttons to stay compact; JS sets the row's `left`
+   off Splash's edge. */
+#gpe-personal-bar {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.gpe-personal-btn {
+    all: unset;
+    box-sizing: border-box;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -284,10 +290,22 @@
     border: 1px solid #c9c9c9;
     background: #fff;
     border-radius: 6px;
-    vertical-align: middle;
 }
-#gpe-celebrate-btn:hover { background: #f0f0f0; }
-#gpe-celebrate-btn.gpe-splash-busy { opacity: 0.45; }
+.gpe-personal-btn:hover { background: #f0f0f0; }
+.gpe-personal-btn.gpe-splash-busy { opacity: 0.45; }
+
+/* An avatar clone that leaps onto the table to dance (the "dance" interaction).
+   Fixed, click-through overlay; JS drives its transform each frame. */
+.gpe-dance {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 9998;
+    pointer-events: none;
+    border-radius: 4px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+    will-change: transform;
+}
 
 #gpe-chips-layer {
     position: fixed;
