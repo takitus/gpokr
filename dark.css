@@ -445,6 +445,12 @@ html.gpe-dark #gpe-splash-btn {
     color: #c3ccda;
 }
 html.gpe-dark #gpe-splash-btn:hover { background: #2c3645; }
+html.gpe-dark #gpe-celebrate-btn {
+    background: #232c3a;
+    border-color: #3c4a61;
+    color: #c3ccda;
+}
+html.gpe-dark #gpe-celebrate-btn:hover { background: #2c3645; }
 html.gpe-dark #gpe-picker-panel button:hover { background: #344056; }
 
 html.gpe-dark .gpe-bg-auto.gpe-on {

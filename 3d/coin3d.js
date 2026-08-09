@@ -22,9 +22,13 @@
  * (The file and its "coin" identifiers predate the switch to real chip art; the
  * thing it throws is a gpokr chip.)
  *
+ * The same layer also powers confetti(): a celebratory burst of chips flung up
+ * out of a seat that rains back down onto the felt (see the "celebratory burst"
+ * section), reusing the very same chip art and land/settle/fade physics.
+ *
  * Loaded as a content script after vendor/three.iife.js and chips3d.js; exposes
- * window.GPE_COIN = { toss, isRunning, disable }. Purely cosmetic and local —
- * nothing is sent to the site, and the other player sees nothing.
+ * window.GPE_COIN = { toss, confetti, isRunning, disable, ... }. Purely cosmetic
+ * and local to each viewer — nothing extra is sent to the site.
  */
 (function () {
     "use strict";
@@ -54,6 +58,16 @@
 
     const TUMBLE = [9, 15];      // end-over-end rate range, rad/s
     const SPIN_SETTLE = 2.6;     // rad of face-spin bled off while it lies down
+
+    // ---------- celebratory burst (confetti) ----------
+    const CONFETTI_COUNT = 40;         // chips flung per celebration
+    const CONFETTI_MAX = 80;           // hard cap, however loud the caller asks
+    const CONFETTI_VH = [700, 1100];   // upward launch speed range, px/s (sets peak height)
+    const CONFETTI_SPREAD = 260;       // max horizontal drift, px/s — how wide the burst fans out
+    const CONFETTI_BIAS = 150;         // toward-table drift added to the spread, px/s — 0 is fully
+                                       // omnidirectional, larger leans the burst onto the felt
+    const CONFETTI_SCALE = 0.25;       // these chips render at a quarter of a tossed chip's size
+    const VOID_DEPTH = 400;            // px below the table a missed chip falls before it's retired
 
     // ---------- felt (art-space fractions, as measured in table3d.js) ----------
     const ART_W = 790;
@@ -398,16 +412,24 @@
             return;
         }
 
-        // --- on the felt
+        // --- reaching table height
         if (c.h <= 0) {
-            c.h = 0;
-            c.landed = true;
-            if (-c.vh < SETTLE_VH) {
-                startFlatten(c);
+            // Confetti coming down off the felt is never caught: it keeps dropping
+            // through the table plane and out of sight (h just goes on negative),
+            // rather than resting on the black surround. Retired once well below.
+            // Chips that come down ON the felt land and settle as usual.
+            if (c.fallThrough && (!c.felt || !overFelt(c.felt, c.p))) {
+                if (c.h < -VOID_DEPTH) { c.phase = "fade"; c.alpha = 0; }
             } else {
-                c.vh = -c.vh * REST;
-                c.v.x *= FRICTION; c.v.y *= FRICTION;
-                c.tumbleRate *= 0.55;
+                c.h = 0;
+                c.landed = true;
+                if (-c.vh < SETTLE_VH) {
+                    startFlatten(c);
+                } else {
+                    c.vh = -c.vh * REST;
+                    c.v.x *= FRICTION; c.v.y *= FRICTION;
+                    c.tumbleRate *= 0.55;
+                }
             }
         }
         // Only once it's actually touched down: this phase STARTS at the avatar,
@@ -477,8 +499,10 @@
 
             const k = 1 / (1 + c.h / 240);
             c.shadow.position.set(c.p.x, -c.p.y, 0);
-            c.shadow.scale.setScalar(clamp(k, 0.35, 1));
-            c.shadow.material.opacity = 0.38 * k * c.alpha;
+            c.shadow.scale.setScalar(clamp(k, 0.35, 1) * (c.shadowScale || 1));
+            // Once a chip drops below the table plane (only confetti does), it has
+            // left the table — kill its shadow so it doesn't linger on the felt.
+            c.shadow.material.opacity = c.h < 0 ? 0 : 0.38 * k * c.alpha;
         }
     }
 
@@ -593,6 +617,92 @@
         return true;
     }
 
+    // ---------- celebratory burst ----------
+    // A spray of chips out of a seat, up into the air and back down onto the felt,
+    // like confetti. Unlike toss() there is no target to bounce off: each chip is
+    // spawned straight into the ballistic "table" phase with an upward kick and a
+    // random landing spot on the felt, then rides the very same land / flatten /
+    // rest / fade path a tossed chip does — stepCoin, place, and removeCoin handle
+    // it, so this adds a launcher, not a second physics.
+    //   fromRect   the celebrant's avatar rect; the burst originates here
+    //   tableRect  the table element's rect, for scattering the chips onto the felt
+    //   opts       { count } — how many chips (clamped to CONFETTI_MAX)
+    function confetti(fromRect, tableRect, opts) {
+        if (!fromRect || !fromRect.width) return false;
+        const s = ensureSession();
+        if (!s) return false;
+        const T = window.THREE;
+        const o = opts || {};
+        const felt = feltBounds(tableRect);
+        const count = clamp(Math.round(o.count || CONFETTI_COUNT), 1, CONFETTI_MAX);
+
+        const ox = fromRect.left + fromRect.width / 2;
+        const oy = fromRect.top + fromRect.height * 0.45;  // out of the middle of the avatar
+        const h0 = fromRect.height * 0.5;                  // starting a little off the ground
+
+        // A gentle drift toward the table center, added to every chip's random
+        // spread, so the burst leans onto the felt (more chips land) without
+        // becoming an aimed stream. Zero when there's no table to lean toward.
+        let bx = 0, by = 0;
+        if (felt) {
+            const dx = felt.cx - ox, dy = felt.cy - oy;
+            const d = Math.hypot(dx, dy) || 1;
+            bx = (dx / d) * CONFETTI_BIAS;
+            by = (dy / d) * CONFETTI_BIAS;
+        }
+
+        let made = 0;
+        for (let i = 0; i < count; i++) {
+            const def = projectileFor("chip");
+            const mesh = def.make(T, s, {});   // no denom -> a random one, so colors mix
+            if (!mesh) break;                  // chip art unavailable
+            mesh.userData.gpeBaseScale = CONFETTI_SCALE;   // place() honors this for the mesh
+            const shadow = new T.Mesh(s.shadowGeo, s.shadowMat.clone());
+            s.scene.add(mesh, shadow);
+
+            // Straight up with a strong pop, plus a random horizontal drift in any
+            // direction so the burst fans out. No aiming: where a chip comes down
+            // is wherever it comes down — onto the felt, or off it into the void.
+            const vh = rand(CONFETTI_VH[0], CONFETTI_VH[1]);
+            const ang = rand(0, Math.PI * 2);
+            const sp = Math.sqrt(Math.random()) * CONFETTI_SPREAD;
+
+            const c = {
+                mesh, shadow,
+                p: { x: ox, y: oy },
+                v: { x: Math.cos(ang) * sp + bx, y: Math.sin(ang) * sp + by },
+                h: h0, vh: vh,
+                phase: "table", landed: false,   // straight to the drop-toward-felt phase
+                fallThrough: true,               // off the felt -> keep falling into the void
+                to: null, felt, land: null,
+                shadowScale: CONFETTI_SCALE,      // match the shrunk chip (place() reads this)
+                q: new T.Quaternion(),
+                // Tumble about a random axis, so they flutter like confetti rather
+                // than all spinning end-over-end along one line of travel.
+                tumbleAxis: new T.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)),
+                tumbleRate: rand(TUMBLE[0], TUMBLE[1]) * (Math.random() < 0.5 ? -1 : 1),
+                flatT: 0, flatFrom: null, flatTo: null,
+                restT: 0, alpha: 1,
+                kind: "chip",
+            };
+            if (c.tumbleAxis.lengthSq() < 1e-6) c.tumbleAxis.set(1, 0, 0);
+            c.tumbleAxis.normalize();
+            if (def.basePose) def.basePose(T, c.q);
+            s.coins.push(c);   // pushed directly, past addCoin's MAX_COINS trim
+            made++;
+        }
+        if (!made) return false;
+        kick(s);
+        return true;
+    }
+
+    // Is a point over the playable felt? Used to decide whether a falling confetti
+    // chip is caught by the table or drops past it into the void.
+    function overFelt(f, p) {
+        const dx = (p.x - f.cx) / f.ax, dy = (p.y - f.cy) / f.by;
+        return dx * dx + dy * dy <= FELT_EDGE * FELT_EDGE;
+    }
+
     // A dollar value -> its index in chips3d's set; anything unrecognized (or
     // omitted) picks at random so a flurry of throws isn't all one color.
     function denomIndex(denom) {
@@ -625,7 +735,7 @@
     }
 
     window.GPE_COIN = {
-        toss, disable, registerProjectile, addActor, feltBounds,
+        toss, confetti, disable, registerProjectile, addActor, feltBounds,
         isRunning: () => !!(session && (session.coins.length || session.actors.length)),
         _session: () => session,
     };

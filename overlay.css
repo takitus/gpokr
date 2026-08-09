@@ -266,6 +266,29 @@
 #gpe-splash-btn:hover { background: #f0f0f0; }
 #gpe-splash-btn.gpe-splash-busy { opacity: 0.45; }
 
+/* Celebrate: a personal interaction, sat just right of Splash in the same cell.
+   Icon-only (🎉) to stay compact; JS sets its `left` off Splash's edge. */
+#gpe-celebrate-btn {
+    all: unset;
+    box-sizing: border-box;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 5px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 6px;
+    vertical-align: middle;
+}
+#gpe-celebrate-btn:hover { background: #f0f0f0; }
+#gpe-celebrate-btn.gpe-splash-busy { opacity: 0.45; }
+
 #gpe-chips-layer {
     position: fixed;
     pointer-events: none;
