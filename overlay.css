@@ -1918,3 +1918,93 @@ html.gpe-docked-shift body {
     box-sizing: border-box;
     padding-left: var(--gpe-dock-shift, 0px);
 }
+
+/* ---- Muted players ----
+   A muted line stays in the DOM and is hidden by class, so unmuting puts the
+   conversation back exactly as the site rendered it. */
+.gpe-muted-line { display: none !important; }
+
+/* Roster: the mute button sits between the follow star and the name. Same footprint
+   as the star so the two read as a pair of controls. */
+.gpe-mute-btn {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 10px;
+    line-height: 1;
+    padding: 1px 2px;
+    border-radius: 4px;
+    opacity: 0.55;
+    filter: grayscale(1);
+}
+.gpe-mute-btn:hover { opacity: 1; background: rgba(0, 0, 0, 0.07); }
+.gpe-mute-btn.gpe-muted { opacity: 1; filter: none; }
+
+/* The manage modal: rows of names, each with a remove, then the add box. */
+#gpe-mute-editor-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 260px;
+    overflow-y: auto;
+    margin: 6px 0;
+}
+.gpe-mute-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 5px;
+    border: 1px solid #dcdcdc;
+    border-radius: 6px;
+    background: #fafafa;
+}
+.gpe-mute-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gpe-mute-x {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    color: #8a8a8a;
+    padding: 1px 4px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1;
+}
+.gpe-mute-x:hover { color: #c43c2e; background: rgba(0, 0, 0, 0.07); }
+.gpe-mute-empty { color: #949494; font-style: italic; padding: 4px 2px; }
+/* Grid, not flex: as a flex row the input's intrinsic width won the space and the
+   button was squeezed to 21px with its label spilling out, even at flex-shrink 0.
+   An auto grid column sizes to the button and the 1fr column takes what's left. */
+#gpe-mute-add-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 6px;
+}
+/* The name box takes the slack; the button keeps its own width and its label on one
+   line. Styled like #gpe-chat-add rather than inheriting the head's bare-icon
+   styling, which is what left it 16px wide with the text spilling out. */
+#gpe-mute-add {
+    /* Something on the page crushes button widths — a bare <button> with this same
+       label measures 16px in the document. min-width: max-content is what holds the
+       label; #gpe-chat-add dodges the same rule by going full-width instead. */
+    min-width: max-content;
+    white-space: nowrap;
+    padding: 4px 10px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font: 12px Arial, sans-serif;
+    color: #222;
+}
+#gpe-mute-add:hover { background: #f0f0f0; }
+#gpe-mute-add-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 3px 5px;
+    border: 1px solid #cfcfcf;
+    border-radius: 6px;
+    font: inherit;
+}

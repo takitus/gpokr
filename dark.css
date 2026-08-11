@@ -677,3 +677,25 @@ html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-send {
     border-color: #45526a;
 }
 html.gpe-dark #gpe-interact-tester.gpe-tester-docked .gpe-tester-step { border-color: #39455a; }
+
+/* ---- Muted players, dark ---- */
+html.gpe-dark .gpe-mute-btn:hover { background: rgba(255, 255, 255, 0.10); }
+html.gpe-dark .gpe-mute-row {
+    background: #232c3a;
+    border-color: #3c4a61;
+    color: #c3ccda;
+}
+html.gpe-dark .gpe-mute-x { color: #94a3b5; }
+html.gpe-dark .gpe-mute-x:hover { color: #ff7a6b; background: rgba(255, 255, 255, 0.10); }
+html.gpe-dark .gpe-mute-empty { color: #7d8899; }
+html.gpe-dark #gpe-mute-add {
+    background: #232c3a;
+    border-color: #3c4a61;
+    color: #c3ccda;
+}
+html.gpe-dark #gpe-mute-add:hover { background: #2c3645; }
+html.gpe-dark #gpe-mute-add-name {
+    background: #1b222d;
+    border-color: #3c4a61;
+    color: #d6dce6;
+}

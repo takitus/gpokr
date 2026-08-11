@@ -20,6 +20,7 @@
     let DARK_MODE = false;
     let SHOW_TESTER = false;      // interaction-tester panel: scripted-throw builder (opt-in dev tool)
     let CELEBRATIONS = true;      // celebrate/dance: opt-OUT, and it silences other players' too
+    let MUTE_CHAT = true;         // whether the mute list is enforced (the list itself persists)
     let testerPos = null;         // dragged position of the tester panel (persisted as settings.testerPos)
     let testerHeight = 0;         // dragged height, 0 = size to content (settings.testerHeight)
     let testerPause = 100;        // default gap after each new throw (settings.testerPause)
@@ -159,6 +160,9 @@
         COIN_TOSS = !(s && s.coinToss === false); // opt-out
         updateInteractButtons(); // add/remove the per-seat buttons for the new value
         CELEBRATIONS = !(s && s.celebrations === false); // opt-out
+        const wasMuting = MUTE_CHAT;
+        MUTE_CHAT = !(s && s.muteChat === false);        // opt-out; the list survives either way
+        if (MUTE_CHAT !== wasMuting) applyMuting();       // unmuting has to bring the lines back
         SHOW_TESTER = !!(s && s.showTester); // opt-in
         const th = parseInt(s && s.testerHeight, 10);
         testerHeight = (isFinite(th) && th >= 150) ? Math.min(th, 2000) : 0;
@@ -269,7 +273,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-personal-bar, .gpe-dance, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel, #gpe-interact-tester, #gpe-react-panel, .gpe-react-add, .gpe-react-bar"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-mute-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-personal-bar, .gpe-dance, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel, #gpe-interact-tester, #gpe-react-panel, .gpe-react-add, .gpe-react-bar"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -1822,6 +1826,40 @@
     const NOTES_KEY = "gpe_player_notes";
     let playerNotes = {}; // name -> free text
 
+    // Muted players: their chat never reaches the pane, the popout, or any of the
+    // overlays chat drives. Names are stored as typed but matched case-insensitively,
+    // since that's how people retype a name they're annoyed at.
+    const MUTED_KEY = "gpe_muted";
+    let mutedList = [];                  // display order, as entered
+    let mutedKeys = new Set();           // lowercased, for matching
+    function rebuildMutedKeys() {
+        mutedKeys = new Set(mutedList.map((n) => n.trim().toLowerCase()));
+    }
+    function isMuted(name) {
+        if (!MUTE_CHAT || !name) return false;
+        return mutedKeys.has(String(name).trim().toLowerCase());
+    }
+    function saveMuted() {
+        if (EXT_STORE) { try { EXT_STORE.set({ [MUTED_KEY]: mutedList }); } catch (e) {} }
+    }
+    // One place that re-applies muting everywhere it shows: the pane (lines already
+    // on screen), the popout, and the roster's own buttons.
+    function applyMuting() {
+        applyMuteToChatPane();
+        renderPopoutAll();
+        renderMuteEditorRows();
+    }
+    function setMuted(name, on) {
+        const n = String(name || "").trim();
+        if (!n) return;
+        const key = n.toLowerCase();
+        if (on) { if (!mutedKeys.has(key)) mutedList.push(n); }
+        else mutedList = mutedList.filter((x) => x.trim().toLowerCase() !== key);
+        rebuildMutedKeys();
+        saveMuted();
+        applyMuting();
+    }
+
     // Per-player nicknames. When a chat button token resolves to a player who
     // has one, the nickname is posted instead of their handle (so "gg" can
     // address them how you'd actually address them).
@@ -1854,7 +1892,11 @@
             setTimeout(() => applySettings(legacyLocalStorageSettings()), 0);
             return;
         }
-        EXT_STORE.get(["gpe_settings", PLAYER_STATS_KEY, NOTES_KEY, NICKS_KEY], (res) => {
+        EXT_STORE.get(["gpe_settings", PLAYER_STATS_KEY, NOTES_KEY, NICKS_KEY, MUTED_KEY], (res) => {
+            if (Array.isArray(res[MUTED_KEY])) {
+                mutedList = res[MUTED_KEY].filter((n) => typeof n === "string" && n.trim()).slice(0, 200);
+                rebuildMutedKeys();
+            }
             if (res.gpe_settings) {
                 const s = res.gpe_settings;
                 if (!s.betAllInMigrated) { migrateAllIn(s); EXT_STORE.set({ gpe_settings: s }); }
@@ -1876,6 +1918,11 @@
             if (changes[PLAYER_STATS_KEY]) playerStats = changes[PLAYER_STATS_KEY].newValue || {};
             if (changes[NOTES_KEY]) playerNotes = changes[NOTES_KEY].newValue || {};
             if (changes[NICKS_KEY]) { playerNicks = changes[NICKS_KEY].newValue || {}; updateStatBadges(); }
+            if (changes[MUTED_KEY]) {
+                mutedList = Array.isArray(changes[MUTED_KEY].newValue) ? changes[MUTED_KEY].newValue : [];
+                rebuildMutedKeys();
+                applyMuting();
+            }
         });
     }
     initStorage();
@@ -2958,7 +3005,11 @@
             return;
         }
         const name = nameEl.textContent.trim();
-        notePresence(name, true); // chatting proves presence
+        notePresence(name, true); // chatting proves presence — muted or not, they're here
+        // Muted: hide the line and stop. Everything below this is something chat
+        // DRIVES — emote overlays, shared-hand reveals, reaction controls — and a
+        // muted player shouldn't be able to put any of it on screen.
+        if (isMuted(name)) { node.classList.add("gpe-muted-line"); return; }
         linkifyChat(node, nameEl); // make URLs clickable (leaves textContent intact)
         const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
 
@@ -3189,6 +3240,17 @@
     // Stamping ONLY: handleChatMessage also fires emote overlays and renders shares,
     // and replaying that over existing lines would pop overlays for messages the
     // user already watched arrive.
+    // Hide (or bring back) every line already in the pane. Class-based rather than
+    // removing the node: the site owns those elements, and unmuting has to be able
+    // to put the conversation back exactly as it was.
+    function applyMuteToChatPane() {
+        for (const node of document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML")) {
+            const nameEl = node.querySelector("b");
+            const name = nameEl ? nameEl.textContent.trim() : "";
+            node.classList.toggle("gpe-muted-line", !!name && isMuted(name));
+        }
+    }
+
     function stampExistingChatLines() {
         if (!canInteract) return;
         for (const node of document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML")) {
@@ -3196,6 +3258,7 @@
             const nameEl = node.querySelector("b");
             if (!nameEl) continue;   // presence lines have no sender and no event
             const name = nameEl.textContent.trim();
+            if (isMuted(name)) { node.classList.add("gpe-muted-line"); continue; }
             const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
             const msgId = claimMessageId(node, name, text);
             if (!msgId) continue;
@@ -4118,6 +4181,11 @@
         ["gpe-table-3d", "3D table", "table3d", () => TABLE_3D,
             "Replaces the flat felt with a live 3D-rendered table (top-down, so " +
             "cards and chips stay aligned). Experimental."],
+        ["gpe-mute-chat", "muted players", "muteChat", () => MUTE_CHAT,
+            "Hides muted players' chat — in the pane, in the pop-out, and the emotes " +
+            "and shared hands their messages would have put on screen. They can still " +
+            "see you and still play; you just stop reading them. Unticking this keeps " +
+            "the list but stops applying it. \"manage\" edits who's on it."],
         ["gpe-celebrations", "celebrations", "celebrations", () => CELEBRATIONS,
             "The 🎉 and 🕺 buttons by the pot: a burst of chips out of your seat, " +
             "or your avatar leaping onto the table to dance. Only between hands — " +
@@ -4300,6 +4368,17 @@
                 row.appendChild(chain);
                 chainBtn = chain;
                 updateChainBtn();
+            }
+            // The mute option gets a "manage" button -> the muted-players list.
+            if (id === "gpe-mute-chat") {
+                const manage = document.createElement("button");
+                manage.type = "button";
+                manage.className = "gpe-side-edit";
+                manage.textContent = "manage";
+                manage.addEventListener("click", (e) => {
+                    e.preventDefault(); e.stopPropagation(); openMuteEditor();
+                });
+                row.appendChild(manage);
             }
             // The bet-buttons option gets an inline editor (same config the popup edits).
             if (id === "gpe-bet-buttons") {
@@ -4704,7 +4783,8 @@
         // Skip the DOM churn when nothing changed (stars + linked-state included).
         const key = rosterTable + "|" + playing.join(",") + "|" + watching.join(",") +
             "|" + unknownCount + "|" + verified + "|" + unverifiable +
-            "|" + playing.concat(watching).map((n) => (followingSet.has(n) ? 1 : 0) + (links[n] ? "L" : "")).join();
+            "|" + playing.concat(watching).map((n) =>
+                (followingSet.has(n) ? 1 : 0) + (isMuted(n) ? "M" : "") + (links[n] ? "L" : "")).join();
         if (box._gpeKey === key) return;
         box._gpeKey = key;
 
@@ -4738,6 +4818,15 @@
                 star.textContent = followed ? "★" : "☆";
                 star.title = (followed ? "unfollow " : "follow ") + n;
                 star.addEventListener("click", () => setFollowing(n, !followingSet.has(n)));
+                // Mute, right beside the star: the roster is where you're already
+                // looking when someone becomes a problem.
+                const muted = isMuted(n);
+                const mute = document.createElement("button");
+                mute.type = "button";
+                mute.className = "gpe-mute-btn" + (muted ? " gpe-muted" : "");
+                mute.textContent = muted ? "🔇" : "🔈";
+                mute.title = (muted ? "unmute " : "mute ") + n + " in chat";
+                mute.addEventListener("click", () => setMuted(n, !isMuted(n)));
                 // Name links to the player's profile when the page has exposed
                 // their id; opens in a new tab so the table isn't navigated away.
                 let nameEl;
@@ -4753,6 +4842,7 @@
                 nameEl.className = "gpe-roster-name";
                 nameEl.textContent = n;
                 row.appendChild(star);
+                row.appendChild(mute);
                 row.appendChild(nameEl);
                 box.appendChild(row);
             }
@@ -5898,6 +5988,127 @@
         if (backdrop) backdrop.style.display = "none";
     }
 
+    // ---------- muted players (manage) ----------
+    // Mirrors the chat-buttons editor: a modal list with a remove per row and an add
+    // at the bottom. The add box is backed by a datalist of everyone currently at the
+    // table, since that's who you're usually muting — but free text works too, so
+    // someone can be muted before they next show up.
+    function buildMuteEditor() {
+        const backdrop = document.createElement("div");
+        backdrop.id = "gpe-mute-editor";
+        backdrop.className = "gpe-modal-backdrop";
+        backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeMuteEditor(); });
+
+        const modal = document.createElement("div");
+        modal.className = "gpe-modal";
+
+        const head = document.createElement("div");
+        head.className = "gpe-modal-head";
+        head.appendChild(document.createTextNode("Muted players"));
+        const close = document.createElement("button");
+        close.type = "button";
+        close.textContent = "✕";
+        close.title = "close";
+        close.addEventListener("click", closeMuteEditor);
+        head.appendChild(close);
+
+        const rows = document.createElement("div");
+        rows.id = "gpe-mute-editor-rows";
+
+        const addRow = document.createElement("div");
+        addRow.id = "gpe-mute-add-row";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.id = "gpe-mute-add-name";
+        input.placeholder = "player name";
+        input.setAttribute("list", "gpe-mute-names");
+        input.autocomplete = "off";
+        const list = document.createElement("datalist");
+        list.id = "gpe-mute-names";
+        const add = document.createElement("button");
+        add.type = "button";
+        add.id = "gpe-mute-add";
+        add.textContent = "+ Mute";
+        const commit = () => {
+            const n = input.value.trim();
+            if (!n) return;
+            setMuted(n, true);      // re-renders the rows
+            input.value = "";
+            input.focus();
+        };
+        add.addEventListener("click", commit);
+        input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } });
+        addRow.append(input, list, add);
+
+        const hint = document.createElement("div");
+        hint.className = "gpe-modal-hint";
+        hint.textContent = "Muting hides that player's chat for you — the pane, the pop-out, and the " +
+            "emotes and shared hands their messages trigger. It is local to you: they are not told, " +
+            "and nothing about their play changes. Names match regardless of case. You can also mute " +
+            "straight from the roster tab, next to the follow star.";
+
+        modal.append(head, rows, addRow, hint);
+        backdrop.appendChild(modal);
+        document.body.appendChild(backdrop);
+        return backdrop;
+    }
+
+    // Safe to call whenever the list changes: a no-op while the modal is closed.
+    function renderMuteEditorRows() {
+        const rows = document.getElementById("gpe-mute-editor-rows");
+        if (!rows) return;
+        rows.textContent = "";
+        if (!mutedList.length) {
+            const empty = document.createElement("div");
+            empty.className = "gpe-mute-empty";
+            empty.textContent = "nobody muted";
+            rows.appendChild(empty);
+        }
+        for (const name of mutedList) {
+            const row = document.createElement("div");
+            row.className = "gpe-mute-row";
+            const who = document.createElement("span");
+            who.className = "gpe-mute-name";
+            who.textContent = name;
+            const rm = document.createElement("button");
+            rm.type = "button";
+            rm.className = "gpe-mute-x";
+            rm.textContent = "✕";
+            rm.title = "unmute " + name;
+            rm.addEventListener("click", () => setMuted(name, false));
+            row.append(who, rm);
+            rows.appendChild(row);
+        }
+        // Offer the table's current occupants for the add box.
+        const dl = document.getElementById("gpe-mute-names");
+        if (dl) {
+            dl.textContent = "";
+            const me = getMyName();
+            const here = new Set();
+            for (const n of seatedNames()) here.add(n);
+            for (const n of Object.keys(profileLinks())) here.add(n);
+            for (const n of [...here].sort()) {
+                if (n === me || mutedKeys.has(n.toLowerCase())) continue;
+                const o = document.createElement("option");
+                o.value = n;
+                dl.appendChild(o);
+            }
+        }
+    }
+
+    function openMuteEditor() {
+        const backdrop = document.getElementById("gpe-mute-editor") || buildMuteEditor();
+        backdrop.style.display = "flex";
+        renderMuteEditorRows();
+        const input = document.getElementById("gpe-mute-add-name");
+        if (input) input.focus();
+    }
+
+    function closeMuteEditor() {
+        const backdrop = document.getElementById("gpe-mute-editor");
+        if (backdrop) backdrop.style.display = "none";
+    }
+
     // ---------- chat popout ----------
     // A real browser window you can drag to another monitor. Built from the tapped
     // event stream rather than mirroring the site's chat pane: we already receive
@@ -6093,6 +6304,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     function appendPopoutRow(entry) {
         const w = popout, d = w.document, log = w._gpeLog;
         if (!log) return;
+        if (isMuted(entry.name)) return;   // the popout is a first-class view: mute applies here too
         const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
         const row = d.createElement("div");
         row.className = "row";
