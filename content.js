@@ -19,6 +19,7 @@
     let HOTKEYS = false;
     let DARK_MODE = false;
     let SHOW_TESTER = false;      // interaction-tester panel: scripted-throw builder (opt-in dev tool)
+    let CELEBRATIONS = true;      // celebrate/dance: opt-OUT, and it silences other players' too
     let testerPos = null;         // dragged position of the tester panel (persisted as settings.testerPos)
     let testerHeight = 0;         // dragged height, 0 = size to content (settings.testerHeight)
     let testerPause = 100;        // default gap after each new throw (settings.testerPause)
@@ -157,6 +158,7 @@
         syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
         COIN_TOSS = !(s && s.coinToss === false); // opt-out
         updateInteractButtons(); // add/remove the per-seat buttons for the new value
+        CELEBRATIONS = !(s && s.celebrations === false); // opt-out
         SHOW_TESTER = !!(s && s.showTester); // opt-in
         const th = parseInt(s && s.testerHeight, 10);
         testerHeight = (isFinite(th) && th >= 150) ? Math.min(th, 2000) : 0;
@@ -698,6 +700,15 @@
         // player's avatar, skipping the from/to/table flight path entirely. Still
         // funnelled through here, so they inherit the hidden-tab gate above.
         if (item.category === CAT_PERSONAL) {
+            // Opting out is both halves: no buttons for you, and nobody else's
+            // confetti or dancing avatar plays on your screen either. (Throws are a
+            // separate opt-out — "interactions" — so turning celebrations off
+            // doesn't cost you the chip a friend just threw.)
+            if (!CELEBRATIONS) return Promise.resolve(false);
+            // Same rule applied to what ARRIVES, not just what we send: an older
+            // build (or a hand-rolled POST) mid-hand would otherwise put confetti
+            // over the board of a table that's still playing.
+            if (!celebrationsAllowed()) return Promise.resolve(false);
             return item.ensure().then((ok) => {
                 if (!ok) return false;
                 playAssetSound(item.assetSound);
@@ -1147,7 +1158,7 @@
     // a throw does: interactions not opted out, the bridge able to send, and a seat
     // (the server refuses interactions from watchers). Gates both the toolbar
     // button's visibility and the send itself.
-    function canPersonal() { return COIN_TOSS && canInteract && amSeated(); }
+    function canPersonal() { return COIN_TOSS && CELEBRATIONS && canInteract && amSeated(); }
 
     // Fire a personal interaction on MYSELF: same wire as throwAt, addressed to my
     // own seat, so the server broadcasts it and everyone — me included — sees it
@@ -1155,6 +1166,7 @@
     // cooling or when I can't send, exactly like a throw.
     function firePersonal(key) {
         if (!canPersonal() || cooldownLeft(key) > 0) return false;
+        if (!celebrationsAllowed()) return false;   // the flop is out: not until this hand is done
         const me = getMyName();
         if (!me) return false;
         const now = Date.now();
@@ -1952,11 +1964,31 @@
 
     // End-of-hand signal: prefer the showdown "shows [..]" line; fall back to "wins pot".
     // (Fold-only hands have no showdown, so they only produce a pot award.)
-    function handHasEnded() {
-        const scope = currentHandScope();
+    function handHasEnded(scope) {
+        scope = scope || currentHandScope();
         if (scope.some((t) => /\bshows \[/i.test(t))) return true;
         if (scope.some((t) => /wins main pot/i.test(t))) return true;
         return false;
+    }
+
+    // Celebrations are a between-hands thing. Once the flop is out the table is
+    // playing, and a burst of confetti — or someone's avatar getting up to dance in
+    // the middle of the felt — is in the way of people reading the board. So the
+    // window is: from the moment a hand finishes, through the next deal, until its
+    // flop lands. A hand that ends preflop simply never closes it.
+    //
+    // Cached briefly because the fast (300ms) poll asks on every tick to keep the
+    // toolbar honest, and answering means walking the game log.
+    let celebGate = { at: 0, ok: true };
+    function celebrationsAllowed() {
+        const now = Date.now();
+        if (now - celebGate.at < 400) return celebGate.ok;
+        const scope = currentHandScope();
+        // Read once, use twice: hand over -> open again; otherwise open only until
+        // the first community card of this hand.
+        const ok = handHasEnded(scope) || boardFromScope(scope).length === 0;
+        celebGate = { at: now, ok: ok };
+        return ok;
     }
 
     // ---------- game-state parsing (odds feature) ----------
@@ -4086,6 +4118,11 @@
         ["gpe-table-3d", "3D table", "table3d", () => TABLE_3D,
             "Replaces the flat felt with a live 3D-rendered table (top-down, so " +
             "cards and chips stay aligned). Experimental."],
+        ["gpe-celebrations", "celebrations", "celebrations", () => CELEBRATIONS,
+            "The 🎉 and 🕺 buttons by the pot: a burst of chips out of your seat, " +
+            "or your avatar leaping onto the table to dance. Only between hands — " +
+            "never once the flop is out. Turning this off hides your buttons AND " +
+            "stops other players' celebrations from playing for you."],
         ["gpe-coin-toss", "interactions", "coinToss", () => COIN_TOSS,
             "Puts an interact button on the corner of every other player's " +
             "avatar, for throwing a chip from your seat that bounces off them " +
@@ -6490,6 +6527,16 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         if (!bar || !splash) return;
         if (!canPersonal()) { bar.style.display = "none"; return; }
         bar.style.display = "";
+        // Between hands they're live; from the flop they go dim rather than
+        // disappear, so the row doesn't jump in and out every hand.
+        const open = celebrationsAllowed();
+        bar.classList.toggle("gpe-personal-shut", !open);
+        for (const btn of bar.querySelectorAll(".gpe-personal-btn")) {
+            btn.disabled = !open;
+            const def = PERSONAL_BUTTONS.find((d) => d.key === btn.dataset.gpeItem);
+            btn.title = open ? (def ? def.title : "")
+                : "not while the hand is playing — free again once it's over";
+        }
         const left = parseFloat(splash.style.left) || 0;
         bar.style.left = (left + splash.offsetWidth + 6) + "px";
     }

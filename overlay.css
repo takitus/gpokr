@@ -293,6 +293,10 @@
 }
 .gpe-personal-btn:hover { background: #f0f0f0; }
 .gpe-personal-btn.gpe-splash-busy { opacity: 0.45; }
+/* Shut from the flop until the hand is over: still there, visibly not available,
+   so the row doesn't appear and disappear around every hand. */
+.gpe-personal-btn:disabled { opacity: 0.35; cursor: default; }
+.gpe-personal-btn:disabled:hover { background: #fff; }
 
 /* An avatar clone that leaps onto the table to dance (the "dance" interaction).
    Fixed, click-through overlay; JS drives its transform each frame. */

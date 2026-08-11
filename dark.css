@@ -451,6 +451,8 @@ html.gpe-dark .gpe-personal-btn {
     color: #c3ccda;
 }
 html.gpe-dark .gpe-personal-btn:hover { background: #2c3645; }
+/* ...but a shut button doesn't light up under the pointer. */
+html.gpe-dark .gpe-personal-btn:disabled:hover { background: #232c3a; }
 html.gpe-dark #gpe-picker-panel button:hover { background: #344056; }
 
 html.gpe-dark .gpe-bg-auto.gpe-on {
