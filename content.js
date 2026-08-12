@@ -6854,11 +6854,12 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         avatarEl.style.visibility = "hidden";
         const cleanup = () => { img.remove(); if (avatarEl.isConnected) avatarEl.style.visibility = prevVis; };
 
-        // perspective() leads so a rotateX reads as a somersault, not a flat squash.
-        const put = (x, y, scale, rotZ, flipX) => {
+        // perspective() leads so rotateX reads as a somersault and rotateY as a
+        // turn-around, not flat squashes. put(x, y, scale, rotZ, flipX, spinY).
+        const put = (x, y, scale, rotZ, flipX, spinY) => {
             img.style.transform = "perspective(600px) translate(" + x + "px," + y + "px) " +
-                "translate(-50%,-50%) rotateX(" + (flipX || 0) + "deg) rotate(" + (rotZ || 0) + "deg) " +
-                "scale(" + (scale == null ? 1 : scale) + ")";
+                "translate(-50%,-50%) rotateX(" + (flipX || 0) + "deg) rotateY(" + (spinY || 0) + "deg) " +
+                "rotate(" + (rotZ || 0) + "deg) scale(" + (scale == null ? 1 : scale) + ")";
         };
         const api = {
             put,
@@ -6927,7 +6928,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     function railSlideAvatar(avatarEl, fromRect, tableRect) {
         return avatarStunt(avatarEl, fromRect, tableRect, function (t, api) {
             const { put, sx, sy, table } = api;
-            const JUMP = 520, SLIDE = 2900, RET = 460;
+            const JUMP = 520, SLIDE = 2900, RET = 560;
             if (t >= JUMP + SLIDE + RET) return false;
             const e = railEllipse(table, 16);        // sit ~16 art px out onto the rail
             if (!e) return false;                    // no table -> nothing to grind
@@ -6941,10 +6942,10 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
                 const lean = -Math.sin(ang) * 20;    // carve into the turn
                 const chatter = Math.sin(k * Math.PI * 10) * 3;   // rail vibration
                 put(p.x, p.y - chatter, 1.15, lean, 0);
-            } else {                                 // hop off the rail back to the seat
+            } else {                                 // leap off the rail with a spin, back to the seat
                 const k = (t - JUMP - SLIDE) / RET, ee = 1 - Math.pow(1 - k, 3), p = on(ang0);
-                put(p.x + (sx - p.x) * ee, p.y + (sy - p.y) * ee - Math.sin(k * Math.PI) * 60,
-                    1.15 + (1 - 1.15) * ee, 0, 0);
+                put(p.x + (sx - p.x) * ee, p.y + (sy - p.y) * ee - Math.sin(k * Math.PI) * 95,
+                    1.15 + (1 - 1.15) * ee, 0, 0, 360 * k);   // one full horizontal spin (about the vertical axis)
             }
             return true;
         });
