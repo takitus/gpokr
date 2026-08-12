@@ -492,15 +492,20 @@ html.gpe-dark #gpe-react-panel button:hover { background: #344056; }
    keeps its dimming and simply must not light up on hover. */
 html.gpe-dark .gpe-side-version { color: #6f7c8e; }
 
-html.gpe-dark #gpe-interact-panel {
+html.gpe-dark #gpe-interact-panel,
+html.gpe-dark #gpe-personal-panel {
     background: #232c3a;
     border-color: #3c4a61;
     box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
 }
-html.gpe-dark #gpe-interact-panel .gpe-interact-item { color: #e6ebf2; }
-html.gpe-dark #gpe-interact-panel .gpe-interact-item:hover { background: #344056; }
-html.gpe-dark #gpe-interact-panel .gpe-interact-item.gpe-interact-cool { color: #8a97ab; }
-html.gpe-dark #gpe-interact-panel .gpe-interact-item.gpe-interact-cool:hover { background: transparent; }
+html.gpe-dark #gpe-interact-panel .gpe-interact-item,
+html.gpe-dark #gpe-personal-panel .gpe-interact-item { color: #e6ebf2; }
+html.gpe-dark #gpe-interact-panel .gpe-interact-item:hover,
+html.gpe-dark #gpe-personal-panel .gpe-interact-item:hover { background: #344056; }
+html.gpe-dark #gpe-interact-panel .gpe-interact-item.gpe-interact-cool,
+html.gpe-dark #gpe-personal-panel .gpe-interact-item.gpe-interact-cool { color: #8a97ab; }
+html.gpe-dark #gpe-interact-panel .gpe-interact-item.gpe-interact-cool:hover,
+html.gpe-dark #gpe-personal-panel .gpe-interact-item.gpe-interact-cool:hover { background: transparent; }
 
 /* interaction tester: dark card matching the odds HUD */
 html.gpe-dark #gpe-interact-tester {

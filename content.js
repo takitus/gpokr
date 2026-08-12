@@ -273,7 +273,7 @@
     // reload the old context's timers die, leaving overlays frozen on screen and
     // buttons with dead listeners. They are re-created by this context as needed.
     document.querySelectorAll(
-        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-mute-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-personal-bar, .gpe-dance, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel, #gpe-interact-tester, #gpe-react-panel, .gpe-react-add, .gpe-react-bar"
+        ".gpe-hand-wrap, .gpe-emote-overlay, #gpe-odds-hud, #gpe-local-hand, #gpe-picker-btn, #gpe-picker-panel, .gpe-toggle, #gpe-chat-tools, .gpe-bet-col, .gpe-stat-badge, #gpe-hover-topper, #gpe-note-editor, #gpe-stat-tip, .gpe-side-tabs, .gpe-side-options, .gpe-side-roster, .gpe-side-bets, #gpe-bet-editor, #gpe-table3d-editor, #gpe-chat-editor, #gpe-mute-editor, #gpe-chat-tools-row, .gpe-log-cards, #gpe-chips-layer, #gpe-splash-btn, #gpe-personal-btn, #gpe-personal-panel, .gpe-dance, #gpe-coin-layer, .gpe-coin-btn, .gpe-interact-btn, #gpe-interact-panel, #gpe-interact-tester, #gpe-react-panel, .gpe-react-add, .gpe-react-bar"
     ).forEach((el) => el.remove());
     // ...and un-hide the site's panel content if the old context left a
     // non-site tab active (the class survives but the tab bar above is gone).
@@ -452,6 +452,18 @@
             flinch: false,
             ensure: () => Promise.resolve(true),
             effect: (from, table, ctx) => danceAvatar(ctx.avatar, from, table),
+        },
+        // The celebrant's avatar hops up onto the rail and grinds a lap around the
+        // table's oval edge before dropping back into its seat. DOM/CSS only.
+        rail: {
+            label: "rail slide",
+            glyph: "🛹",
+            category: CAT_PERSONAL,
+            cooldownMs: 6000,
+            assetSound: "railslide",             // -> assets/audio/railslide.mp3
+            flinch: false,
+            ensure: () => Promise.resolve(true),
+            effect: (from, table, ctx) => railSlideAvatar(ctx.avatar, from, table),
         },
     };
     let INTERACT_ORDER = ["chip"];   // THROW-menu order; personal items are excluded
@@ -634,7 +646,7 @@
     // tools itself, and chrome.runtime.getURL as an extension (where content.js is a
     // content script with no currentScript, so SELF_SRC is empty). assets/* is
     // already web-accessible in the manifest, so no manifest change is needed.
-    const ASSET_SOUND_NAMES = ["hooray", "celebrate"];   // warmed at boot, like SOUND_NAMES
+    const ASSET_SOUND_NAMES = ["hooray", "celebrate", "railslide"];   // warmed at boot, like SOUND_NAMES
     const assetSoundPool = Object.create(null);
     function assetAudioUrl(name) {
         const path = "assets/audio/" + name + ".mp3";
@@ -1105,6 +1117,14 @@
         closeInteractMenu();
     });
 
+    // Same dismissal for the personal celebrations menu.
+    document.addEventListener("mousedown", (e) => {
+        if (!personalPanel || !personalPanel.classList.contains("gpe-open")) return;
+        const trigger = document.getElementById("gpe-personal-btn");
+        if (personalPanel.contains(e.target) || (trigger && trigger.contains(e.target))) return;
+        closePersonalMenu();
+    });
+
     // ---------- cooldowns ----------
     // Two rules, and both have to hold or the send is wasted:
     //   - the server's own per-user 2s window, which applies across items: a chip
@@ -1127,15 +1147,18 @@
     // Repaint the open menu so a user can see what's still cooling rather than
     // clicking into a silent drop.
     function syncMenuCooldowns() {
-        if (!interactPanel || !interactPanel.classList.contains("gpe-open")) return;
-        for (const b of interactPanel.querySelectorAll(".gpe-interact-item")) {
-            const key = b.dataset.gpeItem;
-            const left = cooldownLeft(key);
-            b.classList.toggle("gpe-interact-cool", left > 0);
-            const label = INTERACT_ITEMS[key];
-            b.textContent = left > 0
-                ? label.glyph + " " + label.label + " " + Math.ceil(left / 1000) + "s"
-                : label.glyph + " " + label.label;
+        for (const panel of [interactPanel, personalPanel]) {
+            if (!panel || !panel.classList.contains("gpe-open")) continue;
+            for (const b of panel.querySelectorAll(".gpe-interact-item")) {
+                const key = b.dataset.gpeItem;
+                const item = INTERACT_ITEMS[key];
+                if (!item) continue;
+                const left = cooldownLeft(key);
+                b.classList.toggle("gpe-interact-cool", left > 0);
+                b.textContent = left > 0
+                    ? item.glyph + " " + item.label + " " + Math.ceil(left / 1000) + "s"
+                    : item.glyph + " " + item.label;
+            }
         }
     }
     setInterval(syncMenuCooldowns, 250); // only touches the DOM while the panel is open
@@ -6689,139 +6712,242 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         btn.style.left = Math.max(0, Math.min(left, max)) + "px";
     }
 
-    // Personal-interaction toolbar: a little row of buttons (Celebrate, Dance, ...)
-    // tucked just right of Splash in the same pot cell. Unlike Splash (local-only
-    // chips), these ride the interaction wire, so the whole table sees them. Same
-    // re-attach dance as Splash, since GWT rebuilds the controls row between hands;
-    // the bar sits relative to Splash, so it waits for Splash to exist first.
-    const PERSONAL_BUTTONS = [
-        { key: "celebrate", icon: "🎉", title: "Celebrate — cheer for the whole table" },
-        { key: "dance", icon: "🕺", title: "Dance — leap onto the table and dance" },
-    ];
+    // Personal-interaction menu: a single trigger button tucked just right of
+    // Splash that opens a fly-out of the celebrations (Celebrate, Dance, Rail
+    // slide, ...), built exactly like the per-seat throw menu — same panel/item
+    // classes, same open-on-hover-and-stay behavior, same cooldown readout. Unlike
+    // Splash (local-only chips) these ride the interaction wire, so the whole table
+    // sees them. Personal items live outside INTERACT_ORDER, so PERSONAL_ORDER is
+    // their own menu order.
+    const PERSONAL_ORDER = ["celebrate", "dance", "rail"];
+    let personalPanel = null;
+    let personalCloseTimer = 0;
 
-    function addPersonalBar() {
+    function personalMenu() {
+        if (personalPanel && personalPanel.isConnected) return personalPanel;
+        const panel = document.createElement("div");
+        panel.id = "gpe-personal-panel";
+        for (const key of PERSONAL_ORDER) {
+            const item = INTERACT_ITEMS[key];
+            if (!item) continue;
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "gpe-interact-item";   // same look/cooldown styling as the throw menu
+            b.dataset.gpeItem = key;
+            b.textContent = item.glyph + " " + item.label;
+            // Like the throw menu, does NOT close on click — pick another, or fire
+            // again once it's off cooldown.
+            b.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                firePersonal(key);
+                syncMenuCooldowns();
+            });
+            panel.appendChild(b);
+        }
+        panel.addEventListener("mouseenter", holdPersonalMenu);
+        panel.addEventListener("mouseleave", scheduleClosePersonalMenu);
+        document.body.appendChild(panel);
+        personalPanel = panel;
+        return panel;
+    }
+
+    function openPersonalMenu(btn) {
+        if (btn.disabled) return;            // paused mid-hand: nothing to open
+        const panel = personalMenu();
+        holdPersonalMenu();
+        const br = btn.getBoundingClientRect();
+        panel.style.left = br.left + "px";
+        panel.style.top = (br.bottom + 4) + "px";
+        panel.classList.add("gpe-open");
+        // Keep it on screen when Splash sits near the right/bottom edge.
+        const pr = panel.getBoundingClientRect();
+        if (pr.right > window.innerWidth - 4) {
+            panel.style.left = Math.max(4, window.innerWidth - pr.width - 4) + "px";
+        }
+        if (pr.bottom > window.innerHeight - 4) {
+            panel.style.top = Math.max(4, br.top - pr.height - 4) + "px";
+        }
+        syncMenuCooldowns();
+    }
+
+    function holdPersonalMenu() {
+        if (personalCloseTimer) { clearTimeout(personalCloseTimer); personalCloseTimer = 0; }
+    }
+    function scheduleClosePersonalMenu() {
+        holdPersonalMenu();
+        personalCloseTimer = setTimeout(closePersonalMenu, 320);
+    }
+    function closePersonalMenu() {
+        holdPersonalMenu();
+        if (personalPanel) personalPanel.classList.remove("gpe-open");
+    }
+
+    // The trigger button, right of Splash. Hover or click opens the menu. Same
+    // re-attach dance as Splash, since GWT rebuilds the controls row between hands.
+    function addPersonalButton() {
         const splash = document.getElementById("gpe-splash-btn");
         if (!splash) return;                 // positioned off Splash; wait for it
         const cell = splash.parentElement;
         if (!cell) return;
-        const existing = document.getElementById("gpe-personal-bar");
+        const existing = document.getElementById("gpe-personal-btn");
         if (existing && existing.parentElement === cell) return;
         if (existing) existing.remove();     // stale: GWT rebuilt the row
 
-        const bar = document.createElement("div");
-        bar.id = "gpe-personal-bar";
-        for (const def of PERSONAL_BUTTONS) {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "gpe-personal-btn";
-            btn.dataset.gpeItem = def.key;
-            btn.textContent = def.icon;
-            btn.title = def.title;
-            btn.addEventListener("click", () => {
-                btn.classList.add("gpe-splash-busy");   // brief press feedback
-                setTimeout(() => btn.classList.remove("gpe-splash-busy"), 180);
-                firePersonal(def.key);
-            });
-            bar.appendChild(btn);
-        }
-        splash.insertAdjacentElement("afterend", bar);
-        placePersonalBar();
+        const btn = document.createElement("button");
+        btn.id = "gpe-personal-btn";
+        btn.type = "button";
+        btn.className = "gpe-personal-btn";
+        btn.textContent = "🥳";
+        btn.addEventListener("mouseenter", () => openPersonalMenu(btn));
+        btn.addEventListener("mouseleave", scheduleClosePersonalMenu);
+        btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openPersonalMenu(btn);
+        });
+        splash.insertAdjacentElement("afterend", btn);
+        placePersonalButton();
     }
 
-    // Follow Splash's right edge. Splash tracks the pot text (placeSplashButton), so
-    // we read where it landed and sit the bar a small gap to its right. Hidden
-    // unless I can actually fire one — they need the interaction wire and a seat,
-    // like the per-seat throw buttons. Re-run on the fast poll so position and
-    // visibility stay current as the pot changes and seats move.
-    function placePersonalBar() {
-        const bar = document.getElementById("gpe-personal-bar");
+    // Follow Splash's right edge. Hidden unless I can actually fire one (wire +
+    // seat); between hands it's live, from the flop it goes disabled/dim (and the
+    // menu shuts), since celebrations pause while a hand is in play. Re-run on the
+    // fast poll so position and state stay current.
+    function placePersonalButton() {
+        const btn = document.getElementById("gpe-personal-btn");
         const splash = document.getElementById("gpe-splash-btn");
-        if (!bar || !splash) return;
-        if (!canPersonal()) { bar.style.display = "none"; return; }
-        bar.style.display = "";
-        // Between hands they're live; from the flop they go dim rather than
-        // disappear, so the row doesn't jump in and out every hand.
+        if (!btn || !splash) return;
+        if (!canPersonal()) { btn.style.display = "none"; closePersonalMenu(); return; }
+        btn.style.display = "";
         const open = celebrationsAllowed();
-        bar.classList.toggle("gpe-personal-shut", !open);
-        for (const btn of bar.querySelectorAll(".gpe-personal-btn")) {
-            btn.disabled = !open;
-            const def = PERSONAL_BUTTONS.find((d) => d.key === btn.dataset.gpeItem);
-            btn.title = open ? (def ? def.title : "")
-                : "not while the hand is playing — free again once it's over";
-        }
+        btn.disabled = !open;
+        btn.title = open ? "Celebrations" : "not while the hand is playing — free again once it's over";
+        if (!open) closePersonalMenu();
         const left = parseFloat(splash.style.left) || 0;
-        bar.style.left = (left + splash.offsetWidth + 6) + "px";
+        btn.style.left = (left + splash.offsetWidth + 6) + "px";
     }
 
-    // ---------- dance (personal interaction) ----------
-    // A clone of the celebrant's seat avatar leaps into the middle of the table,
-    // dances for a few seconds, then hops back — while the real seat avatar is
-    // hidden so it reads as the avatar itself getting up. Pure DOM/CSS over the
-    // page; runs the same on every viewer (each resolves the celebrant's own seat).
-    function danceAvatar(avatarEl, fromRect, tableRect) {
-        if (!avatarEl || !fromRect) return false;
+    // ---------- avatar stunts (dance, rail slide, ...) ----------
+    // Shared skeleton for the personal interactions that make a seat's avatar do
+    // something over the table: clone the avatar image into a fixed, click-through
+    // overlay, hide the real seat avatar (via visibility, so the fold-dimming poll
+    // — which writes opacity — doesn't fight it), and drive the clone each frame
+    // through a choreographer until it says it's done, then clean up and restore.
+    // Runs the same on every viewer, each resolving the celebrant's own seat.
+    //   step(t, api) -> false when finished. api.put(x, y, scale, rotZ, flipX)
+    //   places the clone; api carries the seat center (sx, sy), size (w, h) and the
+    //   table rect.
+    function avatarStunt(avatarEl, fromRect, tableRect, step) {
+        if (!avatarEl || !fromRect || typeof step !== "function") return false;
         const src = avatarEl.currentSrc || avatarEl.src;
         if (!src) return false;
-        const table = tableRect || liveRect(document.querySelector(".iogc-GameWindow-table"));
-
-        const sx = fromRect.left + fromRect.width / 2;   // seat center
-        const sy = fromRect.top + fromRect.height / 2;
-        const w = fromRect.width, h = fromRect.height;
-        const tx = table ? table.left + table.width / 2 : sx;         // middle of the table
-        const ty = table ? table.top + table.height / 2 : sy - 140;
-        const HOP = Math.min(130, h * 1.6);              // arc height of the leap
 
         const img = document.createElement("img");
         img.src = src;
         img.className = "gpe-dance";
-        img.style.width = w + "px";
-        img.style.height = h + "px";
+        img.style.width = fromRect.width + "px";
+        img.style.height = fromRect.height + "px";
         document.body.appendChild(img);
 
-        // Hide the seat avatar for the duration; visibility (not opacity) so the
-        // fold-dimming poll, which writes opacity, doesn't fight it.
         const prevVis = avatarEl.style.visibility;
         avatarEl.style.visibility = "hidden";
-        const restore = () => { if (avatarEl.isConnected) avatarEl.style.visibility = prevVis; };
+        const cleanup = () => { img.remove(); if (avatarEl.isConnected) avatarEl.style.visibility = prevVis; };
 
-        const JUMP_MS = 520, DANCE_MS = 2650, FLIP_MS = 620, RETURN_MS = 460;
-        const total = JUMP_MS + DANCE_MS + FLIP_MS + RETURN_MS;   // ~4.25s, to match the music
-        const t0 = performance.now();
-
-        // perspective() leads so the finale's rotateX reads as a somersault rather
-        // than a flat vertical squash. put(x, y, scale, rotZ, flipX).
+        // perspective() leads so a rotateX reads as a somersault, not a flat squash.
         const put = (x, y, scale, rotZ, flipX) => {
             img.style.transform = "perspective(600px) translate(" + x + "px," + y + "px) " +
-                "translate(-50%,-50%) rotateX(" + (flipX || 0) + "deg) rotate(" + rotZ + "deg) scale(" + scale + ")";
+                "translate(-50%,-50%) rotateX(" + (flipX || 0) + "deg) rotate(" + (rotZ || 0) + "deg) " +
+                "scale(" + (scale == null ? 1 : scale) + ")";
         };
-        put(sx, sy, 1, 0, 0);
+        const api = {
+            put,
+            sx: fromRect.left + fromRect.width / 2,
+            sy: fromRect.top + fromRect.height / 2,
+            w: fromRect.width, h: fromRect.height,
+            table: tableRect || liveRect(document.querySelector(".iogc-GameWindow-table")),
+        };
+        put(api.sx, api.sy, 1, 0, 0);
 
+        const t0 = performance.now();
         function frame(now) {
-            const t = now - t0;
-            if (t >= total) { img.remove(); restore(); return; }
+            if (step(now - t0, api) === false) { cleanup(); return; }
             requestAnimationFrame(frame);
-            if (t < JUMP_MS) {                       // leap from the seat to the center
-                const k = t / JUMP_MS, e = 1 - Math.pow(1 - k, 3);
-                put(sx + (tx - sx) * e, sy + (ty - sy) * e - Math.sin(k * Math.PI) * HOP, 1 + 0.3 * e, 0, 0);
-            } else if (t < JUMP_MS + DANCE_MS) {     // dance in the middle
-                const d = (t - JUMP_MS) / 1000;
-                const bob = Math.abs(Math.sin(d * 6)) * 18;   // little hops
-                const sway = Math.sin(d * 3) * 26;            // side to side
-                const tilt = Math.sin(d * 6) * 12;            // rocking
-                const squash = 1 + Math.sin(d * 12) * 0.06;   // squash & stretch
-                put(tx + sway, ty - bob, 1.3 * squash, tilt, 0);
-            } else if (t < JUMP_MS + DANCE_MS + FLIP_MS) {    // backflip finale
-                const k = (t - JUMP_MS - DANCE_MS) / FLIP_MS;
-                const hop = Math.sin(k * Math.PI) * (HOP * 0.95);   // up and back down
-                put(tx, ty - hop, 1.3, 0, 360 * k);                 // one full somersault
-            } else {                                 // hop back to the seat
-                const k = (t - JUMP_MS - DANCE_MS - FLIP_MS) / RETURN_MS, e = 1 - Math.pow(1 - k, 3);
-                put(tx + (sx - tx) * e, ty + (sy - ty) * e - Math.sin(k * Math.PI) * (HOP * 0.6),
-                    1.3 + (1 - 1.3) * e, 0, 0);
-            }
         }
         requestAnimationFrame(frame);
         return true;
+    }
+
+    // The table's rail as a screen-space ellipse: the felt oval (art-space
+    // measurements, the same the 3D table/coin code uses) grown by `pad` art px so
+    // a rider sits out on the rail rather than on the felt. null if there's no table.
+    function railEllipse(tableRect, pad) {
+        if (!tableRect || tableRect.width < 40) return null;
+        const ART_W = 790, CX = 395, CY = 190, HW = 290, HD = 102;   // felt, art space
+        const sc = tableRect.width / ART_W;
+        return {
+            cx: tableRect.left + CX * sc,
+            cy: tableRect.top + CY * sc,
+            ax: (HW + (pad || 0)) * sc,
+            by: (HD + (pad || 0)) * sc,
+        };
+    }
+
+    // Dance: leap to the middle, dance, backflip, hop back. ~4.25s, to match the
+    // celebrate track.
+    function danceAvatar(avatarEl, fromRect, tableRect) {
+        return avatarStunt(avatarEl, fromRect, tableRect, function (t, api) {
+            const { put, sx, sy, h, table } = api;
+            const tx = table ? table.left + table.width / 2 : sx;        // middle of the table
+            const ty = table ? table.top + table.height / 2 : sy - 140;
+            const HOP = Math.min(130, h * 1.6);
+            const JUMP = 520, DANCE = 2650, FLIP = 620, RET = 460;
+            if (t >= JUMP + DANCE + FLIP + RET) return false;
+            if (t < JUMP) {                          // leap from the seat to the center
+                const k = t / JUMP, e = 1 - Math.pow(1 - k, 3);
+                put(sx + (tx - sx) * e, sy + (ty - sy) * e - Math.sin(k * Math.PI) * HOP, 1 + 0.3 * e, 0, 0);
+            } else if (t < JUMP + DANCE) {           // dance in the middle
+                const d = (t - JUMP) / 1000;
+                put(tx + Math.sin(d * 3) * 26, ty - Math.abs(Math.sin(d * 6)) * 18,
+                    1.3 * (1 + Math.sin(d * 12) * 0.06), Math.sin(d * 6) * 12, 0);
+            } else if (t < JUMP + DANCE + FLIP) {    // backflip finale
+                const k = (t - JUMP - DANCE) / FLIP;
+                put(tx, ty - Math.sin(k * Math.PI) * (HOP * 0.95), 1.3, 0, 360 * k);
+            } else {                                 // hop back to the seat
+                const k = (t - JUMP - DANCE - FLIP) / RET, e = 1 - Math.pow(1 - k, 3);
+                put(tx + (sx - tx) * e, ty + (sy - ty) * e - Math.sin(k * Math.PI) * (HOP * 0.6),
+                    1.3 + (1 - 1.3) * e, 0, 0);
+            }
+            return true;
+        });
+    }
+
+    // Rail slide: leap up onto the rail, grind a full lap around the table's oval,
+    // then hop back down to the seat.
+    function railSlideAvatar(avatarEl, fromRect, tableRect) {
+        return avatarStunt(avatarEl, fromRect, tableRect, function (t, api) {
+            const { put, sx, sy, table } = api;
+            const JUMP = 520, SLIDE = 2900, RET = 460;
+            if (t >= JUMP + SLIDE + RET) return false;
+            const e = railEllipse(table, 16);        // sit ~16 art px out onto the rail
+            if (!e) return false;                    // no table -> nothing to grind
+            const ang0 = Math.atan2((sy - e.cy) / e.by, (sx - e.cx) / e.ax); // rail point nearest the seat
+            const on = (a) => ({ x: e.cx + Math.cos(a) * e.ax, y: e.cy + Math.sin(a) * e.by });
+            if (t < JUMP) {                          // leap from the seat onto the rail
+                const k = t / JUMP, ee = 1 - Math.pow(1 - k, 3), p = on(ang0);
+                put(sx + (p.x - sx) * ee, sy + (p.y - sy) * ee - Math.sin(k * Math.PI) * 90, 1 + 0.15 * ee, 0, 0);
+            } else if (t < JUMP + SLIDE) {           // grind one lap around the oval
+                const k = (t - JUMP) / SLIDE, ang = ang0 + k * Math.PI * 2, p = on(ang);
+                const lean = -Math.sin(ang) * 20;    // carve into the turn
+                const chatter = Math.sin(k * Math.PI * 10) * 3;   // rail vibration
+                put(p.x, p.y - chatter, 1.15, lean, 0);
+            } else {                                 // hop off the rail back to the seat
+                const k = (t - JUMP - SLIDE) / RET, ee = 1 - Math.pow(1 - k, 3), p = on(ang0);
+                put(p.x + (sx - p.x) * ee, p.y + (sy - p.y) * ee - Math.sin(k * Math.PI) * 60,
+                    1.15 + (1 - 1.15) * ee, 0, 0);
+            }
+            return true;
+        });
     }
 
     // Nudge the bet input by `steps` big blinds (may be negative), clamped to
@@ -6962,14 +7088,14 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         updateInteractTester(); // keep the tester's target list + send-ability current
         patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
         placeSplashButton(); // follows the pot total as it changes
-        placePersonalBar(); // rides Splash's right edge; also tracks seat/send-ability
+        placePersonalButton(); // rides Splash's right edge; also tracks seat/send-ability
         syncTable3d(); // keep the 3D felt attached across GWT re-renders
     }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();
         addPicker();
         addSplashButton();
-        addPersonalBar();
+        addPersonalButton();
         addChatPopoutButton();
         ensureSidePanelTabs();
         ensureLobbyTools();
@@ -6978,7 +7104,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         if (ready) {
             clearInterval(boot);
             setInterval(() => {
-                watchChat(); addPicker(); addSplashButton(); addPersonalBar(); addChatPopoutButton(); ensureSidePanelTabs(); ensureLobbyTools();
+                watchChat(); addPicker(); addSplashButton(); addPersonalButton(); addChatPopoutButton(); ensureSidePanelTabs(); ensureLobbyTools();
                 if (syncInteractCatalog()) updateInteractButtons();   // menu grew
                 ensureSideSections(); watchProfileMenuButton(); pollHandState();
             }, 1500);

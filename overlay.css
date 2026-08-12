@@ -266,16 +266,14 @@
 #gpe-splash-btn:hover { background: #f0f0f0; }
 #gpe-splash-btn.gpe-splash-busy { opacity: 0.45; }
 
-/* Personal-interaction toolbar (Celebrate, Dance, ...), sat just right of Splash
-   in the same cell. Icon-only buttons to stay compact; JS sets the row's `left`
-   off Splash's edge. */
-#gpe-personal-bar {
+/* Personal-interaction trigger button (opens the celebrations fly-out menu), sat
+   just right of Splash in the same cell. JS sets its `left` off Splash's edge;
+   the fly-out itself reuses the throw-menu styling (#gpe-personal-panel is joined
+   into those rules). */
+#gpe-personal-btn {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    display: flex;
-    align-items: center;
-    gap: 4px;
 }
 .gpe-personal-btn {
     all: unset;
@@ -292,9 +290,8 @@
     border-radius: 6px;
 }
 .gpe-personal-btn:hover { background: #f0f0f0; }
-.gpe-personal-btn.gpe-splash-busy { opacity: 0.45; }
-/* Shut from the flop until the hand is over: still there, visibly not available,
-   so the row doesn't appear and disappear around every hand. */
+/* Disabled from the flop until the hand is over: visibly not available, so it
+   doesn't appear and disappear around every hand. */
 .gpe-personal-btn:disabled { opacity: 0.35; cursor: default; }
 .gpe-personal-btn:disabled:hover { background: #fff; }
 
@@ -383,11 +380,13 @@
 /* A menu entry still cooling down. Deliberately not a "thrown!" flourish on the
    button: the throw only exists once the event comes back, and a send the server
    would drop must not look like it worked. The countdown is in the label. */
-#gpe-interact-panel .gpe-interact-item.gpe-interact-cool {
+#gpe-interact-panel .gpe-interact-item.gpe-interact-cool,
+#gpe-personal-panel .gpe-interact-item.gpe-interact-cool {
     opacity: 0.4;
     cursor: default;
 }
-#gpe-interact-panel .gpe-interact-item.gpe-interact-cool:hover { background: transparent; }
+#gpe-interact-panel .gpe-interact-item.gpe-interact-cool:hover,
+#gpe-personal-panel .gpe-interact-item.gpe-interact-cool:hover { background: transparent; }
 
 /* The background row's "auto" toggle: pressed-in when the surround is following
    the page's own table art rather than a picked colour. */
@@ -514,8 +513,9 @@
 }
 #gpe-react-panel button:hover { background: #f0f0f0; }
 
-/* ---- Interact menu (what to throw) ---- */
-#gpe-interact-panel {
+/* ---- Interact menu (what to throw); the personal celebrations fly-out reuses it ---- */
+#gpe-interact-panel,
+#gpe-personal-panel {
     position: fixed;
     z-index: 99999;
     background: #fff;
@@ -526,10 +526,12 @@
     display: none;
     min-width: 108px;
 }
-#gpe-interact-panel.gpe-open { display: block; }
-/* An invisible collar so the pointer can travel from the avatar's corner button
-   to the panel without passing over dead space and triggering the close. */
-#gpe-interact-panel::before {
+#gpe-interact-panel.gpe-open,
+#gpe-personal-panel.gpe-open { display: block; }
+/* An invisible collar so the pointer can travel from the trigger button to the
+   panel without passing over dead space and triggering the close. */
+#gpe-interact-panel::before,
+#gpe-personal-panel::before {
     content: "";
     position: absolute;
     left: -10px;
@@ -538,7 +540,8 @@
     bottom: -10px;
     z-index: -1;
 }
-#gpe-interact-panel .gpe-interact-item {
+#gpe-interact-panel .gpe-interact-item,
+#gpe-personal-panel .gpe-interact-item {
     all: unset;
     box-sizing: border-box;
     display: flex !important;
@@ -552,7 +555,8 @@
     white-space: nowrap;
     cursor: pointer;
 }
-#gpe-interact-panel .gpe-interact-item:hover { background: #f0f0f0; }
+#gpe-interact-panel .gpe-interact-item:hover,
+#gpe-personal-panel .gpe-interact-item:hover { background: #f0f0f0; }
 
 /* The struck avatar recoils. Only a transform, so nothing in the seat panel
    reflows and GWT re-rendering the image just drops the class harmlessly. */
