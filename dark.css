@@ -278,8 +278,10 @@ html.gpe-dark h4, html.gpe-dark h5 { color: #aab8cc !important; }
 
 /* heading/label spans on static pages (June 2026, Chip Gainers Today, ranks).
    :has() gate keeps this off the game page, where spans include button
-   labels and seat text that must keep their own colors. */
-html.gpe-dark #mainpage:not(:has(.iogc-GameWindow)) span { color: #c3cad6; }
+   labels and seat text that must keep their own colors. #forum is excluded
+   for the same reason: its spans are state badges and role chips that carry
+   their own foreground, and a blanket light grey erases them. */
+html.gpe-dark #mainpage:not(:has(.iogc-GameWindow)) span:not(#forum span) { color: #c3cad6; }
 
 /* leaderboard Top-25 card */
 html.gpe-dark .summary { background-color: #1f2530 !important; color: #c3cad6 !important; }
@@ -308,6 +310,120 @@ html.gpe-dark .menu2 {
     border-bottom-left-radius: 16px !important;
     border-bottom-right-radius: 16px !important;
 }
+
+/* ============================================================
+   Forum (/topics, /discussion, /reviews, /strategies, /ideas,
+   /replays, plus the profile wall and reply composer)
+
+   The rebuilt forum draws every colour from ten custom properties
+   on :root, authored for a white page — --idea-ink is #10151b, so
+   post bodies, titles and bylines rendered near-black on our dark
+   background. Re-pointing the properties re-themes the bulk of it;
+   the rules below that handle what the site hard-codes instead.
+   html.gpe-dark outranks :root, so no !important is needed here.
+   ============================================================ */
+
+html.gpe-dark {
+    --idea-ink: #d2d8e2;        /* post body, titles, author names */
+    --idea-ink2: #b6c0ce;       /* excerpts, table cells, secondary */
+    --idea-muted: #8a97ab;      /* bylines, column heads, pager */
+    --idea-line: #39455a;       /* hairline separators */
+    --idea-surface: #232c3a;    /* pager chips, sort groups, toolbar */
+    --idea-acc: #46a97a;        /* accent: focus + hover borders */
+    --idea-acc-deep: #6ed79c;   /* accent as text — lighter on dark */
+    --idea-acc-soft: rgba(70, 169, 122, 0.18);
+    --idea-link: #2b7ab8;       /* button fill, keeps white label */
+    --idea-link-deep: #3d92d4;  /* button hover — brighter, not darker */
+}
+
+/* white panels: composer, count pills, emoji picker, text inputs */
+html.gpe-dark .composer,
+html.gpe-dark .emoji-pop,
+html.gpe-dark #forum .pill {
+    background: #1f2530;
+}
+html.gpe-dark #forum .inputbar input.field-input,
+html.gpe-dark .inputbar input.field-input,
+html.gpe-dark .idea-admin-bar input[type="text"] {
+    background: #1b222d;
+    color: #d2d8e2;
+}
+html.gpe-dark .emoji-pop { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5); }
+html.gpe-dark .emoji-pop .emoji-search { background: #1b222d; color: #d2d8e2; }
+html.gpe-dark #forum .btnbar .btn-done { background: #2a3444; }
+html.gpe-dark .composer .composer-go[disabled],
+html.gpe-dark .composer .composer-go[disabled]:hover {
+    background: #39455a;
+    color: #93a0b4;
+}
+
+/* avatar placeholder shows through transparent PNGs and while loading */
+html.gpe-dark .idea-ava,
+html.gpe-dark #forum .post-ava img,
+html.gpe-dark #forum .cmt-ava img { background: #2a3444; }
+
+/* row and control hovers are near-black washes — invert to a light film */
+html.gpe-dark #forum table:not([style]) tbody tr:hover,
+html.gpe-dark #forum .all-item[data-href]:hover { background: rgba(255, 255, 255, 0.04); }
+html.gpe-dark #forum .post-act:hover,
+html.gpe-dark .composer .composer-tool:hover,
+html.gpe-dark .composer .composer-tool[aria-expanded="true"],
+html.gpe-dark .composer .composer-tool:focus-within,
+html.gpe-dark .emoji-grid button:hover { background: rgba(255, 255, 255, 0.08); }
+html.gpe-dark .emoji-tabs button:hover { background: rgba(255, 255, 255, 0.05); }
+
+/* status badges and role chips: pastel fill + dark ink, unreadable as-is.
+   Tinted fills keep each one's hue so they still sort at a glance. */
+html.gpe-dark .idea-state-triage,
+html.gpe-dark #forum .role-hidden {
+    background: rgba(144, 164, 174, 0.16); color: #a8bac4; border-color: #4a5666;
+}
+html.gpe-dark .idea-state-active,
+html.gpe-dark .idea-state-done,
+html.gpe-dark #forum .role-mod {
+    background: rgba(76, 175, 80, 0.16); color: #6ed79c; border-color: #35624a;
+}
+html.gpe-dark .idea-state-accepted,
+html.gpe-dark #forum .role-admin {
+    background: rgba(33, 150, 243, 0.16); color: #7cc4ff; border-color: #2f5375;
+}
+html.gpe-dark .idea-state-in_progress {
+    background: rgba(255, 179, 0, 0.16); color: #ffd166; border-color: #6b5623;
+}
+html.gpe-dark .idea-state-wont_do {
+    background: rgba(244, 81, 30, 0.16); color: #f0917a; border-color: #6e3b2c;
+}
+html.gpe-dark .idea-state-archived {
+    background: rgba(255, 255, 255, 0.07); color: #93a0b4; border-color: #444f60;
+}
+html.gpe-dark #forum .award {
+    background: rgba(232, 179, 57, 0.14); color: #e8c46b; border-color: #6b5a2c;
+}
+
+/* per-type byline hues, picked for a white page — lifted for this one */
+html.gpe-dark #forum .row-by.ty-topic { color: #93a8b5; }
+html.gpe-dark #forum .row-by.ty-idea { color: #e0a33c; }
+html.gpe-dark #forum .row-by.ty-strategy { color: #6fb1e8; }
+html.gpe-dark #forum .row-by.ty-review { color: #4fc3b4; }
+html.gpe-dark #forum .row-by.ty-replay { color: #a695e0; }
+
+/* destructive actions and validation errors */
+html.gpe-dark #forum .post-act.danger,
+html.gpe-dark .idea-admin-bar a.idea-danger,
+html.gpe-dark .idea-error,
+html.gpe-dark .composer-err,
+html.gpe-dark #forum .error,
+html.gpe-dark #forum .field-error { color: #f0837a; }
+html.gpe-dark #forum .post-act.danger:hover { background: rgba(240, 131, 122, 0.12); }
+html.gpe-dark .idea-admin-bar a.idea-danger:hover { border-color: #f0837a; }
+
+/* separators and the empty-context dash sit at #c3c9cf, a light-page grey */
+html.gpe-dark #forum .post-byline .sep,
+html.gpe-dark #forum .ctx-none { color: #6c7a90; }
+
+/* legacy forum panels still served on some pages */
+html.gpe-dark #forum .header { background: #1f2530 !important; }
+html.gpe-dark #forum .name { background: #232c3a !important; }
 
 /* ============================================================
    Our own overlays, re-themed to match
