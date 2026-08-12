@@ -296,7 +296,9 @@
 .gpe-personal-btn:disabled:hover { background: #fff; }
 
 /* An avatar clone that leaps onto the table to dance (the "dance" interaction).
-   Fixed, click-through overlay; JS drives its transform each frame. */
+   Fixed, click-through overlay; JS drives its transform each frame. 9998 puts a
+   dancer over everything at table level — the chips it's dancing among, the stat
+   badges — while staying under the menus and the odds HUD. */
 .gpe-dance {
     position: fixed;
     left: 0;
@@ -307,6 +309,13 @@
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
     will-change: transform;
 }
+
+/* ...except when the stunt's own props have to be in FRONT of the avatar: the
+   clap celebration's gloves are 3D and render on the coin layer (z 9), so the
+   clone drops just under it or the hands clap behind the celebrant's chest.
+   Costs nothing at that seat — the stunt stays put rather than crossing the
+   table, so there are no chips to be hidden behind. */
+.gpe-dance.gpe-under-props { z-index: 8; }
 
 #gpe-chips-layer {
     position: fixed;

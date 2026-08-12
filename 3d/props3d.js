@@ -54,6 +54,20 @@
             motion: "swing", maxLive: 4,
             glyph: "🧤", label: "glove", cooldownMs: 2000,
         },
+        // The glove again, as a PAIR that applauds in front of a standing avatar.
+        // Deliberately absent from ORDER: it is fired by the "stand up and clap"
+        // celebration in content.js, not thrown at a seat, so it must not appear in
+        // the throw menu. (syncInteractCatalog walks ORDER, not CATALOG.)
+        // height is much larger than the glove's because MOTIONS.clap turns the
+        // hands fingertip-on to the camera, and normalize() measures the model
+        // UNROTATED — along its length. What you actually see is the hand's
+        // width by its thickness, so 100 here renders as ~28x63px: about the
+        // size of the 64px avatar it stands in front of.
+        clap: {
+            model: "glove.glb", height: 100, poseX: -Math.PI / 2,
+            motion: "clap", maxLive: 2,
+            glyph: "👏", label: "clap", cooldownMs: 8000, flinch: false,
+        },
         // These four share the chip's throw animation outright, and differ only in
         // the model and the sound — which is exactly the split this file exists for.
         // height here is the bounding-SPHERE diameter (see normalize), so one number
@@ -456,6 +470,165 @@
                     },
                 };
                 put(start.x, start.y, M.ROLL, 0.82);
+                return actor;
+            },
+        },
+
+        // A PAIR of gloves applauding in front of a standing avatar. Both hands
+        // are one actor: they can never drift apart, and one object3D means
+        // coin3d's removeActor frees both sets of materials.
+        //
+        // LEAD / CLAPS / PERIOD are a single choreography shared three ways —
+        // here, the avatar's rise in content.js's standAndClap(), and the eight
+        // transients in assets/audio/clap.mp3 (see tools/make_clap.py). Change
+        // one and the other two drift off it.
+        //
+        // Orientation is set as an explicit basis rather than Euler angles, because
+        // what matters is stated directly: the hand's length runs at the viewer and
+        // its broad face turns to meet its partner. The two differ only in which way
+        // that face points, which is the mirror. Built with makeBasis (a rotation)
+        // rather than a negative scale, since a negative determinant flips winding
+        // order and the glove would light itself inside-out.
+        //
+        // The hands HINGE AT THE WRIST while the wrists themselves slide together —
+        // half the closing distance from each. Sliding whole hands into each other
+        // reads as stiff; hinging alone needs so much angle to close the gap that the
+        // hands turn face-on to the camera and look flat. Splitting it keeps the
+        // articulation without either failure.
+        //
+        // Each hand sits in a pivot group, offset half a hand-length along its finger
+        // axis so the cuff lands on the pivot; swinging the pivot about world up
+        // carries the fingertips together. SHUT stays small on purpose, so the palms
+        // meet nearly parallel.
+        clap: {
+            LEAD: 0.42, CLAPS: 8, PERIOD: 0.33, TAIL: 0.62,
+            WRIST_OPEN: 26,  // half the distance between the wrists, apart (px)
+            WRIST_SHUT: 15,  // ...and at the strike: the wrists close ~11px each
+            OPEN: -0.52,     // hinge angle with the hands apart (rad)
+            SHUT: 0.06,      // ...and at the strike: palms flat against each other
+            STRIKE: 0.42,    // share of a period spent closing; the rest reopens
+            RISE: 22,        // how far they float up into place during LEAD (px)
+            Z: 9,
+            build(T, ctx, spec, opts) {
+                const M = MOTIONS.clap;
+                const near = instance(T, ctx.key);
+                const far = instance(T, ctx.key);
+                if (!near || !far) return null;
+
+                // Local +Y runs along the hand (fingers) and -Z is its broad face,
+                // after the catalog's poseX. Aim the length at the viewer (+Z) and
+                // turn the broad face inward, so the palms meet.
+                const V = (x, y, z) => new T.Vector3(x, y, z);
+                const pose = new T.Quaternion().setFromRotationMatrix(
+                    new T.Matrix4().makeBasis(V(0, 1, 0), V(0, 0, 1), V(1, 0, 0)));
+                near.quaternion.copy(pose);
+                far.quaternion.copy(pose);
+
+                // Push each hand half its length up its finger axis so the cuff —
+                // the wrist — sits on its pivot's origin. normalize() scaled the
+                // model's length to spec.height, so that half-length is in px here.
+                const half = (spec.height || 100) / 2;
+                near.position.set(0, 0, half);
+                far.position.set(0, 0, half);
+
+                // Both hands take the SAME pose; the far one is then REFLECTED.
+                // There is only one glove model and it is a right hand, so this has
+                // to be a reflection and not a rotation — no rotation turns a right
+                // hand into a left one, which is why a half-turn about Y used to
+                // leave the far hand clapping with its thumb pointing down.
+                //
+                // The mirror gets its own node outside the mesh's rotation so the
+                // plane it reflects across is the world vertical between the two
+                // wrists, not some axis of the hand. A negative determinant is safe
+                // here: three.js reads it off the world matrix and flips the front
+                // face winding to match, so the reflected glove still lights right.
+                const mirror = new T.Group();
+                mirror.scale.set(-1, 1, 1);
+                mirror.add(far);
+
+                const nearPivot = new T.Group(); nearPivot.add(near);
+                const farPivot = new T.Group(); farPivot.add(mirror);
+                const group = new T.Group();
+                group.add(nearPivot, farPivot);
+
+                // Centre of the clap: the caller's point, nudged by however far it
+                // wants the hands to sit below the avatar's middle (chest height).
+                const cx = ctx.to.x;
+                const cy = ctx.to.y + (opts.dropY || 0);
+
+                const LIFE = M.LEAD + M.CLAPS * M.PERIOD + M.TAIL;
+                let t = 0;
+
+                // One eased parameter drives BOTH halves of the closing motion, so the
+                // slide and the hinge can never fall out of step: 0 is wide apart, 1 is
+                // struck. Values outside that range extrapolate, which the release at
+                // the end uses to fall further open than a clap ever does.
+                const poseAt = (p) => put(
+                    lerp(M.OPEN, M.SHUT, p),
+                    lerp(M.WRIST_OPEN, M.WRIST_SHUT, p)
+                );
+
+                // `wrist` is half the distance between the two pivots; `swing` hinges
+                // the hands about them, mirrored, so the palms come together. Scaling
+                // the PIVOT rather than the mesh keeps the hand and its wrist offset
+                // together and leaves the template's own scale untouched.
+                let dy = 0, scale = 1;
+                const put = (swing, wrist) => {
+                    nearPivot.position.set(cx - wrist, -(cy + dy), M.Z);
+                    nearPivot.rotation.y = swing;
+                    nearPivot.scale.setScalar(scale);
+                    farPivot.position.set(cx + wrist, -(cy + dy), M.Z);
+                    farPivot.rotation.y = -swing;
+                    farPivot.scale.setScalar(scale);
+                };
+
+                const actor = {
+                    object3D: group,
+                    step(dt) {
+                        t += dt;
+                        if (t >= LIFE) return false;
+
+                        // Float up into place while the avatar is still rising.
+                        if (t < M.LEAD) {
+                            const e = easeOutCubic(clamp(t / M.LEAD, 0, 1));
+                            setAlpha(group, e);
+                            dy = M.RISE * (1 - e);
+                            scale = 0.9 + 0.1 * e;
+                            poseAt(0);
+                            return true;
+                        }
+
+                        const since = t - M.LEAD;
+                        const i = Math.floor(since / M.PERIOD);
+
+                        // Applause over: the hands fall open and fade where they are.
+                        if (i >= M.CLAPS) {
+                            const q = clamp((since - M.CLAPS * M.PERIOD) / M.TAIL, 0, 1);
+                            setAlpha(group, 1 - q);
+                            dy = -10 * q;
+                            scale = 1 - 0.12 * q;
+                            poseAt(-0.55 * q);   // past open: the hands drop loose
+                            return true;
+                        }
+
+                        const u = (since - i * M.PERIOD) / M.PERIOD;
+                        // p: 0 apart, 1 struck. Closing accelerates, so contact is the
+                        // fastest part of the cycle rather than a soft meeting; the
+                        // rebound springs open and eases to a stop.
+                        const p = u < M.STRIKE
+                            ? easeInQuad(u / M.STRIKE)
+                            : 1 - easeOutCubic((u - M.STRIKE) / (1 - M.STRIKE));
+                        // The pair dips into each strike rather than hanging level.
+                        dy = Math.sin(u * Math.PI) * 5;
+                        scale = lerp(1, 1.06, p);
+                        poseAt(p);
+                        return true;
+                    },
+                };
+                setAlpha(group, 0);
+                dy = M.RISE;
+                scale = 0.9;
+                poseAt(0);
                 return actor;
             },
         },

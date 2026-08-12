@@ -412,6 +412,20 @@
     // model. Everything else is a row in 3d/props3d.js's catalog — motion, model,
     // size, sound, cooldown — so adding an object touches that catalog and nothing
     // here. Merged at boot rather than duplicated.
+    // The clap celebration's choreography, in one place because three things move
+    // together on it: MOTIONS.clap in 3d/props3d.js opens and closes the gloves on
+    // these numbers, standAndClap() below rises and sits on them, and the fade
+    // below stops the applause on them. Change one and the rest drift off the beat.
+    //
+    // Declared HERE, above INTERACT_ITEMS, rather than next to standAndClap where
+    // they are otherwise used: the item literal reads them while this file is still
+    // being evaluated, and a const declared further down would still be in its
+    // temporal dead zone — a ReferenceError that kills the whole content script.
+    const CLAP_LEAD = 420;      // the rise, before the first clap
+    const CLAP_COUNT = 8;
+    const CLAP_PERIOD = 330;    // one clap per 330ms — brisk applause, ~3/sec
+    const CLAP_TAIL = 620;      // sit back down
+
     const INTERACT_ITEMS = {
         chip: {
             label: "chip",
@@ -452,6 +466,27 @@
             flinch: false,
             ensure: () => Promise.resolve(true),
             effect: (from, table, ctx) => danceAvatar(ctx.avatar, from, table),
+        },
+        // The celebrant stands up out of their seat and gives the table a round of
+        // applause: a pair of 3D gloves claps in front of the risen avatar, eight
+        // times, to a matching track. The only celebration that needs BOTH paths —
+        // the DOM avatar stunt and a props3d actor — so unlike dance and rail its
+        // ensure() has to wait for a model, exactly as a throw does. If the glove
+        // never loads the whole thing is skipped rather than playing half of it.
+        clap: {
+            label: "clap",
+            glyph: "👏",
+            category: CAT_PERSONAL,
+            cooldownMs: 8000,
+            assetSound: "golfclap",              // -> assets/audio/golfclap.mp3
+            // The track is 6.6s against a 3.7s celebration, so it is faded out
+            // rather than left to run: it holds while the hands are clapping, then
+            // rides down across the sit-back, going silent as the avatar lands.
+            assetFade: { holdMs: CLAP_LEAD + CLAP_COUNT * CLAP_PERIOD, fadeMs: CLAP_TAIL },
+            flinch: false,
+            ensure: () => ensureProps3d().then((ok) =>
+                (ok && window.GPE_PROPS ? GPE_PROPS.ready("clap") : false)),
+            effect: (from, table, ctx) => standAndClap(ctx.avatar, from, table),
         },
         // The celebrant's avatar hops up onto the rail and grinds a lap around the
         // table's oval edge before dropping back into its seat. DOM/CSS only.
@@ -646,7 +681,7 @@
     // tools itself, and chrome.runtime.getURL as an extension (where content.js is a
     // content script with no currentScript, so SELF_SRC is empty). assets/* is
     // already web-accessible in the manifest, so no manifest change is needed.
-    const ASSET_SOUND_NAMES = ["hooray", "celebrate", "railslide"];   // warmed at boot, like SOUND_NAMES
+    const ASSET_SOUND_NAMES = ["hooray", "celebrate", "railslide", "golfclap"];   // warmed at boot, like SOUND_NAMES
     const assetSoundPool = Object.create(null);
     function assetAudioUrl(name) {
         const path = "assets/audio/" + name + ".mp3";
@@ -654,9 +689,12 @@
         try { return chrome.runtime.getURL(path); } catch (e) { return null; }
     }
 
+    // A hair louder than the table sounds — a cheer is meant to carry.
+    const ASSET_VOLUME = 0.7;
+
     // A voice pool for our own audio, mirroring soundVoices (preload + rewind so a
     // cue fires on time; several voices so overlapping plays don't cut each other
-    // off). A hair louder than the table sounds — a cheer is meant to carry.
+    // off).
     function assetVoices(name) {
         let pool = assetSoundPool[name];
         if (!pool) {
@@ -665,7 +703,7 @@
             for (let i = 0; i < SOUND_VOICES; i++) {
                 const el = new Audio(url || "");
                 el.preload = "auto";
-                el.volume = 0.7;
+                el.volume = ASSET_VOLUME;
                 try { el.load(); } catch (e) {}
                 els.push(el);
             }
@@ -674,15 +712,45 @@
         return pool;
     }
 
-    function playAssetSound(name) {
+    // Ride one voice's volume down and stop it. For tracks that outlast the
+    // animation they belong to: a found recording is whatever length it is, and
+    // letting it run leaves the sound playing over a seat that has gone still.
+    //
+    // Each ramp stamps the element with a token. A replay on the same voice bumps
+    // the token, which abandons any ramp still running on it — without that, the
+    // old ramp would fade out the NEW play a moment after it started, and restore
+    // the volume behind its back.
+    const FADE_STEP_MS = 40;
+    function fadeAssetVoice(el, holdMs, fadeMs) {
+        const token = (el.gpeFadeToken || 0) + 1;
+        el.gpeFadeToken = token;
+        setTimeout(() => {
+            if (el.gpeFadeToken !== token) return;
+            let left = fadeMs;
+            const tick = setInterval(() => {
+                if (el.gpeFadeToken !== token) { clearInterval(tick); return; }
+                left -= FADE_STEP_MS;
+                if (left > 0) { el.volume = ASSET_VOLUME * (left / fadeMs); return; }
+                clearInterval(tick);
+                try { el.pause(); } catch (e) {}
+                el.volume = ASSET_VOLUME;      // hand it back ready for the next play
+            }, FADE_STEP_MS);
+        }, holdMs);
+    }
+
+    // fade: { holdMs, fadeMs } to stop the track early, or omitted to let it run.
+    function playAssetSound(name, fade) {
         if (!name) return;
         try {
             const pool = assetVoices(name);
             const el = pool.els[pool.next];
             pool.next = (pool.next + 1) % pool.els.length;
+            el.gpeFadeToken = (el.gpeFadeToken || 0) + 1;   // drop any ramp mid-flight
+            el.volume = ASSET_VOLUME;              // a cut-short play must not stay quiet
             el.currentTime = 0;                    // rewind rather than reload
             const p = el.play();
             if (p && p.catch) p.catch(() => {});   // autoplay policy / offline: stay quiet
+            if (fade && fade.fadeMs > 0) fadeAssetVoice(el, fade.holdMs, fade.fadeMs);
         } catch (e) {}
     }
 
@@ -727,7 +795,7 @@
             if (!celebrationsAllowed()) return Promise.resolve(false);
             return item.ensure().then((ok) => {
                 if (!ok) return false;
-                playAssetSound(item.assetSound);
+                playAssetSound(item.assetSound, item.assetFade);
                 if (item.emote) showEmoteForName(toName, item.emote);
                 // The visual acts on the celebrant's OWN avatar (from === to): a
                 // burst out of it, the avatar itself leaping up to dance, etc.
@@ -6719,7 +6787,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     // Splash (local-only chips) these ride the interaction wire, so the whole table
     // sees them. Personal items live outside INTERACT_ORDER, so PERSONAL_ORDER is
     // their own menu order.
-    const PERSONAL_ORDER = ["celebrate", "dance", "rail"];
+    const PERSONAL_ORDER = ["celebrate", "clap", "dance", "rail"];
     let personalPanel = null;
     let personalCloseTimer = 0;
 
@@ -6838,14 +6906,16 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     //   step(t, api) -> false when finished. api.put(x, y, scale, rotZ, flipX)
     //   places the clone; api carries the seat center (sx, sy), size (w, h) and the
     //   table rect.
-    function avatarStunt(avatarEl, fromRect, tableRect, step) {
+    // opts.cls adds a class to the clone — the one use is dropping it below the 3D
+    // layer so a stunt can have props drawn IN FRONT of the avatar (see clap).
+    function avatarStunt(avatarEl, fromRect, tableRect, step, opts) {
         if (!avatarEl || !fromRect || typeof step !== "function") return false;
         const src = avatarEl.currentSrc || avatarEl.src;
         if (!src) return false;
 
         const img = document.createElement("img");
         img.src = src;
-        img.className = "gpe-dance";
+        img.className = "gpe-dance" + ((opts && opts.cls) ? " " + opts.cls : "");
         img.style.width = fromRect.width + "px";
         img.style.height = fromRect.height + "px";
         document.body.appendChild(img);
@@ -6921,6 +6991,50 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
             }
             return true;
         });
+    }
+
+    // Stand up and applaud: the avatar rises out of its seat, drives down into
+    // eight claps, and sits back. The hands themselves are 3D — a pair of gloves
+    // from props3d — because the avatar image has none to clap with. The
+    // choreography constants are CLAP_*, declared up with INTERACT_ITEMS.
+    function standAndClap(avatarEl, fromRect, tableRect) {
+        if (!avatarEl || !fromRect) return false;
+        const h = fromRect.height || 40;
+        const lift = Math.min(46, h * 0.55);
+
+        // The gloves are a separate renderer on coin3d's layer, not part of the
+        // stunt: they're aimed at the seat once, up front, since the avatar holds
+        // still for the whole applause and only the rise and the sit move it.
+        //
+        // dropY drops them into the gap the avatar opens up by standing: it rises
+        // by `lift` and grows to 1.18, leaving the lower half of its seat empty,
+        // and the hands clap there. 0.41 of the avatar's height lands just under
+        // its risen bottom edge — far enough down to sit in the gap, close enough
+        // to still read as attached to the body rather than floating below it.
+        if (window.GPE_PROPS) {
+            GPE_PROPS.toss("clap", fromRect, fromRect, tableRect, { dropY: h * 0.41 });
+        }
+
+        return avatarStunt(avatarEl, fromRect, tableRect, function (t, api) {
+            const { put, sx, sy } = api;
+            const APPLAUD = CLAP_COUNT * CLAP_PERIOD;
+            if (t >= CLAP_LEAD + APPLAUD + CLAP_TAIL) return false;
+            if (t < CLAP_LEAD) {                       // stand up out of the seat
+                const e = 1 - Math.pow(1 - t / CLAP_LEAD, 3);
+                put(sx, sy - lift * e, 1 + 0.18 * e, 0, 0);
+            } else if (t < CLAP_LEAD + APPLAUD) {      // applaud
+                // One pulse per clap, peaking as the palms meet: the whole body
+                // drives down into the strike instead of hanging level above it.
+                const u = ((t - CLAP_LEAD) % CLAP_PERIOD) / CLAP_PERIOD;
+                const beat = Math.sin(Math.PI * u);
+                put(sx, sy - lift + beat * 5, 1.18, beat * 2.5, 0);
+            } else {                                   // sit back down
+                const k = (t - CLAP_LEAD - APPLAUD) / CLAP_TAIL;
+                const e = 1 - Math.pow(1 - k, 3);
+                put(sx, sy - lift * (1 - e), 1.18 + (1 - 1.18) * e, 0, 0);
+            }
+            return true;
+        }, { cls: "gpe-under-props" });   // ...so the gloves draw in front of the chest
     }
 
     // Rail slide: leap up onto the rail, grind a full lap around the table's oval,
