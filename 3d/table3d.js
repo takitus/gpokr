@@ -99,6 +99,48 @@
     let feltColorHex = "#2f6360";    // COL_FELT as a hex tint for the felt material
     let leatherColorHex = "#1d1a16"; // near-black brown tint for the rail material
     let logoOpacity = LOGO_OPACITY;  // felt-center watermark opacity (editor)
+    let backdropStyle = "";          // "" = none, the flat surround colour as before
+    let stoolsOn = false;            // a stool at every seat, on its own toggle
+
+    // The floor is a real table height below the top. The scale is fixed by the
+    // felt: the table spans ~31 world units and reads as a 2.4m poker table, so
+    // one unit is ~7.7cm and 75cm of table leg is 9.8 units. This started at 3.2
+    // (25cm — a coffee table) which was fine for a backdrop but made nonsense of
+    // anything standing on the floor, stools included. 150 units of plane is well
+    // past the frustum's reach, so no edge is ever visible.
+    const FLOOR_Y = -9.8;
+    const FLOOR_SIZE = 150;
+
+    // ---------- stools ----------
+    // Avatar centres, in the art's element space (the same 790-wide frame
+    // FELT_CX_PX/FELT_CY_PX are measured in), read off a live 9-seat table:
+    // two at the top, two down each side, three across the near edge. Aligned to
+    // the AVATAR rather than the seat card, because the card's internal layout is
+    // not mirrored left-to-right — the left column's avatars sit at x=33 while
+    // the right column's sit at x=737, which is not a mirror of it.
+    //
+    // Empty seats are static GWT grid cells that collapse to nothing, so their
+    // positions cannot be read at runtime; these are fixed on purpose so a stool
+    // stands at every seat whether or not anyone is on it.
+    const STOOL_SEATS_ART = [
+        [246, 38], [449, 38],                 // far side
+        [737, 73], [737, 253],                // right
+        [531, 346], [346, 346], [161, 346],   // near side
+        [33, 253], [33, 73],                  // left
+    ];
+    const STOOL_SEAT_R = 2.3;        // 35cm across
+    const STOOL_SEAT_H = 0.5;        // 4cm of cushion
+    const STOOL_SEAT_FILLET = 0.19;  // rounded top edge, rather than a cut cylinder
+    const STOOL_SEAT_TOP = -1.3;     // 65cm seat, i.e. 10cm under the table top
+    // Strongly tapered: thick where it meets the seat, whittled to a point at the
+    // floor. That taper is the whole signature of the style — a straight dowel
+    // reads as flat-pack, not mid-century.
+    const STOOL_LEG_TOP_R = 0.23, STOOL_LEG_BOT_R = 0.075;
+    const STOOL_LEG_IN = 1.45, STOOL_LEG_OUT = 2.45;        // splay, top to floor
+    const STOOL_STRETCH_T = 0.60;    // stretchers this far down the legs
+    const STOOL_STRETCH_R = 0.10;    // chunky enough to read at this size
+    const STOOL_COL_SEAT = 0x141414;
+    const STOOL_COL_WOOD = 0x8f5f36;
 
     function tableEl() { return document.querySelector(".iogc-GameWindow-table"); }
 
@@ -184,6 +226,284 @@
             return sm(sm(g[y0 * cells + x0], g[y0 * cells + x1], fx),
                       sm(g[y1 * cells + x0], g[y1 * cells + x1], fx), fy);
         };
+    }
+
+    // ---------- backdrop: the floor the table stands on ----------
+    // The camera sits 64 degrees above horizontal with a 42 degree FOV, so every
+    // ray in frame points at least 43 degrees DOWN: the horizon can never come
+    // into view, and one big plane fills the picture with no edge to hide. That
+    // is why this is a floor and not a skybox or a screen-space quad.
+    //
+    // Each style declares how it wants to be laid down. `tile` styles repeat a
+    // seamless swatch; "glow" does not, because the pool of light it bakes is a
+    // single gradient centred on the table and repeating it would print a grid
+    // of suns. Colour is the material tint, so a style's map only carries
+    // luminance and pattern — the same split the felt uses.
+    const BACKDROPS = {
+        // Two tints per style. `color` is dark mode's, and is deliberately darker
+        // than a real carpet or floor: it sits UNDER the seat cards, chips and bet
+        // controls, and anything brighter competes with the pieces being read.
+        //
+        // `light` is the same material in a bright room. Without it the play area
+        // became a heavy dark block punched into a pale page — the floor is by far
+        // the largest surface here, so it sets the weight of the whole thing. The
+        // motif canvas is greyscale either way; only this tint changes.
+        grain:  { color: "#15171c", light: "#cfd3da", repeat: 7, rough: 0.95 },
+        glow:   { color: "#232833", light: "#dfe3ea", repeat: 0, rough: 0.9 },   // repeat 0 = stretch once
+        carpet: { color: "#5c1722", light: "#a8515c", repeat: 9, rough: 0.98 },  // diamonds
+        clover: { color: "#3f2145", light: "#8f6c98", repeat: 8, rough: 0.98 },  // quatrefoil lattice
+        deco:   { color: "#1f3a46", light: "#6f97a5", repeat: 7, rough: 0.98 },  // scalloped fans
+        // repeat is set by real proportion, not by eye. The table spans ~31 world
+        // units and reads as a ~2.4m poker table, so a unit is ~7.7cm. Four boards
+        // per tile over a 150-unit floor puts a board at 150/repeat/4 units: at
+        // repeat 20 that is ~1.9 units, ~14cm — a floorboard. At repeat 5 it was
+        // 58cm, which is why the floor looked like a close-up of a deck.
+        wood:   { color: "#4a3220", light: "#a87c50", repeat: 20, rough: 0.72 },
+    };
+
+    // Fine, near-black tarmac grain: the "it should not look like a flat fill"
+    // option. Two noise octaves, kept low-contrast so it never reads as texture.
+    function grainCanvas(N) {
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = N;
+        const ctx = cv.getContext("2d");
+        const lo = makeNoise(8), hi = makeNoise(64);
+        const img = ctx.createImageData(N, N);
+        for (let y = 0; y < N; y++) {
+            for (let x = 0; x < N; x++) {
+                const u = x / N, v = y / N;
+                const n = 0.62 + 0.26 * lo(u, v) + 0.12 * hi(u, v);
+                const c = Math.max(0, Math.min(255, Math.round(n * 255)));
+                const i = (y * N + x) * 4;
+                img.data[i] = img.data[i + 1] = img.data[i + 2] = c;
+                img.data[i + 3] = 255;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return cv;
+    }
+
+    // A pool of light: radial falloff baked into the map, brightest under the
+    // table. The scene's overhead lamp already does some of this, but light
+    // alone falls off with distance squared and goes flat black at the corners;
+    // baking it keeps a readable floor out to the edges of the frame.
+    function glowCanvas(N) {
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = N;
+        const ctx = cv.getContext("2d");
+        const g = ctx.createRadialGradient(N / 2, N / 2, N * 0.04, N / 2, N / 2, N * 0.52);
+        g.addColorStop(0, "#ffffff");
+        g.addColorStop(0.45, "#8e8e8e");
+        g.addColorStop(1, "#101010");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, N, N);
+        // Grain on top, or the gradient bands on an 8-bit canvas.
+        const n = makeNoise(140);
+        const img = ctx.getImageData(0, 0, N, N);
+        for (let y = 0; y < N; y++) {
+            for (let x = 0; x < N; x++) {
+                const i = (y * N + x) * 4;
+                const d = (n(x / N, y / N) - 0.5) * 14;
+                img.data[i] = Math.max(0, Math.min(255, img.data[i] + d));
+                img.data[i + 1] = img.data[i + 2] = img.data[i];
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return cv;
+    }
+
+    // Casino carpet: a diamond lattice with an inner motif, offset every other
+    // row. The cell divides the canvas and the offset is half a cell, so the
+    // whole thing is seamless at 512 — no motif is ever clipped by the edge.
+    function carpetCanvas(N) {
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = N;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, N, N);
+
+        const cell = N / 4;
+        const diamond = (cx, cy, r, fill, w) => {
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy);
+            ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy);
+            ctx.closePath();
+            if (w) { ctx.lineWidth = w; ctx.strokeStyle = fill; ctx.stroke(); }
+            else { ctx.fillStyle = fill; ctx.fill(); }
+        };
+        for (let row = -1; row <= 4; row++) {
+            for (let col = -1; col <= 4; col++) {
+                const cx = col * cell + (row % 2 ? cell : cell / 2);
+                const cy = row * cell + cell / 2;
+                diamond(cx, cy, cell * 0.46, "#c8c8c8", 0);
+                diamond(cx, cy, cell * 0.30, "#8f8f8f", 0);
+                diamond(cx, cy, cell * 0.46, "#e8e8e8", 2);
+                diamond(cx, cy, cell * 0.13, "#ffffff", 0);
+            }
+        }
+        // Break up the flatness — real carpet is never one clean tone.
+        const n = makeNoise(120);
+        const img = ctx.getImageData(0, 0, N, N);
+        for (let y = 0; y < N; y++) {
+            for (let x = 0; x < N; x++) {
+                const i = (y * N + x) * 4;
+                const d = (n(x / N, y / N) - 0.5) * 34;
+                for (let k = 0; k < 3; k++) {
+                    img.data[i + k] = Math.max(0, Math.min(255, img.data[i + k] + d));
+                }
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return cv;
+    }
+
+    // Grain overlay shared by the carpets: real carpet is never one flat tone, and
+    // without this the motifs read as printed vinyl.
+    function carpetGrain(ctx, N, amount) {
+        const n = makeNoise(120);
+        const img = ctx.getImageData(0, 0, N, N);
+        for (let y = 0; y < N; y++) {
+            for (let x = 0; x < N; x++) {
+                const i = (y * N + x) * 4;
+                const d = (n(x / N, y / N) - 0.5) * amount;
+                for (let k = 0; k < 3; k++) {
+                    img.data[i + k] = Math.max(0, Math.min(255, img.data[i + k] + d));
+                }
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+    }
+
+    // Quatrefoil lattice — four overlapping lobes per cell, rows offset by half a
+    // cell. Cell divides the canvas and the offset repeats every two rows, so the
+    // y period is 2 cells and still divides 512: seamless both ways.
+    function cloverCanvas(N) {
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = N;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, N, N);
+
+        const cell = N / 4;
+        const lobes = (cx, cy, r, fill) => {
+            ctx.fillStyle = fill;
+            ctx.beginPath();
+            for (let k = 0; k < 4; k++) {
+                const a = k * Math.PI / 2;
+                ctx.moveTo(cx + Math.cos(a) * r * 0.55 + r * 0.55, cy + Math.sin(a) * r * 0.55);
+                ctx.arc(cx + Math.cos(a) * r * 0.55, cy + Math.sin(a) * r * 0.55, r * 0.55, 0, Math.PI * 2);
+            }
+            ctx.fill();
+        };
+        for (let row = -1; row <= 4; row++) {
+            const odd = ((row % 2) + 2) % 2;
+            for (let col = -1; col <= 4; col++) {
+                const cx = col * cell + (odd ? cell / 2 : 0);
+                const cy = row * cell;
+                lobes(cx, cy, cell * 0.62, "#c4c4c4");
+                lobes(cx, cy, cell * 0.40, "#8b8b8b");
+                ctx.fillStyle = "#efefef";
+                ctx.beginPath();
+                ctx.arc(cx, cy, cell * 0.10, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        carpetGrain(ctx, N, 32);
+        return cv;
+    }
+
+    // Deco fan: rows of scallops, each ribbed with concentric arcs. Alternate rows
+    // step half a cell, so like the clover it repeats every two rows.
+    function decoCanvas(N) {
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = N;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, N, N);
+
+        const cell = N / 8;
+        ctx.lineCap = "round";
+        for (let row = -1; row <= 8; row++) {
+            const odd = ((row % 2) + 2) % 2;
+            for (let col = -1; col <= 9; col++) {
+                const cx = col * cell + (odd ? cell / 2 : 0);
+                const cy = row * cell;
+                ctx.beginPath();
+                ctx.arc(cx, cy, cell * 0.5, 0, Math.PI);
+                ctx.fillStyle = odd ? "#bdbdbd" : "#cfcfcf";
+                ctx.fill();
+                ctx.strokeStyle = "#7d7d7d";
+                ctx.lineWidth = 1.6;
+                ctx.stroke();
+                for (let k = 1; k <= 3; k++) {          // the ribs
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, cell * 0.5 * (k / 4), 0, Math.PI);
+                    ctx.strokeStyle = "#9a9a9a";
+                    ctx.lineWidth = 1.2;
+                    ctx.stroke();
+                }
+            }
+        }
+        carpetGrain(ctx, N, 26);
+        return cv;
+    }
+
+    // Plank flooring: continuous boards with dark seams, grain stretched along
+    // the board. Board height divides the canvas, so the seams line up on wrap.
+    function woodCanvas(N) {
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = N;
+        const ctx = cv.getContext("2d");
+        const board = N / 4;
+        const grain = makeNoise(40), fig = makeNoise(9), speck = makeNoise(200);
+        const img = ctx.createImageData(N, N);
+        for (let y = 0; y < N; y++) {
+            const b = Math.floor(y / board);
+            const shade = 0.86 + 0.14 * ((b * 0.37) % 1);      // per-board tone
+            const edge = Math.min(y % board, board - 1 - (y % board));
+            for (let x = 0; x < N; x++) {
+                const u = x / N, v = y / N;
+                // Stretch the noise along x so it reads as grain, not clouds.
+                // The multipliers MUST be whole numbers: makeNoise wraps over
+                // 0..1, so a fractional scale samples a partial period and the
+                // tile stops matching its own edge — which printed a hard seam
+                // straight down the middle of the floor.
+                let n = 0.62 + 0.30 * grain(u * 1, v * 6) + 0.14 * fig(u * 1, v * 2);
+                n += (speck(u, v) - 0.5) * 0.05;
+                n *= shade;
+                if (edge < 1.5) n *= 0.45;                     // the seam between boards
+                const c = Math.max(0, Math.min(255, Math.round(n * 255)));
+                const i = (y * N + x) * 4;
+                img.data[i] = img.data[i + 1] = img.data[i + 2] = c;
+                img.data[i + 3] = 255;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        return cv;
+    }
+
+    function backdropTexture(T, style) {
+        const N = 512;
+        const cv = style === "carpet" ? carpetCanvas(N)
+            : style === "clover" ? cloverCanvas(N)
+                : style === "deco" ? decoCanvas(N)
+                    : style === "wood" ? woodCanvas(N)
+                        : style === "glow" ? glowCanvas(N)
+                            : grainCanvas(N);
+        const tex = new T.CanvasTexture(cv);
+        const spec = BACKDROPS[style] || BACKDROPS.grain;
+        if (spec.repeat > 0) {
+            tex.wrapS = tex.wrapT = T.RepeatWrapping;
+            tex.repeat.set(spec.repeat, spec.repeat);
+        } else {
+            tex.wrapS = tex.wrapT = T.ClampToEdgeWrapping;
+        }
+        tex.colorSpace = T.SRGBColorSpace;
+        // The floor is seen at a grazing angle and tiles many times across it, so
+        // it needs more anisotropic filtering than the felt to stop the far end
+        // smearing into mush.
+        tex.anisotropy = 8;
+        return tex;
     }
 
     // A procedural felt LUMINANCE map (grayscale cloth variation: soft cloud
@@ -368,6 +688,261 @@
         img.src = url;
     }
 
+    // Build, replace or remove the floor. Called on scene build and whenever the
+    // editor picks a different style; tears the old one down first, since these
+    // maps are 512x512 canvases and swapping styles a few times would otherwise
+    // leak one per switch.
+    // How far the light reaches across the floor, as multiples of the table's own
+    // extent: full brightness out to LIT, fading to FADE by DARK.
+    //
+    // FADE is the AMOUNT of brightness lost out at the edges, not the brightness
+    // left behind — the knob you actually want when this reads too heavy or too
+    // flat. At 0.94 (a near-black edge) it swallowed the corners; half that is
+    // enough to feel like a lit table in a dim room without losing the floor.
+    const FLOOR_LIT = 1.3, FLOOR_DARK = 4.2;
+    // Less fade in a bright room: the same drop that reads as a lit table in
+    // the dark just turns a pale floor muddy grey at the edges.
+    const FLOOR_FADE_DARK = 0.47, FLOOR_FADE_LIGHT = 0.26;
+
+    // content.js puts gpe-dark on <html> for its dark theme; the surround
+    // sampler already leans on the page this way.
+    function isDarkTheme() {
+        return document.documentElement.classList.contains("gpe-dark");
+    }
+
+    // Darken the floor with distance from the table, baked into vertex colours.
+    //
+    // Lighting alone will not do this. The overhead lamp does fall off with
+    // distance, but ambient and the key/fill directionals are uniform everywhere,
+    // so the far boards stay as bright as the ones under the rail and the room
+    // reads as an infinite lit plane. Baking it also keeps it independent of the
+    // texture, which tiles many times over and so cannot carry a single gradient.
+    //
+    // Elliptical rather than circular: the table is nearly three times wider than
+    // it is deep, and a round pool of light around it looks wrong at the ends.
+    function shadeFloorFalloff(T, geo, A, B, fade) {
+        const pos = geo.attributes.position;
+        const col = new Float32Array(pos.count * 3);
+        for (let i = 0; i < pos.count; i++) {
+            // PlaneGeometry is built in XY and later rotated flat, so its local
+            // y is the world's z.
+            const r = Math.hypot(pos.getX(i) / A, pos.getY(i) / B);
+            const t = Math.min(1, Math.max(0, (r - FLOOR_LIT) / (FLOOR_DARK - FLOOR_LIT)));
+            const smooth = t * t * (3 - 2 * t);
+            const v = 1 - smooth * fade;
+            col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = v;
+        }
+        geo.setAttribute("color", new T.BufferAttribute(col, 3));
+    }
+
+    function applyBackdrop(s) {
+        if (!s || !s.scene) return;
+        const T = window.THREE;
+        if (s.floor) {
+            s.scene.remove(s.floor);
+            if (s.floorMat) { if (s.floorMat.map) s.floorMat.map.dispose(); s.floorMat.dispose(); }
+            if (s.floorGeo) s.floorGeo.dispose();
+            s.floor = s.floorMat = s.floorGeo = null;
+        }
+        const spec = BACKDROPS[backdropStyle];
+        // The overhead lamp only pays for its cube shadow map when there is a
+        // floor underneath to catch the table's shadow.
+        if (s.overhead) s.overhead.castShadow = !!spec;
+        if (!spec) { s.needsRender = Math.max(s.needsRender || 0, 2); return; }
+
+        // Segmented, because the falloff below is baked per VERTEX: a two-triangle
+        // plane has nothing to interpolate across.
+        s.floorGeo = new T.PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE, 72, 72);
+        const dark = isDarkTheme();
+        s.floorDark = dark;   // so loop() can notice a theme flip
+        shadeFloorFalloff(T, s.floorGeo, s.feltA || 14.7, s.feltB || 5.7,
+            dark ? FLOOR_FADE_DARK : FLOOR_FADE_LIGHT);
+        s.floorMat = new T.MeshStandardMaterial({
+            color: new T.Color((!dark && spec.light) ? spec.light : spec.color),
+            roughness: spec.rough,
+            metalness: 0,
+            map: backdropTexture(T, backdropStyle),
+            vertexColors: true,
+        });
+        s.floor = new T.Mesh(s.floorGeo, s.floorMat);
+        s.floor.rotation.x = -Math.PI / 2;   // XY plane -> XZ ground
+        s.floor.position.y = FLOOR_Y;
+        s.floor.receiveShadow = true;        // the table drops a shadow onto it
+        s.scene.add(s.floor);
+        s.needsRender = Math.max(s.needsRender || 0, 2);
+    }
+
+    // One mid-century stool: a round black seat on four splayed, tapered wood
+    // legs. Built once and cloned per seat — clone() shares geometry and
+    // materials, so nine stools cost one of each and dispose once.
+    // The seat as a lathed profile rather than a cylinder, so its top edge is a
+    // rounded-over lip: centre, out across the top, round the corner, down the
+    // side, and back in underneath. A hard cylinder edge catches the key light as
+    // a bright rim and reads as a stamped disc.
+    // Listed BOTTOM to TOP, which is not cosmetic: LatheGeometry takes its winding
+    // from the profile's direction, and a top-down list turns the seat inside out.
+    // The symptom is subtle and easy to misread — the seat still looks like a solid
+    // disc (you are seeing its underside faces) but its top surface is culled, so it
+    // writes no depth and the leg tops buried inside it show straight through as
+    // four wooden dots.
+    function stoolSeatProfile(T) {
+        const R = STOOL_SEAT_R, half = STOOL_SEAT_H / 2, f = STOOL_SEAT_FILLET;
+        const pts = [
+            new T.Vector2(0, -half),            // underside centre
+            new T.Vector2(R - 0.07, -half),     // out across the underside
+            new T.Vector2(R, -half + 0.07),     // slight under-bevel
+            new T.Vector2(R, half - f),         // up the side wall
+        ];
+        const STEPS = 6;
+        for (let i = 1; i <= STEPS; i++) {      // round the top edge over
+            const a = (i / STEPS) * (Math.PI / 2);
+            pts.push(new T.Vector2(R - f + Math.cos(a) * f, half - f + Math.sin(a) * f));
+        }
+        pts.push(new T.Vector2(0, half));       // in to the top centre
+        return pts;
+    }
+
+    function buildStoolTemplate(T, s) {
+        s.stoolSeatGeo = new T.LatheGeometry(stoolSeatProfile(T), 30);
+        s.stoolSeatMat = new T.MeshStandardMaterial({
+            color: STOOL_COL_SEAT, roughness: 0.55, metalness: 0.05,
+        });
+        s.stoolWoodMat = new T.MeshStandardMaterial({
+            color: STOOL_COL_WOOD, roughness: 0.62, metalness: 0.0,
+        });
+
+        const seatY = STOOL_SEAT_TOP - STOOL_SEAT_H / 2;
+        // Up INSIDE the seat, not flush with its underside: flush leaves the
+        // leg's top cap coplanar with the seat's bottom face, and the two
+        // z-fight into speckles that read as leg ends poking through the top.
+        const legTopY = STOOL_SEAT_TOP - STOOL_SEAT_H + 0.18;
+        // Every leg is the same length, so one geometry serves all four: build it
+        // from the first leg's endpoints and then just re-aim the copies.
+        const a0 = Math.PI / 4;
+        const top0 = new T.Vector3(Math.cos(a0) * STOOL_LEG_IN, legTopY, Math.sin(a0) * STOOL_LEG_IN);
+        const bot0 = new T.Vector3(Math.cos(a0) * STOOL_LEG_OUT, FLOOR_Y, Math.sin(a0) * STOOL_LEG_OUT);
+        const legLen = top0.distanceTo(bot0);
+        s.stoolLegGeo = new T.CylinderGeometry(STOOL_LEG_TOP_R, STOOL_LEG_BOT_R, legLen, 10);
+
+        const stool = new T.Group();
+        const seat = new T.Mesh(s.stoolSeatGeo, s.stoolSeatMat);
+        seat.position.y = seatY;
+        seat.castShadow = true;
+        seat.receiveShadow = true;
+        stool.add(seat);
+
+        const UP = new T.Vector3(0, 1, 0);
+        const knees = [];   // where each leg passes the stretcher height
+        for (let i = 0; i < 4; i++) {
+            const a = a0 + i * Math.PI / 2;
+            const top = new T.Vector3(Math.cos(a) * STOOL_LEG_IN, legTopY, Math.sin(a) * STOOL_LEG_IN);
+            const bot = new T.Vector3(Math.cos(a) * STOOL_LEG_OUT, FLOOR_Y, Math.sin(a) * STOOL_LEG_OUT);
+            const leg = new T.Mesh(s.stoolLegGeo, s.stoolWoodMat);
+            leg.position.copy(top).add(bot).multiplyScalar(0.5);
+            // Aim +Y UP the leg. CylinderGeometry's first radius is its +Y end,
+            // so pointing +Y down the leg put the fat end on the floor and
+            // tapered it the wrong way — wide at the foot, thin at the seat.
+            leg.quaternion.setFromUnitVectors(UP, top.clone().sub(bot).normalize());
+            leg.castShadow = true;
+            stool.add(leg);
+            knees.push(top.clone().lerp(bot, STOOL_STRETCH_T));
+        }
+
+        // Stretchers: a rod between each neighbouring pair of legs. All four are
+        // the same length and sit level with one another, so one geometry does.
+        const span = knees[0].distanceTo(knees[1]);
+        s.stoolStretchGeo = new T.CylinderGeometry(STOOL_STRETCH_R, STOOL_STRETCH_R, span, 8);
+        for (let i = 0; i < 4; i++) {
+            const a = knees[i], b = knees[(i + 1) % 4];
+            const rod = new T.Mesh(s.stoolStretchGeo, s.stoolWoodMat);
+            rod.position.copy(a).add(b).multiplyScalar(0.5);
+            rod.quaternion.setFromUnitVectors(UP, b.clone().sub(a).normalize());
+            rod.castShadow = true;
+            stool.add(rod);
+        }
+        return stool;
+    }
+
+    function applyStools(s) {
+        if (!s || !s.scene) return;
+        const T = window.THREE;
+        if (s.stools) {
+            s.scene.remove(s.stools);
+            s.stools = null;
+        }
+        if (!stoolsOn) {
+            // Geometry and materials are kept: toggling is common and rebuilding
+            // nine stools per flick is wasted work. dispose() frees them.
+            s.needsRender = Math.max(s.needsRender || 0, 2);
+            return;
+        }
+        const template = s.stoolTemplate || (s.stoolTemplate = buildStoolTemplate(T, s));
+        const group = new T.Group();
+        for (let i = 0; i < STOOL_SEATS_ART.length; i++) group.add(template.clone());
+        s.stools = group;
+        s.scene.add(group);
+        placeStools(s);
+        s.needsRender = Math.max(s.needsRender || 0, 2);
+    }
+
+    // Put each stool where its SEAT lands on the seat's avatar.
+    //
+    // The obvious mapping — art x/y straight onto the felt plane, the way the
+    // felt itself is placed — is wrong here, and visibly so: that maps points at
+    // TABLE height, while a stool's seat is 1.3 units below it. Under a 64-degree
+    // perspective a point that low projects well off the felt-plane answer, and
+    // every stool landed pulled in toward the middle of the table.
+    //
+    // So instead of mapping, unproject: fire the pixel's own ray and intersect it
+    // with the horizontal plane the seat lives on. That is exact by construction
+    // and needs no correction term. It does need the camera to be placed first,
+    // which is why loop() re-runs this whenever syncToTable reframes.
+    function placeStools(s) {
+
+        if (!s.stools || !s.camera || !s.placed) return;
+        const T = window.THREE;
+        const seatY = STOOL_SEAT_TOP - STOOL_SEAT_H / 2;
+        const el = tableEl();
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const scale = r.width / ART_W;          // element px per art px
+        // syncToTable has just moved the camera, and position/lookAt only touch
+        // its local transform — matrixWorld is not refreshed until the renderer
+        // walks the scene. Raycasting off the stale matrix unprojects through
+        // wherever the camera used to be: half the rays came out near-horizontal
+        // and missed the seat plane outright (leaving those stools stacked at the
+        // origin, under the felt), and the rest landed hundreds of units away.
+        s.camera.updateMatrixWorld(true);
+
+        const ray = new T.Raycaster();
+        const plane = new T.Plane(new T.Vector3(0, 1, 0), -seatY);
+        const ndc = new T.Vector2();
+        const hit = new T.Vector3();
+        STOOL_SEATS_ART.forEach(([ax, ay], i) => {
+            const stool = s.stools.children[i];
+            if (!stool) return;
+            ndc.set((ax * scale) / r.width * 2 - 1, -((ay * scale) / r.height * 2 - 1));
+            ray.setFromCamera(ndc, s.camera);
+            if (!ray.ray.intersectPlane(plane, hit)) return;
+            // The group's origin is at table height, so only x/z come from the hit.
+            stool.position.set(hit.x, 0, hit.z);
+            // Face the table, so any future asymmetry (a back, a footrest) points
+            // the right way. Four symmetric legs make this cosmetic today.
+            stool.rotation.y = Math.atan2(hit.x, hit.z);
+        });
+    }
+
+    function setStools(on) {
+        stoolsOn = !!on;
+        if (session) applyStools(session);
+    }
+
+    // "" / unknown -> no floor, back to the flat surround colour.
+    function setBackdrop(style) {
+        backdropStyle = (typeof style === "string" && BACKDROPS[style]) ? style : "";
+        if (session) applyBackdrop(session);
+    }
+
     function setFeltColor(hex) {
         if (typeof hex === "string" && hex) feltColorHex = hex;
         if (session && session.feltMat) {
@@ -488,6 +1063,20 @@
         // Overhead table light with falloff -> center-bright felt (see notes).
         const overhead = new T.PointLight(OVERHEAD_COL, OVERHEAD, 0, OVERHEAD_DECAY);
         overhead.position.set(0, OVERHEAD_H, 2);
+        // This lamp is the one that has to throw the table's shadow onto the
+        // floor: it sits straight over the felt and, at floor distance, it is
+        // worth ~1.5 intensity against the key light's 0.5, so a shadow from the
+        // key alone is washed out to almost nothing. Its shadow is switched on
+        // only while a backdrop is showing (see applyBackdrop) — a point light's
+        // shadow is a six-face cube map, and with no floor to catch it the cost
+        // would buy nothing and would newly shadow the felt for people who have
+        // no backdrop at all.
+        overhead.shadow.mapSize.set(1024, 1024);
+        overhead.shadow.camera.near = 0.5;
+        overhead.shadow.camera.far = 60;
+        overhead.shadow.bias = -0.0015;
+        overhead.castShadow = false;
+        s.overhead = overhead;
         s.scene.add(overhead);
 
         const A = FELT_HALF_W_PX * (VIEW_W / ART_W);           // felt half-width, world
@@ -509,6 +1098,14 @@
         felt.rotation.x = -Math.PI / 2;      // lie flat (XY shape -> XZ ground)
         felt.position.y = -FELT_DROP;
         felt.receiveShadow = true;
+        // The felt is what actually blocks the light: the rail is a thin ring, so
+        // on its own it drops a hoop onto the floor rather than a table. Casting
+        // from the oval too gives the solid silhouette. shadowSide is explicit
+        // because this is a one-sided plane — by default three.js shadow-renders
+        // the BACK faces of a FrontSide material, and a floor-facing plane has
+        // none, so it would write nothing into the shadow map.
+        felt.castShadow = true;
+        s.feltMat.shadowSide = T.DoubleSide;
         s.scene.add(felt);
 
         // ---- rail: extruded stadium ring with a beveled top ----
@@ -549,8 +1146,10 @@
         wall.receiveShadow = true;
         s.scene.add(wall);
 
-        applyTexZoom(s); // set all texture repeats from the current zoom
-        applyDepth(s);   // set relief depth (normal-map strength)
+        applyTexZoom(s);   // set all texture repeats from the current zoom
+        applyDepth(s);     // set relief depth (normal-map strength)
+        applyBackdrop(s);  // the floor under the table, if a style is chosen
+        applyStools(s);    // ...and a stool at every seat, if switched on
 
         // ---- gpokr logo watermark on the felt center (loads async) ----
         loadLogoTexture(T, (tex, aspect) => {
@@ -578,7 +1177,14 @@
         s.raf = requestAnimationFrame(() => loop(s));
         const r = syncToTable(s);
         if (r === "gone") { disable(); return; }
-        if (r) s.needsRender = Math.max(s.needsRender, 2);
+        if (r) {
+            s.needsRender = Math.max(s.needsRender, 2);
+            placeStools(s);   // reframed: the seat rays moved with the camera
+        }
+        // Dark mode toggles without a reload, so the floor has to follow it.
+        if (s.floor && s.floorDark !== isDarkTheme()) {
+            applyBackdrop(s);
+        }
         if (s.needsRender > 0) { s.renderer.render(s.scene, s.camera); s.needsRender--; }
     }
 
@@ -627,8 +1233,11 @@
     function dispose(s) {
         if (s.raf) cancelAnimationFrame(s.raf);
         s.enabled = false;
-        [s.feltGeo, s.railGeo, s.wallGeo, s.logoGeo].forEach((g) => g && g.dispose());
-        [s.feltMat, s.railMat, s.wallMat, s.logoMat].forEach((m) => m && m.dispose());
+        [s.feltGeo, s.railGeo, s.wallGeo, s.logoGeo, s.floorGeo,
+            s.stoolSeatGeo, s.stoolLegGeo, s.stoolStretchGeo].forEach((g) => g && g.dispose());
+        [s.feltMat, s.railMat, s.wallMat, s.logoMat, s.floorMat,
+            s.stoolSeatMat, s.stoolWoodMat].forEach((m) => m && m.dispose());
+        if (s.floorMat && s.floorMat.map) s.floorMat.map.dispose();
         if (s.feltNormal) s.feltNormal.dispose();
         if (s.feltColor) s.feltColor.dispose();
         if (s.railColor) s.railColor.dispose();
@@ -645,5 +1254,5 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, isOn: () => !!session, _session: () => session };
+    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setStools, isOn: () => !!session, _session: () => session };
 })();

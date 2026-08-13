@@ -410,6 +410,24 @@
     color: #2f4f2a !important;
 }
 
+/* The floor row: one button per generated backdrop, the active one pressed in.
+   Wraps, because five of them do not fit the modal's width on a narrow window. */
+.gpe-backdrop-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-left: auto;
+}
+.gpe-backdrop-btn {
+    font-size: 11px !important;
+    padding: 3px 8px !important;
+}
+.gpe-backdrop-btn.gpe-on {
+    background: #d8e6d2 !important;
+    border-color: #7ba36b !important;
+    color: #2f4f2a !important;
+}
+
 /* Pop-out button: same footprint as the emote button it sits beside. */
 /* The action bar is a GWT table, so the button can't just float right in a flex
    row — it is absolutely positioned against the bar instead. */

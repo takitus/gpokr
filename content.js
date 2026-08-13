@@ -37,6 +37,8 @@
     // mode swaps in our dark table.png and light mode keeps the site's pale jpg.
     // A picked colour overrides it.
     let TABLE3D_BG_COLOR = "";
+    let TABLE3D_BACKDROP = "";   // "" = no floor, just the flat surround colour
+    let TABLE3D_STOOLS = false;
     // Single source of truth for the 3D-table editor defaults (used by
     // applySettings' fallbacks and the "Reset to defaults" button).
     const TABLE3D_DEFAULTS = {
@@ -44,7 +46,12 @@
         table3dLeatherColor: "#1d1a16", table3dLeatherZoom: 10, table3dLeatherDepth: 0.1,
         table3dLogoOpacity: 0.2,
         table3dBgColor: "",   // "" = sampled from the page's art
+        table3dBackdrop: "",  // "" = none; a floor style renders under the table
+        table3dStools: false, // a stool at every seat
     };
+    // Floor styles table3d knows how to build. Kept here too so a value read
+    // back from storage is checked against a list rather than trusted.
+    const BACKDROP_STYLES = ["grain", "glow", "carpet", "clover", "deco", "wood"];
     const clampZoom = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n > 0) ? Math.min(10, Math.max(0.1, n)) : (dflt != null ? dflt : 1); };
     const clampDepth = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0) ? Math.min(3, Math.max(0, n)) : dflt; };
     const clamp01 = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0 && n <= 1) ? n : dflt; };
@@ -155,6 +162,9 @@
         // Not clampColor: "" is meaningful here (follow the art), not a fallback.
         TABLE3D_BG_COLOR = (s && typeof s.table3dBgColor === "string" && /^(#[0-9a-fA-F]{6})?$/.test(s.table3dBgColor))
             ? s.table3dBgColor : TABLE3D_DEFAULTS.table3dBgColor;
+        TABLE3D_BACKDROP = (s && BACKDROP_STYLES.indexOf(s.table3dBackdrop) >= 0)
+            ? s.table3dBackdrop : TABLE3D_DEFAULTS.table3dBackdrop;
+        TABLE3D_STOOLS = !!(s && s.table3dStools);
         applyTable3dSettings();
         syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
         COIN_TOSS = !(s && s.coinToss === false); // opt-out
@@ -5743,6 +5753,75 @@
             return row;
         })();
 
+        // Floor under the table. A row of toggles rather than a colour input,
+        // because these are whole generated surfaces, not a value — and "none"
+        // is one of the choices, which a colour picker cannot express.
+        const backdropRow = (() => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label"; lab.textContent = "floor";
+            const group = document.createElement("div");
+            group.className = "gpe-backdrop-group";
+            const btns = [];
+            const pick = (style) => {
+                TABLE3D_BACKDROP = style;
+                if (window.GPE_TABLE3D && GPE_TABLE3D.setBackdrop) GPE_TABLE3D.setBackdrop(style);
+                saveSetting("table3dBackdrop", style);
+                btns.forEach((b) => b.classList.toggle("gpe-on", b.dataset.style === style));
+            };
+            [["", "none"], ["grain", "grain"], ["glow", "glow"],
+                ["carpet", "carpet"], ["clover", "clover"], ["deco", "deco"], ["wood", "wood"]]
+                .forEach(([style, label]) => {
+                    const b = document.createElement("button");
+                    b.type = "button";
+                    b.className = "gpe-reset-btn gpe-backdrop-btn";
+                    b.dataset.style = style;
+                    b.textContent = label;
+                    b.addEventListener("click", () => pick(style));
+                    btns.push(b);
+                    group.appendChild(b);
+                });
+            refreshers.push(() => {
+                btns.forEach((b) => b.classList.toggle("gpe-on", b.dataset.style === TABLE3D_BACKDROP));
+            });
+            row.append(lab, group);
+            return row;
+        })();
+
+        // Stools are their own toggle rather than part of the floor: they are
+        // furniture, not a surface, and someone may want one without the other.
+        const stoolRow = (() => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label"; lab.textContent = "stools";
+            const group = document.createElement("div");
+            group.className = "gpe-backdrop-group";
+            const btns = [];
+            const pick = (on) => {
+                TABLE3D_STOOLS = on;
+                if (window.GPE_TABLE3D && GPE_TABLE3D.setStools) GPE_TABLE3D.setStools(on);
+                saveSetting("table3dStools", on);
+                btns.forEach((b) => b.classList.toggle("gpe-on", (b.dataset.on === "1") === on));
+            };
+            [[false, "off"], [true, "on"]].forEach(([on, label]) => {
+                const b = document.createElement("button");
+                b.type = "button";
+                b.className = "gpe-reset-btn gpe-backdrop-btn";
+                b.dataset.on = on ? "1" : "0";
+                b.textContent = label;
+                b.addEventListener("click", () => pick(on));
+                btns.push(b);
+                group.appendChild(b);
+            });
+            refreshers.push(() => {
+                btns.forEach((b) => b.classList.toggle("gpe-on", (b.dataset.on === "1") === TABLE3D_STOOLS));
+            });
+            row.append(lab, group);
+            return row;
+        })();
+
         const leatherColor = makeColorRow("leather color",
             () => TABLE3D_LEATHER_COLOR,
             (c) => { TABLE3D_LEATHER_COLOR = c; if (window.GPE_TABLE3D) GPE_TABLE3D.setLeatherColor(c); },
@@ -5772,7 +5851,8 @@
 
         const hint = document.createElement("div");
         hint.className = "gpe-modal-hint";
-        hint.textContent = "Zoom = feature size (0.1×–10×). Depth = relief strength. Updates live; needs \"3D table\" on.";
+        hint.textContent = "Zoom = feature size (0.1×–10×). Depth = relief strength. Floor = a generated "
+            + "surface under the table, which also catches its shadow. Updates live; needs \"3D table\" on.";
 
         // ---- reset to defaults ----
         const resetRow = document.createElement("div");
@@ -5784,7 +5864,8 @@
             TABLE3D_FELT_COLOR = d.table3dFeltColor; TABLE3D_FELT_ZOOM = d.table3dFeltZoom; TABLE3D_FELT_DEPTH = d.table3dFeltDepth;
             TABLE3D_LEATHER_COLOR = d.table3dLeatherColor; TABLE3D_LEATHER_ZOOM = d.table3dLeatherZoom; TABLE3D_LEATHER_DEPTH = d.table3dLeatherDepth;
             TABLE3D_LOGO_OPACITY = d.table3dLogoOpacity;
-            TABLE3D_BG_COLOR = d.table3dBgColor;
+            TABLE3D_BG_COLOR = d.table3dBgColor; TABLE3D_BACKDROP = d.table3dBackdrop;
+            TABLE3D_STOOLS = d.table3dStools;
             if (window.GPE_TABLE3D) {
                 GPE_TABLE3D.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
                 GPE_TABLE3D.setTexDepth(TABLE3D_FELT_DEPTH, TABLE3D_LEATHER_DEPTH);
@@ -5792,6 +5873,8 @@
                 GPE_TABLE3D.setLeatherColor(TABLE3D_LEATHER_COLOR);
                 GPE_TABLE3D.setLogoOpacity(TABLE3D_LOGO_OPACITY);
                 if (GPE_TABLE3D.setSurroundColor) GPE_TABLE3D.setSurroundColor(TABLE3D_BG_COLOR);
+                if (GPE_TABLE3D.setBackdrop) GPE_TABLE3D.setBackdrop(TABLE3D_BACKDROP);
+                if (GPE_TABLE3D.setStools) GPE_TABLE3D.setStools(TABLE3D_STOOLS);
             }
             Object.keys(d).forEach((k) => saveSetting(k, d[k]));
             modal._refresh();
@@ -5799,7 +5882,7 @@
         resetRow.appendChild(resetBtn);
 
         modal._refresh = () => refreshers.forEach((fn) => fn());
-        modal.append(head, feltColor, feltZoom, feltDepth, leatherColor, leatherZoom, leatherDepth, logoOpacity, bgRow, hint, resetRow);
+        modal.append(head, feltColor, feltZoom, feltDepth, leatherColor, leatherZoom, leatherDepth, logoOpacity, bgRow, backdropRow, stoolRow, hint, resetRow);
         document.body.appendChild(modal);
         return modal;
     }
@@ -7161,6 +7244,8 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         api.setLeatherColor(TABLE3D_LEATHER_COLOR);
         api.setLogoOpacity(TABLE3D_LOGO_OPACITY);
         if (api.setSurroundColor) api.setSurroundColor(TABLE3D_BG_COLOR);
+        if (api.setBackdrop) api.setBackdrop(TABLE3D_BACKDROP);
+        if (api.setStools) api.setStools(TABLE3D_STOOLS);
     }
 
     function syncTable3d() {

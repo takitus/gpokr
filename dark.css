@@ -571,7 +571,8 @@ html.gpe-dark .gpe-personal-btn:hover { background: #2c3645; }
 html.gpe-dark .gpe-personal-btn:disabled:hover { background: #232c3a; }
 html.gpe-dark #gpe-picker-panel button:hover { background: #344056; }
 
-html.gpe-dark .gpe-bg-auto.gpe-on {
+html.gpe-dark .gpe-bg-auto.gpe-on,
+html.gpe-dark .gpe-backdrop-btn.gpe-on {
     background: #2b3a25 !important;
     border-color: #465a38 !important;
     color: #c7dab4 !important;
