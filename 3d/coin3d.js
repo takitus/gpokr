@@ -208,6 +208,22 @@
         },
     });
 
+    // One chip mesh — art, geometry, face-on pose — for anything that wants to
+    // DRAW a chip without throwing one (props3d's river floats a shoal of them
+    // downstream). It goes through the same projectile definition a tossed chip
+    // is built from, so there is still exactly one chip in the codebase, and
+    // through ensureSession so the caller gets the art whether or not anything
+    // has been thrown yet.
+    function chipMesh(denom) {
+        const s = ensureSession();
+        if (!s) return null;
+        const T = window.THREE;
+        const def = projectiles.chip;
+        const mesh = def.make(T, s, { denom: denom });
+        if (mesh) def.basePose(T, mesh.quaternion);
+        return mesh;
+    }
+
     // A projectile is either a Mesh (one material, or an array of them) or a whole
     // Group from a loaded model, so fading and disposal walk it generically.
     // Geometry is shared and deliberately never disposed here — only the
@@ -735,7 +751,7 @@
     }
 
     window.GPE_COIN = {
-        toss, confetti, disable, registerProjectile, addActor, feltBounds,
+        toss, confetti, disable, registerProjectile, addActor, feltBounds, chipMesh,
         isRunning: () => !!(session && (session.coins.length || session.actors.length)),
         _session: () => session,
     };

@@ -100,7 +100,7 @@
     let leatherColorHex = "#1d1a16"; // near-black brown tint for the rail material
     let logoOpacity = LOGO_OPACITY;  // felt-center watermark opacity (editor)
     let backdropStyle = "";          // "" = none, the flat surround colour as before
-    let stoolsOn = false;            // a stool at every seat, on its own toggle
+    let seatStyle = "";              // "" = bare floor, "stool" or "chair" at every seat
 
     // The floor is a real table height below the top. The scale is fixed by the
     // felt: the table spans ~31 world units and reads as a 2.4m poker table, so
@@ -111,7 +111,7 @@
     const FLOOR_Y = -9.8;
     const FLOOR_SIZE = 150;
 
-    // ---------- stools ----------
+    // ---------- seats: a stool or a chair at every place ----------
     // Avatar centres, in the art's element space (the same 790-wide frame
     // FELT_CX_PX/FELT_CY_PX are measured in), read off a live 9-seat table:
     // two at the top, two down each side, three across the near edge. Aligned to
@@ -120,9 +120,9 @@
     // the right column's sit at x=737, which is not a mirror of it.
     //
     // Empty seats are static GWT grid cells that collapse to nothing, so their
-    // positions cannot be read at runtime; these are fixed on purpose so a stool
-    // stands at every seat whether or not anyone is on it.
-    const STOOL_SEATS_ART = [
+    // positions cannot be read at runtime; these are fixed on purpose so a seat
+    // stands at every place whether or not anyone is on it.
+    const SEATS_ART = [
         [246, 38], [449, 38],                 // far side
         [737, 73], [737, 253],                // right
         [531, 346], [346, 346], [161, 346],   // near side
@@ -141,6 +141,53 @@
     const STOOL_STRETCH_R = 0.10;    // chunky enough to read at this size
     const STOOL_COL_SEAT = 0x141414;
     const STOOL_COL_WOOD = 0x8f5f36;
+
+    // The other option: the black padded folding chair every card room owns —
+    // vinyl pads on a black steel tube frame. Everything below is in the same
+    // units as the stool (1 unit ~ 7.7cm) and shares its seat height, so the two
+    // styles land identically under the avatars and swap without re-aiming.
+    const CHAIR_SEAT_TOP = STOOL_SEAT_TOP;   // sit at the stool's height, 10cm under the top
+    const CHAIR_SEAT_H = 0.62;               // 5cm of cushion
+    const CHAIR_SEAT_HW = 2.85;              // 44cm across
+    const CHAIR_SEAT_HD = 2.6;               // 40cm deep
+    const CHAIR_SEAT_FILLET = 0.55;          // corner radius of the cushion
+    // The back is a touch wider than the frame it hangs on, so the uprights
+    // disappear behind it and show only below, between the pads.
+    const CHAIR_BACK_HW = 2.85, CHAIR_BACK_HH = 2.1;
+    const CHAIR_BACK_FILLET = 1.05;          // near-oval: the back is a rounded slab
+    const CHAIR_BACK_T = 0.5;                // 4cm of padding
+    const CHAIR_BACK_Y = 2.4;                // centre of the back, ~28cm above the seat
+    const CHAIR_TUBE_R = 0.19;               // 1.5cm steel tube
+    // Side profile, per side, mirrored across x=0. The back frame is one bent
+    // tube: rear foot -> seat pivot -> up behind the shoulder. The front leg runs
+    // from a forward foot up to the seat's rear underside, crossing it just below
+    // the cushion — that near-the-seat crossing, not a mid-height X, is what a
+    // real folding chair does.
+    const CHAIR_X_REAR = 2.6, CHAIR_X_FRONT = 2.32;
+    const CHAIR_REAR_FOOT_Z = 4.2;           // rear feet splay well behind the back
+    const CHAIR_PIVOT_Z = 2.8;               // where the back frame passes the seat
+    const CHAIR_BACK_TOP_Z = 3.5, CHAIR_BACK_TOP_Y = 4.35;
+    const CHAIR_FRONT_FOOT_Z = -2.7;         // front feet, toward the table
+    const CHAIR_FRONT_TOP_Z = 2.75;
+    // Both are "black" in the room, but not the same black on screen: the cloth
+    // is a shade lighter and much duller than the tube, which is left glossier
+    // and slightly metallic so the frame glints against the pads instead of
+    // merging with them into one dark blob.
+    const CHAIR_COL_PAD = 0x26262b;          // charcoal upholstery cloth
+    const CHAIR_COL_TUBE = 0x2b2b30;         // black steel
+    // Weave scale, in tiles per world unit. Set by what survives on screen, not
+    // by the real thread count: a unit is ~19px at the table's own size, and the
+    // texture carries 16 threads per tile, so this puts a thread at about two
+    // pixels. Anything finer mipmaps away and the cloth reads as flat paint.
+    const CHAIR_WEAVE_REPEAT = 0.6;
+    // Print scale, same units. Four diamonds to a tile, so this is a ~11cm
+    // diamond: four or so across a seat, which is upholstery scale rather than
+    // the ~32cm one the floor is laid at.
+    const CHAIR_PRINT_REPEAT = 0.18;
+    // The printed faces are lifted a little because the motif is greyscale and
+    // multiplies the tint down; without it the seat top reads darker than the
+    // black sides it is supposed to be brighter than.
+    const CHAIR_COL_PRINT = 0x3a3a42;
 
     function tableEl() { return document.querySelector(".iogc-GameWindow-table"); }
 
@@ -863,33 +910,253 @@
         return stool;
     }
 
-    function applyStools(s) {
+    // A rounded rectangle, the outline of both vinyl pads.
+    function roundedRect(T, hw, hh, r) {
+        const sh = new T.Shape();
+        r = Math.min(r, hw, hh);
+        sh.moveTo(-hw + r, -hh);
+        sh.lineTo(hw - r, -hh);
+        sh.quadraticCurveTo(hw, -hh, hw, -hh + r);
+        sh.lineTo(hw, hh - r);
+        sh.quadraticCurveTo(hw, hh, hw - r, hh);
+        sh.lineTo(-hw + r, hh);
+        sh.quadraticCurveTo(-hw, hh, -hw, hh - r);
+        sh.lineTo(-hw, -hh + r);
+        sh.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
+        return sh;
+    }
+
+    // One padded slab, extruded along +Z and centred on the origin through its
+    // thickness. The bevel is the point of it: a flat extrusion reads as cut
+    // plywood, while a rounded-over edge catches the key light the way stuffed
+    // vinyl does. The shape is inset by the bevel so the finished slab measures
+    // the size asked for rather than that plus two bevels.
+    //
+    // `faceDir` is which lid the sitter touches (+1 or -1 along the extrusion):
+    // that one is material 0 and gets the printed cloth, everything else —
+    // the far lid, the bevel, the sides — is material 1 and stays plain black.
+    function padGeometry(T, hw, hh, r, thick, faceDir) {
+        const bevel = Math.min(0.16, thick * 0.35);
+        const depth = thick - 2 * bevel;
+        const geo = new T.ExtrudeGeometry(
+            roundedRect(T, hw - bevel, hh - bevel, Math.max(0.05, r - bevel)),
+            {
+                depth, bevelEnabled: true, bevelThickness: bevel,
+                bevelSize: bevel, bevelSegments: 3, curveSegments: 12,
+            });
+        geo.translate(0, 0, -depth / 2);
+        splitLids(geo, faceDir);
+        return geo;
+    }
+
+    // ExtrudeGeometry files BOTH lids under one group and every side/bevel face
+    // under another, so "print the top only" needs the lid group broken in two.
+    // Walk its triangles, sort each by which side of the slab it sits on, and
+    // re-emit them as runs — which is exact rather than an assumption about the
+    // order the lids happen to be built in. The geometry is non-indexed, so a
+    // group's start/count count vertices directly.
+    function splitLids(geo, faceDir) {
+        const pos = geo.attributes.position;
+        const groups = geo.groups.slice();
+        geo.clearGroups();
+        groups.forEach((g) => {
+            if (g.materialIndex !== 0) { geo.addGroup(g.start, g.count, 1); return; }
+            const end = g.start + g.count;
+            let runStart = g.start, runMat = -1;
+            for (let i = g.start; i < end; i += 3) {
+                const z = (pos.getZ(i) + pos.getZ(i + 1) + pos.getZ(i + 2)) / 3;
+                const m = (z * faceDir > 0) ? 0 : 1;
+                if (m === runMat) continue;
+                if (runMat >= 0) geo.addGroup(runStart, i - runStart, runMat);
+                runStart = i; runMat = m;
+            }
+            if (runMat >= 0) geo.addGroup(runStart, end - runStart, runMat);
+        });
+    }
+
+    // A woven-cloth normal map for the pads: a plain weave, where the warp is on
+    // top in one cell and the weft in the next, checkerboard fashion. Each thread
+    // is a half-sine ridge across its own short axis, which is also why the tile
+    // is seamless — every thread falls to zero at the cell edge it shares with
+    // its neighbour. A little noise on top keeps it from looking machined.
+    //
+    // Same gradient-of-a-heightfield trick as the felt, and it is a normal map
+    // rather than a colour map on purpose: the weave should show as relief that
+    // moves with the light, not as a pattern printed on the cloth.
+    function fabricNormalTexture(T) {
+        const N = 256, K = 16;          // K threads across the tile
+        const fuzz = makeNoise(96);
+        const prof = (t) => Math.sin(Math.PI * t);
+        const height = (u, v) => {
+            const fx = u * K, fy = v * K;
+            const ix = Math.floor(fx), iy = Math.floor(fy);
+            const warpOver = ((ix + iy) & 1) === 0;
+            const h = warpOver ? prof(fx - ix) : prof(fy - iy);
+            return h * 0.86 + fuzz(u, v) * 0.14;
+        };
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = N;
+        const ctx = cv.getContext("2d");
+        const img = ctx.createImageData(N, N);
+        const e = 1.2 / N, STR = 2.4;
+        for (let y = 0; y < N; y++) {
+            for (let x = 0; x < N; x++) {
+                const u = x / N, v = y / N;
+                const dx = (height(u + e, v) - height(u - e, v)) * STR;
+                const dy = (height(u, v + e) - height(u, v - e)) * STR;
+                const len = Math.hypot(dx, dy, 1);
+                const i = (y * N + x) * 4;
+                img.data[i] = Math.round((-dx / len * 0.5 + 0.5) * 255);
+                img.data[i + 1] = Math.round((-dy / len * 0.5 + 0.5) * 255);
+                img.data[i + 2] = Math.round((1 / len * 0.5 + 0.5) * 255);
+                img.data[i + 3] = 255;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        const tex = new T.CanvasTexture(cv);
+        tex.wrapS = tex.wrapT = T.RepeatWrapping;
+        tex.anisotropy = 4;
+        // ExtrudeGeometry's UVs are raw world units (see normalizeUV), which is
+        // exactly what a repeating weave wants: one setting covers the seat, the
+        // back and their bevelled edges at the same thread size, with no seam
+        // where a face changes direction.
+        tex.repeat.set(CHAIR_WEAVE_REPEAT, CHAIR_WEAVE_REPEAT);
+        return tex;
+    }
+
+    // The print on the cloth: the same diamond lattice the carpet floor is woven
+    // from, because it is the same room — card-room upholstery and card-room
+    // carpet come off the same loom. Greyscale, like every other motif here, so
+    // the material tint decides how dark the fabric actually is.
+    function chairPrintTexture(T) {
+        const tex = new T.CanvasTexture(carpetCanvas(256));
+        tex.wrapS = tex.wrapT = T.RepeatWrapping;
+        tex.repeat.set(CHAIR_PRINT_REPEAT, CHAIR_PRINT_REPEAT);
+        tex.colorSpace = T.SRGBColorSpace;
+        tex.anisotropy = 4;
+        return tex;
+    }
+
+    // One black folding chair: two cloth pads on a bent steel tube frame, facing
+    // -Z (the table). Built once and cloned per seat, like the stool.
+    function buildChairTemplate(T, s) {
+        s.chairGeos = [];      // every geometry this template owns, for dispose()
+        s.chairWeave = fabricNormalTexture(T);
+        s.chairPrint = chairPrintTexture(T);
+        // Cloth, so: no metal, and rough enough that the pads never take the hard
+        // specular a vinyl seat would. The weave does the work instead, and both
+        // materials carry it — the print sits ON the same fabric, it is not a
+        // different one.
+        const cloth = { roughness: 0.88, metalness: 0, normalMap: s.chairWeave };
+        s.chairPadMat = new T.MeshStandardMaterial(
+            Object.assign({ color: CHAIR_COL_PAD }, cloth));
+        s.chairPrintMat = new T.MeshStandardMaterial(
+            Object.assign({ color: CHAIR_COL_PRINT, map: s.chairPrint }, cloth));
+        const pads = [s.chairPrintMat, s.chairPadMat];   // [printed lid, all the rest]
+        s.chairTubeMat = new T.MeshStandardMaterial({
+            color: CHAIR_COL_TUBE, roughness: 0.34, metalness: 0.7,
+        });
+
+        const chair = new T.Group();
+        const UP = new T.Vector3(0, 1, 0);
+        const V = (x, y, z) => new T.Vector3(x, y, z);
+        const tube = (a, b) => {
+            const geo = new T.CylinderGeometry(CHAIR_TUBE_R, CHAIR_TUBE_R, a.distanceTo(b), 8);
+            s.chairGeos.push(geo);
+            const m = new T.Mesh(geo, s.chairTubeMat);
+            m.position.copy(a).add(b).multiplyScalar(0.5);
+            m.quaternion.setFromUnitVectors(UP, b.clone().sub(a).normalize());
+            m.castShadow = true;
+            chair.add(m);
+        };
+
+        const botY = CHAIR_SEAT_TOP - CHAIR_SEAT_H;   // underside of the cushion
+        for (const sx of [1, -1]) {
+            const rearFoot = V(sx * CHAIR_X_REAR, FLOOR_Y, CHAIR_REAR_FOOT_Z);
+            const pivot = V(sx * CHAIR_X_REAR, botY, CHAIR_PIVOT_Z);
+            const backTop = V(sx * CHAIR_X_REAR, CHAIR_BACK_TOP_Y, CHAIR_BACK_TOP_Z);
+            const frontFoot = V(sx * CHAIR_X_FRONT, FLOOR_Y, CHAIR_FRONT_FOOT_Z);
+            const frontTop = V(sx * CHAIR_X_FRONT, botY, CHAIR_FRONT_TOP_Z);
+            tube(rearFoot, pivot);      // rear leg
+            tube(pivot, backTop);       // ...bending up into the back upright
+            tube(frontFoot, frontTop);  // front leg, crossing it under the seat
+            if (sx > 0) {
+                // Stretchers, low on each pair of legs. Taken by lerp along the
+                // legs themselves so they stay welded to them if the splay moves.
+                [[rearFoot, pivot, 0.22], [frontFoot, frontTop, 0.26]].forEach(([a, b, f]) => {
+                    const p = a.clone().lerp(b, f);
+                    tube(p, V(-p.x, p.y, p.z));
+                });
+            }
+        }
+
+        // +Z is the lid the sitter lands on: for the seat that is the face which
+        // rotates up to become the top, for the back it is the one turned toward
+        // the table, so the back prints on its -Z lid instead.
+        s.chairSeatGeo = padGeometry(T, CHAIR_SEAT_HW, CHAIR_SEAT_HD, CHAIR_SEAT_FILLET, CHAIR_SEAT_H, 1);
+        s.chairGeos.push(s.chairSeatGeo);
+        const seat = new T.Mesh(s.chairSeatGeo, pads);
+        seat.rotation.x = -Math.PI / 2;   // lay the slab flat, thickness upright
+        seat.position.y = CHAIR_SEAT_TOP - CHAIR_SEAT_H / 2;
+        seat.castShadow = true;
+        seat.receiveShadow = true;
+        chair.add(seat);
+
+        // The back rides on the FRONT face of the uprights (tube radius + half
+        // its own thickness clear of them), tilted with the frame — so it leans
+        // back with the uprights instead of floating parallel to the floor.
+        s.chairBackGeo = padGeometry(T, CHAIR_BACK_HW, CHAIR_BACK_HH, CHAIR_BACK_FILLET, CHAIR_BACK_T, -1);
+        s.chairGeos.push(s.chairBackGeo);
+        const back = new T.Mesh(s.chairBackGeo, pads);
+        const lean = Math.atan2(CHAIR_BACK_TOP_Z - CHAIR_PIVOT_Z, CHAIR_BACK_TOP_Y - botY);
+        const t = (CHAIR_BACK_Y - botY) / (CHAIR_BACK_TOP_Y - botY);
+        const onTube = CHAIR_PIVOT_Z + t * (CHAIR_BACK_TOP_Z - CHAIR_PIVOT_Z);
+        const off = CHAIR_TUBE_R + CHAIR_BACK_T / 2;
+        back.rotation.x = lean;
+        back.position.set(0, CHAIR_BACK_Y + Math.sin(lean) * off, onTube - Math.cos(lean) * off);
+        back.castShadow = true;
+        back.receiveShadow = true;
+        chair.add(back);
+
+        return chair;
+    }
+
+    function seatTemplate(T, s) {
+        s.seatTemplates = s.seatTemplates || {};
+        if (!s.seatTemplates[seatStyle]) {
+            s.seatTemplates[seatStyle] = seatStyle === "chair"
+                ? buildChairTemplate(T, s) : buildStoolTemplate(T, s);
+        }
+        return s.seatTemplates[seatStyle];
+    }
+
+    function applySeats(s) {
         if (!s || !s.scene) return;
         const T = window.THREE;
-        if (s.stools) {
-            s.scene.remove(s.stools);
-            s.stools = null;
+        if (s.seats) {
+            s.scene.remove(s.seats);
+            s.seats = null;
         }
-        if (!stoolsOn) {
+        if (seatStyle !== "stool" && seatStyle !== "chair") {
             // Geometry and materials are kept: toggling is common and rebuilding
-            // nine stools per flick is wasted work. dispose() frees them.
+            // nine of anything per flick is wasted work. dispose() frees them.
             s.needsRender = Math.max(s.needsRender || 0, 2);
             return;
         }
-        const template = s.stoolTemplate || (s.stoolTemplate = buildStoolTemplate(T, s));
+        const template = seatTemplate(T, s);
         const group = new T.Group();
-        for (let i = 0; i < STOOL_SEATS_ART.length; i++) group.add(template.clone());
-        s.stools = group;
+        for (let i = 0; i < SEATS_ART.length; i++) group.add(template.clone());
+        s.seats = group;
         s.scene.add(group);
-        placeStools(s);
+        placeSeats(s);
         s.needsRender = Math.max(s.needsRender || 0, 2);
     }
 
-    // Put each stool where its SEAT lands on the seat's avatar.
+    // Put each stool/chair where its SEAT lands on the seat's avatar.
     //
     // The obvious mapping — art x/y straight onto the felt plane, the way the
     // felt itself is placed — is wrong here, and visibly so: that maps points at
-    // TABLE height, while a stool's seat is 1.3 units below it. Under a 64-degree
+    // TABLE height, while a seat is 1.3 units below it. Under a 64-degree
     // perspective a point that low projects well off the felt-plane answer, and
     // every stool landed pulled in toward the middle of the table.
     //
@@ -897,10 +1164,12 @@
     // with the horizontal plane the seat lives on. That is exact by construction
     // and needs no correction term. It does need the camera to be placed first,
     // which is why loop() re-runs this whenever syncToTable reframes.
-    function placeStools(s) {
+    function placeSeats(s) {
 
-        if (!s.stools || !s.camera || !s.placed) return;
+        if (!s.seats || !s.camera || !s.placed) return;
         const T = window.THREE;
+        // Aim at the middle of a stool cushion; the chair's is within 5mm of it,
+        // and this only picks the depth at which each seat's ray is intersected.
         const seatY = STOOL_SEAT_TOP - STOOL_SEAT_H / 2;
         const el = tableEl();
         if (!el) return;
@@ -918,23 +1187,24 @@
         const plane = new T.Plane(new T.Vector3(0, 1, 0), -seatY);
         const ndc = new T.Vector2();
         const hit = new T.Vector3();
-        STOOL_SEATS_ART.forEach(([ax, ay], i) => {
-            const stool = s.stools.children[i];
-            if (!stool) return;
+        SEATS_ART.forEach(([ax, ay], i) => {
+            const seat = s.seats.children[i];
+            if (!seat) return;
             ndc.set((ax * scale) / r.width * 2 - 1, -((ay * scale) / r.height * 2 - 1));
             ray.setFromCamera(ndc, s.camera);
             if (!ray.ray.intersectPlane(plane, hit)) return;
             // The group's origin is at table height, so only x/z come from the hit.
-            stool.position.set(hit.x, 0, hit.z);
-            // Face the table, so any future asymmetry (a back, a footrest) points
-            // the right way. Four symmetric legs make this cosmetic today.
-            stool.rotation.y = Math.atan2(hit.x, hit.z);
+            seat.position.set(hit.x, 0, hit.z);
+            // Face the table: +Z points radially outward, which is where a chair's
+            // back goes. Cosmetic on the stool's four symmetric legs, not on this.
+            seat.rotation.y = Math.atan2(hit.x, hit.z);
         });
     }
 
-    function setStools(on) {
-        stoolsOn = !!on;
-        if (session) applyStools(session);
+    // "" / unknown -> no furniture, as before.
+    function setSeats(style) {
+        seatStyle = (style === "stool" || style === "chair") ? style : "";
+        if (session) applySeats(session);
     }
 
     // "" / unknown -> no floor, back to the flat surround colour.
@@ -1149,7 +1419,7 @@
         applyTexZoom(s);   // set all texture repeats from the current zoom
         applyDepth(s);     // set relief depth (normal-map strength)
         applyBackdrop(s);  // the floor under the table, if a style is chosen
-        applyStools(s);    // ...and a stool at every seat, if switched on
+        applySeats(s);     // ...and a stool or chair at every seat, if switched on
 
         // ---- gpokr logo watermark on the felt center (loads async) ----
         loadLogoTexture(T, (tex, aspect) => {
@@ -1179,7 +1449,7 @@
         if (r === "gone") { disable(); return; }
         if (r) {
             s.needsRender = Math.max(s.needsRender, 2);
-            placeStools(s);   // reframed: the seat rays moved with the camera
+            placeSeats(s);    // reframed: the seat rays moved with the camera
         }
         // Dark mode toggles without a reload, so the floor has to follow it.
         if (s.floor && s.floorDark !== isDarkTheme()) {
@@ -1234,10 +1504,14 @@
         if (s.raf) cancelAnimationFrame(s.raf);
         s.enabled = false;
         [s.feltGeo, s.railGeo, s.wallGeo, s.logoGeo, s.floorGeo,
-            s.stoolSeatGeo, s.stoolLegGeo, s.stoolStretchGeo].forEach((g) => g && g.dispose());
+            s.stoolSeatGeo, s.stoolLegGeo, s.stoolStretchGeo]
+            .concat(s.chairGeos || []).forEach((g) => g && g.dispose());
         [s.feltMat, s.railMat, s.wallMat, s.logoMat, s.floorMat,
-            s.stoolSeatMat, s.stoolWoodMat].forEach((m) => m && m.dispose());
+            s.stoolSeatMat, s.stoolWoodMat,
+            s.chairPadMat, s.chairPrintMat, s.chairTubeMat].forEach((m) => m && m.dispose());
         if (s.floorMat && s.floorMat.map) s.floorMat.map.dispose();
+        if (s.chairWeave) s.chairWeave.dispose();
+        if (s.chairPrint) s.chairPrint.dispose();
         if (s.feltNormal) s.feltNormal.dispose();
         if (s.feltColor) s.feltColor.dispose();
         if (s.railColor) s.railColor.dispose();
@@ -1254,5 +1528,5 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setStools, isOn: () => !!session, _session: () => session };
+    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, isOn: () => !!session, _session: () => session };
 })();

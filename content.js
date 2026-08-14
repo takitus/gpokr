@@ -38,7 +38,7 @@
     // A picked colour overrides it.
     let TABLE3D_BG_COLOR = "";
     let TABLE3D_BACKDROP = "";   // "" = no floor, just the flat surround colour
-    let TABLE3D_STOOLS = false;
+    let TABLE3D_SEATS = "";      // "" = nothing around the table; "stool" or "chair"
     // Single source of truth for the 3D-table editor defaults (used by
     // applySettings' fallbacks and the "Reset to defaults" button).
     const TABLE3D_DEFAULTS = {
@@ -47,11 +47,12 @@
         table3dLogoOpacity: 0.2,
         table3dBgColor: "",   // "" = sampled from the page's art
         table3dBackdrop: "",  // "" = none; a floor style renders under the table
-        table3dStools: false, // a stool at every seat
+        table3dSeats: "",     // "" = none; a stool or a chair at every seat
     };
     // Floor styles table3d knows how to build. Kept here too so a value read
     // back from storage is checked against a list rather than trusted.
     const BACKDROP_STYLES = ["grain", "glow", "carpet", "clover", "deco", "wood"];
+    const SEAT_STYLES = ["stool", "chair"];
     const clampZoom = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n > 0) ? Math.min(10, Math.max(0.1, n)) : (dflt != null ? dflt : 1); };
     const clampDepth = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0) ? Math.min(3, Math.max(0, n)) : dflt; };
     const clamp01 = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0 && n <= 1) ? n : dflt; };
@@ -164,7 +165,10 @@
             ? s.table3dBgColor : TABLE3D_DEFAULTS.table3dBgColor;
         TABLE3D_BACKDROP = (s && BACKDROP_STYLES.indexOf(s.table3dBackdrop) >= 0)
             ? s.table3dBackdrop : TABLE3D_DEFAULTS.table3dBackdrop;
-        TABLE3D_STOOLS = !!(s && s.table3dStools);
+        // Seats started life as a stools-or-nothing checkbox; anyone who had it on
+        // keeps their stools when the setting widens to a style.
+        TABLE3D_SEATS = (s && SEAT_STYLES.indexOf(s.table3dSeats) >= 0) ? s.table3dSeats
+            : ((s && s.table3dSeats == null && s.table3dStools) ? "stool" : TABLE3D_DEFAULTS.table3dSeats);
         applyTable3dSettings();
         syncTable3d(); // apply the 3D-table setting now (and the poll keeps it in sync)
         COIN_TOSS = !(s && s.coinToss === false); // opt-out
@@ -497,6 +501,32 @@
             ensure: () => ensureProps3d().then((ok) =>
                 (ok && window.GPE_PROPS ? GPE_PROPS.ready("clap") : false)),
             effect: (from, table, ctx) => standAndClap(ctx.avatar, from, table),
+        },
+        // The pot pours: a river of water opens in the middle of the felt and runs
+        // to whoever won the last hand, carrying dollar bills and chips down it
+        // into their seat.
+        //
+        // The one interaction that is not about the player who fired it. Nothing
+        // extra rides the wire for that: every client reads the same game log, so
+        // each resolves the same winner locally (see riverToWinner) — which also
+        // means it keeps working for a spectator, and for anyone who fires it on
+        // someone else's behalf.
+        river: {
+            label: "river",
+            glyph: "🌊",
+            category: CAT_PERSONAL,
+            cooldownMs: 2000,                   // the longest of them: it is a big one
+            // Silent, deliberately: the only celebration without a track.
+            flinch: false,
+            // The river needs its own model; the beer bobbing down it is a bonus,
+            // so it is asked for but not waited on for permission to play — a
+            // river with no bottles in it is still a river.
+            ensure: () => ensureProps3d().then((ok) => {
+                if (!ok || !window.GPE_PROPS) return false;
+                return GPE_PROPS.ready("river").then((r) =>
+                    (r ? GPE_PROPS.ready("beer").then(() => true) : false));
+            }),
+            effect: (from, table) => riverToWinner(from, table),
         },
         // The celebrant's avatar hops up onto the rail and grinds a lap around the
         // table's oval edge before dropping back into its seat. DOM/CSS only.
@@ -5789,34 +5819,34 @@
             return row;
         })();
 
-        // Stools are their own toggle rather than part of the floor: they are
+        // Seats are their own row rather than part of the floor: they are
         // furniture, not a surface, and someone may want one without the other.
-        const stoolRow = (() => {
+        const seatRow = (() => {
             const row = document.createElement("div");
             row.className = "gpe-slider-row";
             const lab = document.createElement("span");
-            lab.className = "gpe-slider-label"; lab.textContent = "stools";
+            lab.className = "gpe-slider-label"; lab.textContent = "seats";
             const group = document.createElement("div");
             group.className = "gpe-backdrop-group";
             const btns = [];
-            const pick = (on) => {
-                TABLE3D_STOOLS = on;
-                if (window.GPE_TABLE3D && GPE_TABLE3D.setStools) GPE_TABLE3D.setStools(on);
-                saveSetting("table3dStools", on);
-                btns.forEach((b) => b.classList.toggle("gpe-on", (b.dataset.on === "1") === on));
+            const pick = (style) => {
+                TABLE3D_SEATS = style;
+                if (window.GPE_TABLE3D && GPE_TABLE3D.setSeats) GPE_TABLE3D.setSeats(style);
+                saveSetting("table3dSeats", style);
+                btns.forEach((b) => b.classList.toggle("gpe-on", b.dataset.seat === style));
             };
-            [[false, "off"], [true, "on"]].forEach(([on, label]) => {
+            [["", "none"], ["stool", "stools"], ["chair", "chairs"]].forEach(([style, label]) => {
                 const b = document.createElement("button");
                 b.type = "button";
                 b.className = "gpe-reset-btn gpe-backdrop-btn";
-                b.dataset.on = on ? "1" : "0";
+                b.dataset.seat = style;
                 b.textContent = label;
-                b.addEventListener("click", () => pick(on));
+                b.addEventListener("click", () => pick(style));
                 btns.push(b);
                 group.appendChild(b);
             });
             refreshers.push(() => {
-                btns.forEach((b) => b.classList.toggle("gpe-on", (b.dataset.on === "1") === TABLE3D_STOOLS));
+                btns.forEach((b) => b.classList.toggle("gpe-on", b.dataset.seat === TABLE3D_SEATS));
             });
             row.append(lab, group);
             return row;
@@ -5865,7 +5895,7 @@
             TABLE3D_LEATHER_COLOR = d.table3dLeatherColor; TABLE3D_LEATHER_ZOOM = d.table3dLeatherZoom; TABLE3D_LEATHER_DEPTH = d.table3dLeatherDepth;
             TABLE3D_LOGO_OPACITY = d.table3dLogoOpacity;
             TABLE3D_BG_COLOR = d.table3dBgColor; TABLE3D_BACKDROP = d.table3dBackdrop;
-            TABLE3D_STOOLS = d.table3dStools;
+            TABLE3D_SEATS = d.table3dSeats;
             if (window.GPE_TABLE3D) {
                 GPE_TABLE3D.setTexZoom(TABLE3D_FELT_ZOOM, TABLE3D_LEATHER_ZOOM);
                 GPE_TABLE3D.setTexDepth(TABLE3D_FELT_DEPTH, TABLE3D_LEATHER_DEPTH);
@@ -5874,7 +5904,7 @@
                 GPE_TABLE3D.setLogoOpacity(TABLE3D_LOGO_OPACITY);
                 if (GPE_TABLE3D.setSurroundColor) GPE_TABLE3D.setSurroundColor(TABLE3D_BG_COLOR);
                 if (GPE_TABLE3D.setBackdrop) GPE_TABLE3D.setBackdrop(TABLE3D_BACKDROP);
-                if (GPE_TABLE3D.setStools) GPE_TABLE3D.setStools(TABLE3D_STOOLS);
+                if (GPE_TABLE3D.setSeats) GPE_TABLE3D.setSeats(TABLE3D_SEATS);
             }
             Object.keys(d).forEach((k) => saveSetting(k, d[k]));
             modal._refresh();
@@ -5882,7 +5912,7 @@
         resetRow.appendChild(resetBtn);
 
         modal._refresh = () => refreshers.forEach((fn) => fn());
-        modal.append(head, feltColor, feltZoom, feltDepth, leatherColor, leatherZoom, leatherDepth, logoOpacity, bgRow, backdropRow, stoolRow, hint, resetRow);
+        modal.append(head, feltColor, feltZoom, feltDepth, leatherColor, leatherZoom, leatherDepth, logoOpacity, bgRow, backdropRow, seatRow, hint, resetRow);
         document.body.appendChild(modal);
         return modal;
     }
@@ -6870,7 +6900,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     // Splash (local-only chips) these ride the interaction wire, so the whole table
     // sees them. Personal items live outside INTERACT_ORDER, so PERSONAL_ORDER is
     // their own menu order.
-    const PERSONAL_ORDER = ["celebrate", "clap", "dance", "rail"];
+    const PERSONAL_ORDER = ["celebrate", "clap", "dance", "rail", "river"];
     let personalPanel = null;
     let personalCloseTimer = 0;
 
@@ -7120,6 +7150,21 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         }, { cls: "gpe-under-props" });   // ...so the gloves draw in front of the chest
     }
 
+    // The river pours from the pot to the last hand's winner, so its target is
+    // resolved here rather than sent: scanWinner() reads the main-pot line out of
+    // the game log, which every client at the table has, so all of them aim at the
+    // same seat off the same source without a name on the wire.
+    //
+    // Two ways that can come up empty — we joined mid-hand and have not seen a
+    // showdown yet, or the winner has since left the table — and both pour it over
+    // the player who fired it instead. A celebration that silently does nothing
+    // reads as a broken button; one that lands on the wrong seat reads as a joke.
+    function riverToWinner(fromRect, tableRect) {
+        if (!window.GPE_PROPS) return false;
+        const seat = lastWinner ? liveRect(findAvatarByName(lastWinner)) : null;
+        return !!GPE_PROPS.toss("river", fromRect, seat || fromRect, tableRect);
+    }
+
     // Rail slide: leap up onto the rail, grind a full lap around the table's oval,
     // then hop back down to the seat.
     function railSlideAvatar(avatarEl, fromRect, tableRect) {
@@ -7245,7 +7290,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         api.setLogoOpacity(TABLE3D_LOGO_OPACITY);
         if (api.setSurroundColor) api.setSurroundColor(TABLE3D_BG_COLOR);
         if (api.setBackdrop) api.setBackdrop(TABLE3D_BACKDROP);
-        if (api.setStools) api.setStools(TABLE3D_STOOLS);
+        if (api.setSeats) api.setSeats(TABLE3D_SEATS);
     }
 
     function syncTable3d() {
