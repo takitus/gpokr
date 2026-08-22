@@ -315,7 +315,7 @@ html.gpe-dark .menu2 {
    Forum (/topics, /discussion, /reviews, /strategies, /ideas,
    /replays, plus the profile wall and reply composer)
 
-   The rebuilt forum draws every colour from ten custom properties
+   The rebuilt forum draws every color from ten custom properties
    on :root, authored for a white page — --idea-ink is #10151b, so
    post bodies, titles and bylines rendered near-black on our dark
    background. Re-pointing the properties re-themes the bulk of it;
@@ -694,6 +694,11 @@ html.gpe-dark .gpe-side-options .gpe-side-edit.gpe-active {
 }
 html.gpe-dark .gpe-side-options .gpe-side-edit.gpe-active:hover { background: #294061; }
 html.gpe-dark .gpe-side-options .gpe-side-num {
+    background: #262e3b;
+    color: #d2d8e2;
+    border-color: #44516a;
+}
+html.gpe-dark .gpe-side-options .gpe-side-select {
     background: #262e3b;
     color: #d2d8e2;
     border-color: #44516a;

@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>river bench</title>
+<style>
+  html,body{margin:0;background:#0e0f12;height:100%}
+  #table{position:absolute;left:40px;top:40px;width:790px;height:396px;background:#1b1d22}
+  #gpe-coin-layer{position:fixed;left:0;top:0;width:100%;height:100%;display:block;pointer-events:none;z-index:9}
+</style>
+<div id="table" class="iogc-GameWindow-table"></div>
+<script>
+  // Pretend to be the zoom under test: coin3d reads devicePixelRatio once per
+  // viewport sync, which is the only thing browser zoom changes for the render.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var dpr = parseFloat(q.get("dpr"));
+    if (dpr > 0) Object.defineProperty(window, "devicePixelRatio", { get: function () { return dpr; } });
+  })();
+</script>
+<script src="vendor/three.iife.js"></script>
+<script src="3d/chips3d.js"></script>
+<script src="3d/coin3d.js"></script>
+<script src="3d/table3d.js"></script>
+<script src="3d/props3d.js"></script>
+<script>
+  window.__measure = function () {
+    const cv = document.getElementById("gpe-coin-layer");
+    if (!cv) return "nocanvas";
+    const o = document.createElement("canvas");
+    o.width = cv.width; o.height = cv.height;
+    const g = o.getContext("2d", { willReadFrequently: true });
+    g.drawImage(cv, 0, 0);
+    const d = g.getImageData(0, 0, o.width, o.height).data;
+    const acc = {};
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], gg = d[i + 1], b = d[i + 2], a = d[i + 3];
+      if (a < 8) continue;
+      const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+      let k = null;
+      if (b > 150 && b > r * 1.35 && b > gg * 1.1 && gg > r) k = "dash";
+      else if (gg > 35 && gg > r * 1.25 && gg > b * 1.25) k = "grass";
+      else if (b > 45 && b > r * 1.2 && b > gg * 1.05) k = "water";
+      else if (mx > 70 && mx - mn < 34) k = "stone";
+      if (!k) continue;
+      const e = acc[k] || (acc[k] = [0, 0, 0]);
+      const L = 0.2126 * r + 0.7152 * gg + 0.0722 * b;
+      e[0]++; e[1] += L; e[2] += L * L;
+    }
+    const out = { size: o.width + "x" + o.height, dpr: devicePixelRatio, css: innerWidth + "x" + innerHeight, held: !!window.__held };
+    for (const k of ["grass", "stone", "water", "dash"]) {
+      const e = acc[k];
+      if (!e) { out[k] = "none"; continue; }
+      const n = e[0], m = e[1] / n;
+      out[k] = n + " L" + m.toFixed(1) + " sd" + Math.sqrt(Math.max(0, e[2] / n - m * m)).toFixed(1);
+    }
+    return out;
+  };
+  window.addEventListener("load", function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get("table3d") !== "0") { try { window.__t3d = window.GPE_TABLE3D.enable(); } catch (e) { window.__t3d = "err " + e.message; } }
+    var r = document.getElementById("table").getBoundingClientRect();
+    window.__rect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+    var build = function () {
+      var rr = document.getElementById("table").getBoundingClientRect();
+      window.__rect = { left: rr.left, top: rr.top, right: rr.right, bottom: rr.bottom, width: rr.width, height: rr.height };
+      window.__held = window.GPE_PROPS.holdRiver(0.6, window.__rect);
+    };
+    window.__build = build;
+    window.GPE_PROPS.ready("river").then(build);
+    // A zoom change resizes the window, so this rebuilds the river at the new
+    // devicePixelRatio and reprints the diag — one pair of lines per zoom step.
+    var t = 0;
+    window.addEventListener("resize", function () {
+      clearTimeout(t);
+      t = setTimeout(build, 350);
+    });
+  });
+</script>

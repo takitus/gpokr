@@ -23,7 +23,8 @@
  *   - the rest are actors (GPE_COIN.addActor): own kinematics, coin3d's layer,
  *     camera and fixed-step clock.
  *
- * Exposes window.GPE_PROPS = { toss, ready, catalog, has }. Loaded after
+ * Exposes window.GPE_PROPS = { toss, ready, catalog, has, holdRiver, ... }.
+ * Loaded after
  * vendor/three.iife.js (THREE incl. GLTFLoader) and coin3d.js.
  */
 (function () {
@@ -305,67 +306,375 @@
         copy.userData.gpeBaseScale = template.userData.gpeBaseScale;
         return copy;
     }
+    // ---------- ground textures ----------
+    // Drawn, not sampled: nothing in this extension ships a texture image, and
+    // table3d already builds its felt maps this way (see feltColorTexture there).
+    // Generated once and cached — a river is built per throw and these are not.
+    //
+    // Worth knowing what they can and cannot do here. The bands they land on are
+    // about 25px (grass) and 21px (stone) on screen, so a tile is minified hard
+    // and most of the fine detail averages away. What survives minification is
+    // the LOW-frequency structure — the clumping of the blades, the size of the
+    // stones — so both of these are built to have that, rather than being fine
+    // grain that turns into mush. The old value-noise mottle had no structure at
+    // all, which is why it read as dirt.
+    const TEX = 192;            // px per tile, both textures
+
+    // A tile is a fixed size on the felt again. This was briefly derived from
+    // devicePixelRatio to hold texels-per-device-pixel constant, which did make
+    // the mip level the same everywhere — but it did so by making a cobble two to
+    // three times bigger on a low-ratio display, which looked worse than the
+    // problem it solved. Storing the textures linear (see finishTex) fixes the
+    // brightness at its source instead, so the world size can go back to being
+    // one number.
+    const TEX_TILE = 34;        // world px one tile covers, so it repeats visibly
+
+    let grassTex = null, stoneTex = null;
+
+    function texCanvas() {
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = TEX;
+        return cv;
+    }
+    // Explicitly sRGB, never the display's space. A canvas defaults to the
+    // browser's idea of the right colour space for where the window happens to
+    // be, which is a per-monitor answer — see finishTex for why that mattered.
+    function texCtx(cv) {
+        try { return cv.getContext("2d", { colorSpace: "srgb" }); }
+        catch (e) { return cv.getContext("2d"); }
+    }
+    // sRGB -> linear, one entry per byte. Built once; the conversion runs over
+    // every pixel of both textures and pow() per channel is not worth it.
+    const LIN = (() => {
+        const t = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) {
+            const c = i / 255;
+            const l = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+            t[i] = Math.round(l * 255);
+        }
+        return t;
+    })();
+
+    function finishTex(T, cv) {
+        // The textures go to the GPU as RAW BYTES, not as a canvas, and they are
+        // stored linear. Both halves of that matter, for different reasons.
+        //
+        // Raw bytes, because a CanvasTexture is COLOUR-MANAGED on upload. A canvas
+        // carries a colour space, the browser converts it to the compositor's on
+        // the way to the GPU, and that conversion depends on which monitor the
+        // window is on. Two Chrome windows on one machine, one per display, gave
+        // measurably different textures from identical code: everything computed
+        // in the shader agreed to under 1% (dash peak 189.0 in both, water 46.7
+        // against 46.4) while the textured surfaces did not, and the saturated
+        // green grass lost 41% where the neutral grey stone lost only 23% —
+        // saturated colours being hit harder than neutral ones is what a gamut
+        // conversion does. A DataTexture is bytes; there is nothing to convert.
+        //
+        // Linear, because the GPU builds mipmaps by averaging the stored bytes,
+        // and averaging sRGB-ENCODED values is not averaging light — it comes out
+        // darker, and darker again at each level down. Converting first and
+        // telling three the data is already linear means it averages light, which
+        // is correct, and the mip level stops changing the apparent brightness. At
+        // full resolution it is a no-op, so it costs nothing where the texture is
+        // magnified.
+        const ctx = texCtx(cv);
+        const img = ctx.getImageData(0, 0, cv.width, cv.height);
+        const d = img.data;
+        let mean = 0;
+        for (let i = 0; i < d.length; i += 4) {
+            d[i] = LIN[d[i]]; d[i + 1] = LIN[d[i + 1]]; d[i + 2] = LIN[d[i + 2]];
+            mean += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+        }
+        const tex = new T.DataTexture(new Uint8Array(d), cv.width, cv.height);
+        // DataTexture defaults are not CanvasTexture's: no mipmaps and a nearest
+        // filter, either of which would make this look nothing like it did.
+        tex.generateMipmaps = true;
+        tex.minFilter = T.LinearMipmapLinearFilter;
+        tex.magFilter = T.LinearFilter;
+        tex.wrapS = tex.wrapT = T.RepeatWrapping;
+        tex.colorSpace = T.LinearSRGBColorSpace;   // converted above, not painted
+        tex.anisotropy = 4;                        // seen at a glancing angle
+        tex.needsUpdate = true;
+        tex._gpeMean = Math.round(mean / Math.max(1, d.length / 4));
+        return tex;
+    }
+
+    // TEMPORARY. One line, printed when a river is built, so the same numbers can
+    // be read off two browsers instead of inferred from screenshots of them.
+    // Remove once the two agree.
+    //
+    // Off for release builds: this logs on every river and readbackDiag() below
+    // pulls the framebuffer back to do it, neither of which belongs in a player's
+    // console. Flip it to true to compare two browsers again.
+    const RIVER_DIAG = false;
+    function riverDiag(T, mask, f, grass, stone) {
+        if (!RIVER_DIAG) return;
+        try {
+            const gl = document.createElement("canvas").getContext("webgl2")
+                || document.createElement("canvas").getContext("webgl");
+            let gpu = "?", aniso = "?";
+            if (gl) {
+                const di = gl.getExtension("WEBGL_debug_renderer_info");
+                if (di) gpu = gl.getParameter(di.UNMASKED_RENDERER_WEBGL);
+                const ae = gl.getExtension("EXT_texture_filter_anisotropic");
+                if (ae) aniso = gl.getParameter(ae.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+            }
+            console.log("[GPE-RIVER]",
+                "dpr", window.devicePixelRatio,
+                "| tile", TEX_TILE, "texPx", TEX,
+                "| texMean grass", grass && grass._gpeMean, "stone", stone && stone._gpeMean,
+                "| aniso max", aniso, "applied", grass && grass.anisotropy,
+                "| maskR", mask && mask.radius,
+                "| felt", f && Math.round(f.ax) + "x" + Math.round(f.by),
+                "at", f && Math.round(f.cx) + "," + Math.round(f.cy),
+                "| scrollY", Math.round(window.scrollY),
+                "| maskRect", (window.GPE_TABLE3D && GPE_TABLE3D.feltMaskParams
+                    && GPE_TABLE3D.feltMaskParams()
+                    ? JSON.stringify(GPE_TABLE3D.feltMaskParams().rect.map(Math.round))
+                    : "none"),
+                "| gpu", gpu);
+        } catch (e) { console.log("[GPE-RIVER] diag failed", e && e.message); }
+        readbackDiag();
+    }
+
+    // TEMPORARY, and the point of it is to stop comparing screenshots. Reads the
+    // pixels the GPU actually produced and prints the means, so two browsers can
+    // report the same numbers about themselves instead of me measuring photographs
+    // of them. Remove with riverDiag.
+    function readbackDiag() {
+        let tries = 0;
+        const attempt = () => {
+            tries++;
+            let done = false;
+            for (const cv of document.querySelectorAll("canvas")) {
+                if (cv.width < 400) continue;
+                const gl = cv.getContext("webgl2") || cv.getContext("webgl");
+                if (!gl) continue;
+                const w = cv.width, h = cv.height;
+                const px = new Uint8Array(w * h * 4);
+                try { gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+                catch (e) { continue; }
+                const acc = {};
+                let lit = 0;
+                for (let i = 0; i < px.length; i += 4) {
+                    const r = px[i], g = px[i + 1], b = px[i + 2], a = px[i + 3];
+                    if (a < 8) continue;
+                    lit++;
+                    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+                    let k = null;
+                    if (r > 20 && g < 4 && b < 4) k = "DEBUGr";
+                    else if (b > 150 && b > r * 1.35 && b > g * 1.1 && g > r) k = "dash";
+                    else if (g > 35 && g > r * 1.25 && g > b * 1.25) k = "grass";
+                    else if (b > 45 && b > r * 1.2 && b > g * 1.05) k = "water";
+                    else if (mx > 70 && mx - mn < 34) k = "stone";
+                    if (!k) continue;
+                    const e2 = acc[k] || (acc[k] = [0, 0, 0, 0]);
+                    const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    e2[0]++; e2[1] += L; if (L > e2[2]) e2[2] = L; e2[3] += a;
+                }
+                if (!lit) continue;
+                // Only the canvas with the river on it counts. The table's own
+                // canvas reads fine and is not what is being asked about, and
+                // treating it as an answer stopped the retries before the river
+                // had been drawn at all.
+                const big = (k2) => acc[k2] && acc[k2][0] > 2000;
+                if (!big("grass") && !big("water") && !big("DEBUGr")) continue;
+                // Alpha matters: the canvas is composited over the page and the
+                // context is premultiplied, so readPixels hands back colour ALREADY
+                // scaled by alpha. A surface at 0.6 alpha reads as 0.6x the colour
+                // and is indistinguishable from a dimmer surface unless alpha is
+                // reported next to it.
+                const fmt = (k) => acc[k]
+                    ? k + " " + (acc[k][1] / acc[k][0]).toFixed(1) + "/pk" + acc[k][2].toFixed(0)
+                        + "/a" + (acc[k][3] / acc[k][0]).toFixed(0)
+                    : k + " -";
+                console.log("[GPE-PIXELS]", w + "x" + h, "scroll", Math.round(window.scrollY),
+                    "vh", window.innerHeight,
+                    "|", fmt("dash"), "|", fmt("water"),
+                    "|", fmt("grass"), "|", fmt("stone"), "|", fmt("DEBUGr"));
+                done = true;
+            }
+            if (!done && tries < 90) requestAnimationFrame(attempt);
+            else if (!done) console.log("[GPE-PIXELS] no readable canvas");
+        };
+        requestAnimationFrame(attempt);
+    }
+
+    // Grass: individual blades, thousands of them. A blade is a short tapered
+    // stroke leaning off vertical, and they are drawn in two passes — a darker
+    // undergrowth first, then a lighter layer on top — which is what gives the
+    // clumped, layered look that survives being shrunk. Blades that cross a tile
+    // edge are drawn again on the far side, so the tile is seamless.
+    function makeGrassTexture(T) {
+        if (grassTex) return grassTex;
+        const cv = texCanvas(), ctx = texCtx(cv);
+        // The ground under the blades, and it is deliberately close to the colour
+        // the grass is meant to be rather than the near-black soil it used to be.
+        //
+        // This is the fix for the same river reading bright and three-dimensional
+        // in one browser and dark and flat in another ON THE SAME MACHINE. All the
+        // brightness used to live in thin bright strokes over a near-black ground,
+        // so any renderer that filtered the blades away — a coarser mip, less
+        // anisotropy, whatever the two Chromes were doing differently — collapsed
+        // the grass to the ground colour. Measured across the two: the untextured
+        // surfaces were identical (dash peak 189.0 in both, water 46.7 vs 46.3),
+        // the grass was 54.3 against 34.0, and #1b2a14 has a luma of 37.2. It was
+        // landing on the soil almost exactly.
+        //
+        // With the ground at roughly the intended grass tone the blades supply
+        // VARIATION around a correct mean instead of supplying the brightness, so
+        // losing them costs detail rather than turning the felt into a dark
+        // rectangle. The stone never had this problem because its base was already
+        // mid-grey — it lost 17% where the grass lost 37%.
+        ctx.fillStyle = "#26401c";
+        ctx.fillRect(0, 0, TEX, TEX);
+        ctx.lineCap = "round";
+        const blade = (x, y, len, ang, wid, col) => {
+            ctx.strokeStyle = col;
+            ctx.lineWidth = wid;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            // A slight bend, so they are not straight bristles.
+            ctx.quadraticCurveTo(x + Math.sin(ang) * len * 0.5, y - len * 0.5,
+                x + Math.sin(ang) * len, y - len);
+            ctx.stroke();
+        };
+        for (const pass of [{ n: 2600, lo: 0.20, hi: 0.34, len: [7, 15] },
+            { n: 1700, lo: 0.34, hi: 0.62, len: [5, 11] }]) {
+            for (let i = 0; i < pass.n; i++) {
+                const x = Math.random() * TEX, y = Math.random() * TEX;
+                const len = pass.len[0] + Math.random() * (pass.len[1] - pass.len[0]);
+                const ang = (Math.random() - 0.5) * 1.5;
+                const wid = 0.7 + Math.random() * 0.9;
+                // Hue wanders a little either side of green; value carries the pass.
+                const v = pass.lo + Math.random() * (pass.hi - pass.lo);
+                const hue = 88 + Math.random() * 26;
+                const col = "hsl(" + hue.toFixed(0) + "," + (38 + Math.random() * 26).toFixed(0)
+                    + "%," + (v * 100).toFixed(0) + "%)";
+                blade(x, y, len, ang, wid, col);
+                // Seamless: repeat anything that reaches past an edge.
+                const reach = len + 2;
+                if (x < reach) blade(x + TEX, y, len, ang, wid, col);
+                if (x > TEX - reach) blade(x - TEX, y, len, ang, wid, col);
+                if (y < reach) blade(x, y + TEX, len, ang, wid, col);
+                if (y > TEX - reach) blade(x, y - TEX, len, ang, wid, col);
+            }
+        }
+        grassTex = finishTex(T, cv);
+        return grassTex;
+    }
+
+    // Stone: a jittered-grid Voronoi, which is what gives it stones of a definite
+    // SIZE rather than undifferentiated noise — the thing that reads at 21px. Each
+    // cell takes its own grey, and the gap between the nearest and second-nearest
+    // seed darkens the crevice between cells. The jittered grid also makes it tile
+    // for free: seeds are indexed by cell, and the cell index wraps.
+    function makeStoneTexture(T) {
+        if (stoneTex) return stoneTex;
+        const CELLS = 7, CS = TEX / CELLS;
+        const seed = [], tone = [];
+        for (let j = 0; j < CELLS; j++) {
+            for (let i = 0; i < CELLS; i++) {
+                seed.push([(i + 0.15 + Math.random() * 0.7) * CS,
+                    (j + 0.15 + Math.random() * 0.7) * CS]);
+                tone.push(0.62 + Math.random() * 0.30);
+            }
+        }
+        const cv = texCanvas(), ctx = texCtx(cv);
+        const img = ctx.createImageData(TEX, TEX);
+        const wrap = (n) => ((n % CELLS) + CELLS) % CELLS;
+        for (let y = 0; y < TEX; y++) {
+            for (let x = 0; x < TEX; x++) {
+                const ci = Math.floor(x / CS), cj = Math.floor(y / CS);
+                let d1 = 1e9, d2 = 1e9, hit = 0;
+                // Own cell plus the eight around it is enough: no seed outside
+                // that ring can be the nearest.
+                for (let dj = -1; dj <= 1; dj++) {
+                    for (let di = -1; di <= 1; di++) {
+                        const k = wrap(cj + dj) * CELLS + wrap(ci + di);
+                        const sx = seed[k][0] + (ci + di - wrap(ci + di)) * CS;
+                        const sy = seed[k][1] + (cj + dj - wrap(cj + dj)) * CS;
+                        const d = Math.hypot(x - sx, y - sy);
+                        if (d < d1) { d2 = d1; d1 = d; hit = k; }
+                        else if (d < d2) { d2 = d;
+                        }
+                    }
+                }
+                // Crevice: dark where two cells meet, and a touch of grain so a
+                // face is not perfectly flat.
+                const gap = Math.min(1, (d2 - d1) / (CS * 0.30));
+                // The crevice bottoms out at 0.62 of the face, not 0.34. Darker
+                // than this and the gaps between cobbles read as black lines
+                // drawn on the stone rather than as shadow between stones.
+                const shade = tone[hit] * (0.62 + 0.38 * gap * gap)
+                    * (0.94 + Math.random() * 0.12);
+                const v = Math.max(0, Math.min(255, Math.round(shade * 255)));
+                const o = (y * TEX + x) * 4;
+                // Faintly cool, the way wet stone is.
+                img.data[o] = v; img.data[o + 1] = v; img.data[o + 2] = Math.min(255, v + 6);
+                img.data[o + 3] = 255;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        stoneTex = finishTex(T, cv);
+        return stoneTex;
+    }
+
     // ---------- the river's landscape ----------
-    // Everything here is geometry and per-vertex colour. There is deliberately
-    // not a texture in it: the river used to be a tiled ripple map scrolling over
-    // a flat sheet, and at this size the tile was plainly a tile — the same
-    // handful of wave crests marching past over and over. Colour that comes from
-    // a hash of the vertex's own position never repeats, because there is nothing
-    // to repeat.
+    // Everything here is geometry and per-vertex color, and every band of it is
+    // ONE flat color: no textures, no noise, no blends. The shading you see is
+    // the key light on flat facets (the materials are flatShading), which is what
+    // a low-poly landform is made of.
     //
     // The shape is the reference photo's: a strip of ground raised off the felt
     // with a channel cut down the middle of it. Across the strip that is, from
     // the outside in — an apron that lifts out of the cloth and fades in as it
     // goes, a grass crest, an inner slope down to the waterline, and a bed. The
-    // water is its own surface sitting in the channel, and the only part that
-    // moves.
+    // water is its own surface sitting in the channel.
+    //
+    // The water used to be the moving part: a two-train swell displacing the
+    // surface, with foam blended onto the crests and a darker trough. At this
+    // size that read as busy rather than as wet — a churn of light and dark
+    // competing with the cards, which are the thing being celebrated. It is a
+    // flat blue sheet now, and the motion is carried by riverDashes() instead.
     const hash2 = (x, y) => {
         const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
         return s - Math.floor(s);
     };
 
-    // Value noise: the hash smoothed over a grid, so the ground mottles in
-    // patches rather than per-vertex confetti.
-    function vnoise(x, y) {
-        const xi = Math.floor(x), yi = Math.floor(y);
-        const xf = x - xi, yf = y - yi;
-        const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
-        return lerp(lerp(hash2(xi, yi), hash2(xi + 1, yi), u),
-            lerp(hash2(xi, yi + 1), hash2(xi + 1, yi + 1), u), v);
-    }
-
-    // The swell on the water: two trains whose wavelengths are deliberately not
-    // multiples of one another, so their sum never comes back round to where it
-    // started within a river's length.
-    const RIVER_WAVE = (x, y, t, M) => M.WAVE * (
-        0.62 * Math.sin(2 * Math.PI * (x / M.WAVE_LEN - t * M.WAVE_HZ) + y * 0.05)
-        + 0.38 * Math.sin(2 * Math.PI * (x / (M.WAVE_LEN * 0.41) + t * M.WAVE_HZ * 0.8) - y * 0.09));
-
     // One lattice over the felt-clipped strip: `rows` are the lateral offsets to
     // put lanes at, and `at(x, y, t)` returns [height, r, g, b, a] for a point.
     //
-    // The landscape used to sink and fade away over the last 30px at each end.
-    // It does not any more: it runs at full height right up to the felt's edge
-    // and stops there against a cut face (see riverEndCap). Which is why the
-    // trimming has to account for the LEAN — a lane sitting 22px high is drawn
-    // 14px up-screen of where it was measured, so clipping it where it was
-    // measured would push it that far over the rail. `span(y, h)` is asked where
-    // a lane of that height may run, and answers in the lane's own coordinates.
+    // `span(y, h)` is asked how far a lane of that height may run, and answers in
+    // the lane's own coordinates. It no longer trims to anything — the strip is
+    // built past the rail at both ends and the felt mask decides what shows — but
+    // it still has to account for the LEAN, since a lane sitting 22px high is
+    // drawn 14px up-screen of where it was measured.
     function riverLattice(T, rows, len, span, M, place, at) {
         const NU = 44, cols = NU + 1, n = rows.length * cols;
         const pos = new Float32Array(n * 3);
         const col = new Float32Array(n * 4);
+        const uv = new Float32Array(n * 2);
         const vx = new Float32Array(n), vy = new Float32Array(n);
-        const ends = [];                    // [x0, x1] per row, for the end caps
+        // Read once per lattice rather than per vertex: it is a device-pixel-ratio
+        // lookup, and every vertex of a river has to agree on it or the two banks
+        // stop matching.
+        const tile = TEX_TILE;
         let k = 0;
         for (let j = 0; j < rows.length; j++) {
             const y = rows[j];
             const s = span(y, at(0, y, 0)[0]);
             if (!s || s.x1 - s.x0 < 2) return null;
-            ends.push([s.x0, s.x1]);
             const run = s.x1 - s.x0;
             for (let i = 0; i < cols; i++) {
                 vx[k] = s.x0 + run * (i / NU); vy[k] = y;
+                // UVs in WORLD px over a tile, not 0..1 over the surface: the strip
+                // is hundreds of px long and a couple of dozen across, so stretching
+                // one tile over it would smear the texture beyond recognition. This
+                // way a tile is `tile` px on the felt wherever it lands, and the
+                // texture repeats — which also means the two banks match.
+                uv[k * 2] = vx[k] / tile;
+                uv[k * 2 + 1] = y / tile;
                 k++;
             }
         }
@@ -379,6 +688,7 @@
         const geo = new T.BufferGeometry();
         geo.setAttribute("position", new T.BufferAttribute(pos, 3));
         geo.setAttribute("color", new T.BufferAttribute(col, 4));   // RGBA: the rim needs alpha
+        geo.setAttribute("uv", new T.BufferAttribute(uv, 2));
         geo.setIndex(idx);
         const P = geo.attributes.position, C = geo.attributes.color;
         const shade = (t) => {
@@ -392,117 +702,372 @@
             geo.computeVertexNormals();
         };
         shade(0);
-        return { geo: geo, shade: shade, ends: ends };
-    }
-
-    // The cut face where the landscape meets the rail: a wall from the surface
-    // down to the cloth, across every lane, at each end. This is the whole reason
-    // the river can stop dead instead of dissolving — an edge you can see the
-    // thickness of reads as ground that has been cut through, and a fade reads as
-    // a picture running out of ink.
-    function riverEndCap(T, rows, ends, M, place, heightAt, colour) {
-        const pos = [], col = [];
-        const push = (p) => {
-            pos.push(p[0], p[1], p[2]);
-            col.push(colour[0] * M.CUT_SHADE, colour[1] * M.CUT_SHADE, colour[2] * M.CUT_SHADE, 1);
-        };
-        const at = (x, y, h) => { const v = [0, 0, 0]; place(x, y, h, v, 0); return v; };
-
-        // How far a unit of height moves a point, which is the whole of the lean.
-        const unit = at(0, 0, 1);
-        // Only ONE end can show its cut face: the one whose outward direction
-        // points down-screen, toward the viewer. At the other end we are looking
-        // at the top of the same cliff from above, and a face drawn there would
-        // lie across the ground it belongs to.
-        const e = unit[0] > 0 ? 0 : 1;
-        const inward = e === 0 ? 1 : -1;
-
-        for (let j = 0; j < rows.length - 1; j++) {
-            const pair = [j, j + 1].map((r) => {
-                const y = rows[r], h = heightAt(y);
-                // The TOP of the face is the surface's own edge — already trimmed
-                // so that it lands exactly on the felt. The FOOT is dropped from
-                // there back INTO the strip by the width the lean gives the face,
-                // rather than from where the surface was measured: measured is a
-                // lean's worth outside the felt at this end, which is what put a
-                // wedge of cliff out over the rail.
-                const top = at(ends[r][e], y, h);
-                const foot = [top[0] + inward * Math.abs(unit[0] * h),
-                    top[1] + inward * unit[1] * h * Math.sign(unit[0] || 1), 0];
-                return { top: top, foot: foot };
-            });
-            if (Math.abs(pair[0].top[2]) < 0.05 && Math.abs(pair[1].top[2]) < 0.05) continue;
-            // Wound so the face looks at the camera; the two triangles of the quad
-            // are emitted in the order that puts their normal on +z.
-            const quad = inward > 0
-                ? [pair[0].top, pair[0].foot, pair[1].top, pair[0].foot, pair[1].foot, pair[1].top]
-                : [pair[0].top, pair[1].top, pair[0].foot, pair[0].foot, pair[1].top, pair[1].foot];
-            for (const p of quad) push(p);
-        }
-        if (!pos.length) return null;
-        const geo = new T.BufferGeometry();
-        geo.setAttribute("position", new T.BufferAttribute(new Float32Array(pos), 3));
-        geo.setAttribute("color", new T.BufferAttribute(new Float32Array(col), 4));
-        geo.computeVertexNormals();
-        return geo;
+        return { geo: geo, shade: shade };
     }
 
     // The two halves of the landscape, over the same clipped channel.
     //
     // The ground is built once and never touched again — it has no business
     // moving. Only the water is reshaded per frame, which is also why the crests
-    // can carry their own foam: brightening the colour where the surface stands
+    // can carry their own foam: brightening the color where the surface stands
     // high costs nothing once the height is already being computed there, and it
     // gives the white of breaking water without a streak texture to tile.
-    function riverTerrain(T, hb, len, span, M, place, shadeSide) {
+    // The felt mask: a visibility mask in the exact shape of the playing surface
+    // inside the rails, applied to every fragment the river draws.
+    //
+    // The shape is a STADIUM, not an ellipse — table3d builds the felt as
+    // stadium(halfW, halfD): a rectangle with a semicircular cap at each end
+    // (see roundedRect/stadium there). coin3d's feltBounds reports it as {ax, by}
+    // and this used to test it as an ellipse, which is strictly inside the real
+    // surface everywhere except four points — so "clip to the felt" was wrong by
+    // up to halfD along the straight sides no matter how it was applied.
+    //
+    // Being analytic, the test is exact at any resolution: the inside of a stadium
+    // is "within r of the centre segment", which is a clamp and a dot product. A
+    // stencil pass would draw the same shape into a buffer and test against that,
+    // costing an extra pass and a renderer-wide stencil buffer (three r185
+    // defaults it off) to arrive at the same answer, rasterized rather than exact.
+    //
+    // Cheap only because of coin3d's camera: orthographic, looking straight down
+    // z, with left/right/top/bottom set to the viewport in CSS px. A vertex's
+    // world xy IS its position on screen (y negated), so the mask can be tested
+    // in world space with no projection at all.
+    function feltMask(T, f) {
+        // The exact footprint if the 3D table is rendering: the test happens on
+        // the felt's own ground plane, where the felt really is a stadium. See
+        // GPE_TABLE3D.feltMaskParams for why a screen-space stadium cannot match
+        // the rail under a perspective camera.
+        const P = (window.GPE_TABLE3D && GPE_TABLE3D.feltMaskParams)
+            ? GPE_TABLE3D.feltMaskParams() : null;
+        if (!P && !f) return null;
+
+        // One object per uniform, shared by every material the mask is applied to.
+        const uR = { value: P ? P.radius : Math.min(f.by, f.ax) };
+        const uX = { value: P ? P.halfRun : Math.max(0, f.ax - Math.min(f.by, f.ax)) };
+        const uInv = { value: P ? P.inv : null };
+        const uRect = { value: P ? new T.Vector4(P.rect[0], P.rect[1], P.rect[2], P.rect[3]) : null };
+        // Fallback only: the site's own flat felt, where there is no camera to
+        // invert and a screen-space stadium is the best available.
+        const uC = { value: f ? new T.Vector2(f.cx, -f.cy) : new T.Vector2() };
+
+        const decl = P
+            ? "uniform mat3 gpeInv;\nuniform vec4 gpeRect;\nuniform float gpeMaskX;\nuniform float gpeMaskR;\n"
+            : "uniform vec2 gpeMaskC;\nuniform float gpeMaskX;\nuniform float gpeMaskR;\n";
+        // Nothing but the mask reads this any more. It used to also feed the lamp,
+        // which is why it was kept unclamped in its own variable; the lamp now
+        // works in screen space instead, for the reason written up below it.
+        const test = P
+            // Screen -> NDC -> the felt's ground plane, then a stadium test there.
+            // vGpeXY is world, and world y is page y negated.
+            ? "\tvec2 gpeNdc = vec2((vGpeXY.x - gpeRect.x) / gpeRect.z * 2.0 - 1.0,\n"
+              + "\t                 1.0 - ((-vGpeXY.y) - gpeRect.y) / gpeRect.w * 2.0);\n"
+              + "\tvec3 gpeG = gpeInv * vec3(gpeNdc, 1.0);\n"
+              + "\tvec2 gpeP = gpeG.xy / gpeG.z;\n"
+              + "\tgpeP.x -= clamp(gpeP.x, -gpeMaskX, gpeMaskX);\n"
+              + "\tif (dot(gpeP, gpeP) > gpeMaskR * gpeMaskR) discard;"
+            : "\tvec2 gpeP = vGpeXY - gpeMaskC;\n"
+              + "\tgpeP.x -= clamp(gpeP.x, -gpeMaskX, gpeMaskX);\n"
+              + "\tif (dot(gpeP, gpeP) > gpeMaskR * gpeMaskR) discard;";
+
+        // The pool of light over the middle of the table.
+        //
+        // This was a real PointLight, and on one machine it worked: measured, its
+        // own contribution ran +42 luma over the felt centre against +8 at the
+        // rail. On another machine running the same build it did not show up at
+        // all, and a highlight I cannot get onto the user's screen is not a
+        // feature. So it is computed here instead, from the one thing that cannot
+        // vary between two browsers running this code: the fragment's own position
+        // on the felt, which the mask has already worked out three lines up.
+        //
+        // Worth having at all because coin3d lights the scene with an ambient and
+        // two directionals, and the grass is one big flat plane — under lights with
+        // no falloff that is exactly ONE tone however it is textured, which reads
+        // as a painted rectangle rather than ground.
+        //
+        // Inverse-square, from a lamp H felt-radii above the centre, so it falls
+        // off the way a real one would. H is in units of the felt's own radius, so
+        // the pool covers the same fraction of the table at any table size. FLOOR
+        // and GAIN map it to a multiplier that averages about 1, keeping the
+        // overall brightness where it already was.
+        // H is the lamp's height in felt radii — bigger is a broader, gentler pool.
+        // GAIN is how much the centre gains. It only ever ADDS: the multiplier is
+        // 1.0 at the far end of the table and rises toward the middle, never below.
+        //
+        // It used to run 0.52 at the ends up to 1.18 at the centre, which dimmed
+        // most of the felt to brighten a little of it. That is fine when the
+        // texture underneath is bright and actively bad when it is not — on a
+        // display where the grass already came out dark it made it darker, which
+        // is exactly what "I just don't have lighting" looked like. A light that
+        // can only add cannot do that on any machine.
+        // H is the lamp's height in felt half-axes — bigger is a broader, gentler
+        // pool. GAIN is what the centre gains. It only ever ADDS: the multiplier is
+        // 1.0 at the rail and rises toward the middle, never below.
+        // GAIN is large because the surfaces under it are dark. The contour-ring
+        // test confirmed the coordinate is exactly right — four rings from the
+        // felt centre to the rail, elliptical, matching the felt's own aspect —
+        // so the pool was landing in the right place and simply was not worth
+        // enough to see. At 0.75 the centre reached 1.46x, which on grass sitting
+        // near luma 34 is a lift of about 15 — real, and invisible.
+        const LAMP = { H: 0.80, GAIN: 1.80 };
+        const lampH2 = LAMP.H * LAMP.H;
+        const lampBase = lampH2 / (lampH2 + 1.0);   // so the rail lands on exactly 1.0
+
+        // The lamp is measured in SCREEN space, from the felt's own centre and
+        // half-axes, and deliberately NOT through the camera's inverse projection
+        // the way the mask above is.
+        //
+        // It used to share the mask's coordinate, which seemed tidy — same maths,
+        // one less thing. But the mask's coordinate comes from an inverse
+        // homography via NDC, and that turned out to depend on browser ZOOM: at
+        // 150% the pool was there and at 175% it vanished, on one machine, from
+        // the same build. Everything computed straight in the shader agreed
+        // between the two (dash peak 189.0 in both, water 46.3 against 46.4) while
+        // everything downstream of that inverse did not.
+        //
+        // The mask genuinely needs the exact projection, because it has to land on
+        // the rail to the pixel. A soft radial gradient does not need it at all.
+        // vGpeXY is coin3d world, which is CSS px with y negated, and the felt
+        // centre and half-axes are CSS px too — all of it zoom-independent by
+        // definition, since CSS px are what layout is expressed in. Normalising by
+        // the half-axes also makes the falloff elliptical like the felt, so the
+        // rail sits at r = 1.0 the whole way round instead of only across the
+        // short axis.
+        const lampOK = !!f;
+        const uLampC = { value: f ? new T.Vector2(f.cx, -f.cy) : new T.Vector2() };
+        const uLampR = { value: f ? new T.Vector2(Math.max(1, f.ax), Math.max(1, f.by)) : new T.Vector2(1, 1) };
+        const lampDecl = "uniform vec2 gpeLampC;\nuniform vec2 gpeLampR;\n";
+        // TEMPORARY DEBUG: paint length(gpeL) instead of shading with it, so the
+        // readback reports what the lamp coordinate actually is. Over the felt it
+        // should run 0 at the centre to ~1 at the rail, i.e. red 0 -> 255.
+        const LAMP_DEBUG = false;
+        const lamp = LAMP_DEBUG
+            ? "\tvec2 gpeL = (vGpeXY - gpeLampC) / gpeLampR;\n"
+              // Rings every 0.25 of a felt half-axis. Counting them from the centre
+              // to the rail says exactly what the scale is: four rings means right.
+              + "\tfloat gpeDbg = mod(length(gpeL) * 4.0, 1.0);\n"
+              + "\tdiffuseColor.rgb = vec3(gpeDbg < 0.5 ? 1.0 : 0.05, 0.0, 0.0);"
+            : "\tvec2 gpeL = (vGpeXY - gpeLampC) / gpeLampR;\n"
+              + "\tfloat gpeLr2 = dot(gpeL, gpeL);\n"
+              + "\tdiffuseColor.rgb *= 1.0 + " + LAMP.GAIN.toFixed(3) + " * max(0.0, "
+              + lampH2.toFixed(4) + " / (" + lampH2.toFixed(4) + " + gpeLr2) - "
+              + lampBase.toFixed(4) + ");";
+
+        return {
+            radius: uR.value,
+            // opts.lamp === false leaves a material masked but unlit by the pool.
+            // The dashes and the cargo riding the river opt out: they are marks and
+            // objects, not ground, and dimming them toward the rail would read as
+            // them fading out rather than as the table being lit.
+            apply(mat, opts) {
+                const lit = !opts || opts.lamp !== false;
+                mat.onBeforeCompile = (shader) => {
+                    shader.uniforms.gpeMaskX = uX;
+                    shader.uniforms.gpeMaskR = uR;
+                    if (lit && lampOK) {
+                        shader.uniforms.gpeLampC = uLampC;
+                        shader.uniforms.gpeLampR = uLampR;
+                    }
+                    if (P) { shader.uniforms.gpeInv = uInv; shader.uniforms.gpeRect = uRect; }
+                    else { shader.uniforms.gpeMaskC = uC; }
+                    shader.vertexShader = shader.vertexShader
+                        .replace("void main() {", "varying vec2 vGpeXY;\nvoid main() {")
+                        // begin_vertex defines `transformed`, so this follows
+                        // anything that displaced the vertex, not the raw attribute.
+                        .replace("#include <begin_vertex>",
+                            "#include <begin_vertex>\n\tvGpeXY = (modelMatrix * vec4(transformed, 1.0)).xy;");
+                    shader.fragmentShader = shader.fragmentShader
+                        .replace("void main() {",
+                            decl + (lit && lampOK ? lampDecl : "")
+                            + "varying vec2 vGpeXY;\nvoid main() {")
+                        // Before lighting: a fragment off the felt costs nothing.
+                        .replace("#include <clipping_planes_fragment>",
+                            "#include <clipping_planes_fragment>\n" + test);
+                    // After color_fragment, so it scales the albedo the vertex
+                    // colors and the map have already agreed on, and the material's
+                    // own lighting still runs on top of the result.
+                    if (lit && lampOK) {
+                        shader.fragmentShader = shader.fragmentShader
+                            .replace("#include <color_fragment>",
+                                "#include <color_fragment>\n" + lamp);
+                    }
+                };
+                mat.customProgramCacheKey = () =>
+                    (P ? "gpeFeltMaskExact" : "gpeFeltMaskScreen")
+                    + (lit && lampOK ? "Lamp" : "");
+                return mat;
+            },
+        };
+    }
+
+    // Dashes on the water: short bright strokes drifting downstream. With the
+    // surface flat there is nothing left in the shading to say the river is
+    // moving, so this is the whole motion cue — and being a handful of small
+    // marks rather than an all-over churn, it says it without competing with the
+    // cards for attention.
+    //
+    // Their own geometry, not more vertex color on the water. The surface lattice
+    // is 44 cells along its length, so a cell is a good 10-15px; a dash painted
+    // into that grid would be a soft smear two cells wide that pulses as it
+    // crossed vertex boundaries. Four columns of vertices per dash with alpha
+    // running 0 -> 1 -> 1 -> 0 gives a tapered stroke instead, at any length,
+    // independent of how the water underneath is tessellated.
+    function riverDashes(T, wet, M, place, span) {
+        // Two columns, not four: a dash is a solid mark now. It used to run its
+        // alpha 0 -> 1 -> 1 -> 0 along its length for a brush-stroke taper, which
+        // is a gradient, and to fade in and out at the ends of its run, which is
+        // another. Neither is needed — the mask cuts the strip well inside where a
+        // dash wraps, so it appears and disappears off the felt where nobody sees
+        // it happen.
+        const COL = [0, 1];
+        const dashes = [];
+        for (let i = 0; i < M.DASH; i++) {
+            const y = M.DASH_LANES[i % M.DASH_LANES.length] * wet;
+            const s = span(y, M.BANK.WATER);
+            if (!s || s.x1 - s.x0 < 8) continue;   // a lane too short to drift along
+            // Deterministic from the index: there is no RNG to seed here, and a
+            // river built twice should look the same both times.
+            const h = hash2(i * 7.13, 1.7), h2 = hash2(i * 3.71, 5.5);
+            dashes.push({
+                y: y, x0: s.x0, run: s.x1 - s.x0,
+                len: M.DASH_LEN[0] + (M.DASH_LEN[1] - M.DASH_LEN[0]) * h,
+                phase: h2,
+                rate: 0.85 + 0.3 * hash2(i * 1.9, 12.1),
+            });
+        }
+        if (!dashes.length) return null;
+
+        const n = dashes.length * 4;             // 2 columns x 2 sides
+        const pos = new Float32Array(n * 3), col = new Float32Array(n * 4);
+        const idx = [];
+        for (let d = 0; d < dashes.length; d++) {
+            const a0 = d * 4;
+            idx.push(a0, a0 + 2, a0 + 1, a0 + 1, a0 + 2, a0 + 3);       // faces +z
+        }
+        const geo = new T.BufferGeometry();
+        geo.setAttribute("position", new T.BufferAttribute(pos, 3));
+        geo.setAttribute("color", new T.BufferAttribute(col, 4));
+        geo.setIndex(idx);
+        const P = geo.attributes.position, C = geo.attributes.color;
+        const step = (t) => {
+            for (let d = 0; d < dashes.length; d++) {
+                const s = dashes[d];
+                // Wrapped, so a dash leaving downstream is the one arriving
+                // upstream: a fixed set of marks covers an endless drift.
+                let u = s.phase + t * M.FLOW * M.DASH_SPEED * s.rate / s.run;
+                u -= Math.floor(u);
+                const cx = s.x0 + u * s.run;
+                for (let c = 0; c < 2; c++) {
+                    for (let r = 0; r < 2; r++) {
+                        const k = d * 4 + c * 2 + r;
+                        place(cx + (COL[c] - 0.5) * s.len,
+                            s.y + (r ? M.DASH_W : -M.DASH_W) / 2,
+                            M.BANK.WATER, P.array, k * 3);
+                        C.array[k * 4] = M.DASH_COLOR[0];
+                        C.array[k * 4 + 1] = M.DASH_COLOR[1];
+                        C.array[k * 4 + 2] = M.DASH_COLOR[2];
+                        C.array[k * 4 + 3] = 1;
+                    }
+                }
+            }
+            P.needsUpdate = true; C.needsUpdate = true;
+        };
+        step(0);
+        return { geo: geo, step: step };
+    }
+
+    function riverTerrain(T, hb, reach, len, span, M, place) {
         const B = M.BANK;
         // Widths are fractions of the strip's half-width; what the bank does not
         // take is the water.
         const inner = hb * B.INNER, crestW = hb * B.CREST_W, apron = hb * B.APRON;
         const whw = Math.max(8, hb - inner - crestW - apron);
-        const crestOut = whw + inner + crestW;           // outer edge of the grass crest
         // Lanes at the corners of the cross-section rather than evenly spaced, so
         // the crest and the slope stay crisp without carrying rows through the
         // flat bed that has nothing to say. Mirrored into one ascending list —
         // the lattice joins row j to row j+1, so out-of-order rows would weave
         // the strip into a tangle rather than a surface.
-        const half = [hb, (hb + crestOut) / 2, crestOut, whw + inner, whw, whw * 0.55, 0];
-        const rows = half.map((y) => -y).concat(half.slice(0, -1).reverse());
-
+        // The top is flat all the way out to the outer edge, so the rows that used
+        // to carry the apron's ramp down to the cloth are gone: one strip of grass,
+        // the inner slope, the bed. The grass simply stops at a hard edge — there
+        // is no wall under it, by choice.
+        //
+        // Where the grass gives way to stone. It is a mesh boundary now, so the
+        // doubled row that used to sit either side of it is gone: nothing
+        // interpolates across a gap between two meshes, and there is no float32
+        // rounding to dodge because neither mesh has to decide which side a row
+        // falls on — the row lists below say so outright.
+        const seam = whw + inner;
         // Cross-section, in px from the centre line: bed, inner slope, crest,
-        // apron. Colour walks grass -> damp earth on the way down to the water.
+        // apron. Every band is ONE solid color — grass on the top, stone
+        // everywhere else — and nothing is blended between them.
+        //
+        // This used to mottle the grass with value noise and walk the color from
+        // grass to damp earth down the inner slope, with the apron's alpha fading
+        // it into the cloth. Three gradients on a shape twenty pixels tall, and
+        // together they read as smudge rather than as ground. What makes a
+        // low-poly landform look like one is flat facets meeting at an angle: the
+        // material is flatShading, so the key light alone shades facet against
+        // facet, and it does it from the geometry rather than by painting a
+        // gradient over it. Solid colors let that happen instead of fighting it.
         const ground = (x, y) => {
             const s = Math.abs(y);
-            const n = vnoise(x / M.GRASS_CELL, y / M.GRASS_CELL);
-            let h, mix;                                   // mix: 0 grass, 1 earth
-            if (s >= crestOut) {                          // apron, out to nothing
-                h = B.CREST * clamp((hb - s) / (hb - crestOut), 0, 1);
-                mix = 0;
-            } else if (s >= whw + inner) {                // crest
+            let h, col;
+            // Grass covers everything the camera sees the TOP of — the crest and
+            // the apron ramping away from it — and stone takes over only where the
+            // bank turns down into the channel. Which is the reference: green on
+            // top, pale stone dropping to the waterline. (Putting stone on the
+            // apron instead left grey covering three times the area green did,
+            // since the apron is the widest band in the cross-section.)
+            if (s >= whw + inner) {                       // the grass, flat to the edge
                 h = B.CREST;
-                mix = 0;
-            } else if (s >= whw) {                        // inner slope
+                col = M.GRASS;
+            } else if (s >= whw) {                        // inner slope, down to the water
                 const d = (s - whw) / inner;
                 h = B.BED + (B.CREST - B.BED) * d * d;
-                mix = 1 - d;
+                col = M.ROCK;
             } else {                                      // bed
                 h = B.BED;
-                mix = 1;
+                col = M.ROCK;
             }
-            const g = [M.GRASS[0] + n * M.GRASS_VAR, M.GRASS[1] + n * M.GRASS_VAR,
-                M.GRASS[2] + n * M.GRASS_VAR * 0.6];
-            // The outer rim is the one place a fade still belongs: the apron
-            // reaches the cloth at zero height, and without it the grass would
-            // stop against the felt in a hard line drawn at nothing.
-            const rim = clamp((hb - s) / M.RIM_FADE, 0, 1);
-            return [h,
-                lerp(g[0], M.EARTH[0], mix), lerp(g[1], M.EARTH[1], mix),
-                lerp(g[2], M.EARTH[2], mix), rim];
+            // Opaque to the very edge. The apron still ramps down to zero height,
+            // so it meets the cloth along a line rather than a wall — but it meets
+            // it as stone, not as a fade.
+            return [h, col[0], col[1], col[2], 1];
         };
-        const groundH = (y) => ground(0, y)[0];
 
-        const land = riverLattice(T, rows, len, span, M, place, (x, y) => ground(x, y));
-        if (!land) return null;
+        // THREE lattices, not one, so each carries a single material and a single
+        // texture: the grass on either side, and the stone bank between them (its
+        // two slopes plus the bed under the water). Splitting them here is what
+        // makes texturing possible at all — one mesh cannot hold two maps — and it
+        // retires the doubled-row seam trick with it, since the grass/stone colour
+        // change is now a boundary BETWEEN meshes rather than across a quad. Both
+        // meshes include the boundary row at exactly `seam`, so they share an edge
+        // and there is no hairline gap along it.
+        // The grass runs right out to `reach`, not just to the strip's own edge:
+        // the felt is a landscape with a river cut through it, so everything that
+        // is not channel is grass. The mask trims it to the rail, and it has to
+        // overshoot generously — the plateau sits at CREST height, so the camera
+        // pushes it up-screen, and without the overshoot the down-screen edge of
+        // the felt would show bare cloth under it.
+        //
+        // Several rows across, even though the plateau is flat: place() projects
+        // each vertex, and two rows hundreds of px apart would be joined by a
+        // straight line where the projection wants a curve.
+        const gr = [];
+        for (let i = 0; i <= M.GRASS_ROWS; i++) {
+            gr.push(seam + (reach - seam) * (i / M.GRASS_ROWS));
+        }
+        const grassR = riverLattice(T, gr, len, span, M, place, (x, y) => ground(x, y));
+        const grassL = riverLattice(T, gr.map((y) => -y).reverse(), len, span, M, place,
+            (x, y) => ground(x, y));
+        const bank = riverLattice(T, [-seam, -whw, -whw * 0.55, 0, whw * 0.55, whw, seam],
+            len, span, M, place, (x, y) => ground(x, y));
+        if (!grassL || !grassR || !bank) {
+            if (grassL) grassL.geo.dispose();
+            if (grassR) grassR.geo.dispose();
+            if (bank) bank.geo.dispose();
+            return null;
+        }
 
         // The water: a narrower lattice sitting in the cut, its surface a little
         // below the crest so the banks stand over it. It reaches PAST the foot of
@@ -511,99 +1076,33 @@
         const wet = whw + inner * Math.sqrt(clamp((B.WATER - B.BED) / (B.CREST - B.BED), 0, 1));
         const wetRows = [];
         for (let i = 0; i <= 6; i++) wetRows.push(-wet + (2 * wet) * (i / 6));
-        const water = riverLattice(T, wetRows, len, span, M, place, (x, y, t) => {
-            const wave = RIVER_WAVE(x, y, t, M);
-            // Foam on the crests, and a darker trough — the whole reason the water
-            // reads as moving without anything scrolling across it. Cubed, because
-            // a straight blend spends most of its time halfway between deep water
-            // and white and the river comes out the colour of milk: this way the
-            // deep blue holds until a crest is nearly at its peak.
-            const lit = Math.pow(clamp(0.5 + wave / (M.WAVE * 2), 0, 1), 4);
-            const edge = clamp((wet - Math.abs(y)) / M.WET_EDGE, 0, 1);
-            // The bank standing between the light and the water throws a shadow
-            // along its own foot. Only the UP-SCREEN bank does — that is the one
-            // whose inner face we are looking at — and it is the single strongest
-            // cue that the water is down in a channel rather than painted on.
-            const band = M.SHADE_W * wet;
-            const cast = shadeSide * y > 0 ? clamp((Math.abs(y) - (wet - band)) / band, 0, 1) : 0;
-            const dim = 1 - M.SHADE * cast * cast;
-            return [B.WATER + wave,
-                lerp(M.DEEP[0], M.FOAM[0], lit) * dim, lerp(M.DEEP[1], M.FOAM[1], lit) * dim,
-                lerp(M.DEEP[2], M.FOAM[2], lit) * dim, M.WET_ALPHA * edge];
-        });
-        if (!water) { land.geo.dispose(); return null; }
-
-        const cap = riverEndCap(T, rows, land.ends, M, place, groundH, M.EARTH);
-
-        // Stones along the waterline. No two are the same rock: each picks one of
-        // four solids — a 4-face tetrahedron up to a 32-face subdivided octahedron
-        // — squashes it on all three axes, and then pushes every vertex in or out
-        // by a hash of the DIRECTION it points. That last part is what keeps a
-        // stone whole: the shapes are non-indexed, so a corner appears in three or
-        // four faces at once, and jittering each copy on its own would tear the
-        // rock into shrapnel. Non-indexed also means every face keeps its own
-        // normal, so they read as chipped rather than as pebbles.
-        const stones = [];
-        const push = (x, y, h) => { const v = [0, 0, 0]; place(x, y, h, v, 0); stones.push(v[0], v[1], v[2]); };
-        const scol = [];
-        const shapes = M.STONE_SHAPES.map(([kind, detail]) => {
-            const g = kind === 4 ? new T.TetrahedronGeometry(1, detail)
-                : kind === 20 ? new T.IcosahedronGeometry(1, detail)
-                    : new T.OctahedronGeometry(1, detail);
-            // Already non-indexed in three's polyhedra, but not promised to be —
-            // and toNonIndexed() warns rather than no-ops when it is.
-            const flat = g.index ? g.toNonIndexed() : g;
-            const p = flat.attributes.position.array.slice();
-            if (flat !== g) flat.dispose();
-            g.dispose();
-            return p;
-        });
-        for (let i = 0; i < M.STONES; i++) {
-            // Scattered rather than spaced. Three things were making the old bank
-            // look laid out by hand: the sides strictly alternated, the position
-            // along the bank was a slot with a third of a slot of jitter, and every
-            // stone sat the same distance up the slope.
-            //
-            // So: the side is a coin toss; the position keeps its slot but may
-            // wander a whole slot and a half either way, which lets neighbours
-            // clump and leaves the gaps between clumps that a real bank has; and
-            // the distance up the slope runs from the water's edge to the top of
-            // the crest, so some are half in the river and some are up in the grass.
-            const side = hash2(i, 41) < 0.5 ? -1 : 1;
-            // Wrapped rather than clamped: a stone whose jitter takes it off one
-            // end comes back on at the other, where clamping would stack it on the
-            // last one and leave two rocks in exactly the same place.
-            const slot = (i + 0.5 + (hash2(i, 7) - 0.5) * 3) / M.STONES;
-            const along = 0.05 + (slot - Math.floor(slot)) * 0.9;
-            const y = side * (whw - inner * 0.12 + (inner + crestW) * hash2(i, 3) * 0.92);
-            const s = span(y, groundH(y));
-            if (!s || s.x1 - s.x0 < 8) continue;
-            const x = s.x0 + (s.x1 - s.x0) * along;
-            const r = M.STONE_R[0] + hash2(i, 11) * (M.STONE_R[1] - M.STONE_R[0]);
-            const shape = shapes[Math.floor(hash2(i, 17) * shapes.length) % shapes.length];
-            // Squashed differently on each axis, and flatter than it is wide, so a
-            // stone sits in the bank rather than perching on it like a marble.
-            const sx = r * (0.7 + hash2(i, 23) * 0.6);
-            const sy = r * (0.7 + hash2(i, 29) * 0.6);
-            const sz = r * (0.4 + hash2(i, 31) * 0.4);
-            const base = groundH(y) + sz * 0.35;
-            const g = M.STONE[0] + hash2(i, 5) * M.STONE_VAR;
-            for (let v = 0; v < shape.length; v += 3) {
-                const dx = shape[v], dy = shape[v + 1], dz = shape[v + 2];
-                const j = 1 + M.STONE_JITTER * (hash2(Math.round(dx * 64) + i * 13,
-                    Math.round(dy * 64) * 31 + Math.round(dz * 64)) - 0.5);
-                push(x + dx * sx * j, y + dy * sy * j, base + dz * sz * j);
-                scol.push(g, g * 1.02, g * 1.06, 1);
-            }
+        // One solid blue, opaque, hard-edged. No displacement, no foam, and — the
+        // last two to go — no alpha ramp at the waterline and no painted shadow
+        // under the up-screen bank. Both of those were gradients, and a gradient
+        // is exactly what makes this read as a smudge rather than as a surface.
+        // What shades the river now is the lights hitting flat faces, nothing else.
+        //
+        // Being independent of both time and position, this is shaded once at build
+        // and never touched again; the per-frame work is the dashes.
+        const water = riverLattice(T, wetRows, len, span, M, place,
+            () => [B.WATER, M.DEEP[0], M.DEEP[1], M.DEEP[2], 1]);
+        if (!water) {
+            grassL.geo.dispose(); grassR.geo.dispose(); bank.geo.dispose();
+            return null;
         }
-        let rock = null;
-        if (stones.length) {
-            rock = new T.BufferGeometry();
-            rock.setAttribute("position", new T.BufferAttribute(new Float32Array(stones), 3));
-            rock.setAttribute("color", new T.BufferAttribute(new Float32Array(scol), 4));
-            rock.computeVertexNormals();
-        }
-        return { land: land, water: water, rock: rock, cap: cap, whw: whw };
+
+        // Nothing vertical is drawn any more. The end caps went because the mask
+        // cuts the strip well inside where they sat, so every fragment of them was
+        // discarded; the outer side walls went because they read as grey stripes
+        // running alongside the river rather than as its sides. What is left is the
+        // three surfaces you actually look down on: grass, the stone bank falling
+        // to the waterline, and the water.
+
+        // The stones that used to line the waterline are gone — twenty-two little
+        // chipped solids that read as grit rather than as rock at this size.
+
+        return { grassL: grassL, grassR: grassR, bank: bank, water: water, whw: whw,
+            dash: riverDashes(T, wet, M, place, span) };
     }
 
     // Land a model that was authored lying down the same way it was authored: the
@@ -681,28 +1180,39 @@
         // which is what lets the river open by scaling x: it runs in from that
         // edge instead of swelling out of the centre.
         river: {
-            // The centre line runs exactly to the felt's edge — no further, since
-            // the water is meant to be held by the rail rather than lapping over
-            // it — and every other lane is cut short by the curve (see laneSpan).
-            RAIL: 1.0,
-            // Width of the WHOLE strip, banks included: a fraction of its own
-            // length, within bounds. A river to a seat on the near rail crosses
-            // the felt's short way and is a third the length of one to a seat on
-            // the end, and a single fixed width made that short crossing read as a
-            // stubby chute. THIN is the backstop on the same problem: whatever the
-            // bounds say, the thing is at least three times as long as it is wide
-            // or it stops looking like a river, so the shortest crossing gives up
-            // width rather than shape.
-            STRIP: [138, 192], STRIP_OF_LEN: 0.33, THIN: 2,
+            // px the strip is built PAST the felt at each end, so the mask always
+            // has material to cut and never a gap it cannot fill. The excess is
+            // discarded before it is shaded, so it costs almost nothing.
+            OVER: 120,
+            // Width of the WHOLE strip, banks included — a fraction of the felt's
+            // SHORT axis, and so the same at every heading. It used to be a
+            // fraction of the chord through the felt, which is nearly three times
+            // longer across the table's width than across its depth: turning the
+            // river squashed it and re-stretched it, when it should just be the
+            // same river pointed somewhere else. Tracking the felt keeps it in
+            // proportion when the table is resized.
+            STRIP_OF_FELT: 1.62,   // strip width, in felt half-depths
+            GRASS_ROWS: 7,         // rows across each grass plateau, for the projection's curve
+            // The overhead lamp: height as a fraction of the felt's half-width, and
+            // the illuminance wanted directly under it. 1.22 puts the felt's edge at
+            // ~0.6 of the centre's brightness, which is the falloff table3d's own
+            // lamp gives its felt.
+            STRIP_FALLBACK: 165,   // px, for the (unmasked) no-felt case
             // The cross-section. The WIDTHS are fractions of the strip's own half
-            // width, so a short river gets a bank in proportion rather than the
-            // same 25px of shoulder eating a channel half the size; the HEIGHTS
-            // are in px, because how far the ground stands off the cloth is about
-            // what the eye can pick out, not about how wide the river is.
+            // width so the bank stays in proportion if the strip changes; the
+            // HEIGHTS are in px, because how far the ground stands off the cloth is
+            // about what the eye can pick out, not about how wide the river is.
             //
             // The gap between CREST and WATER is the drop from the bank down to
             // the river, and it is the whole point of the exercise.
-            BANK: { INNER: 0.13, CREST_W: 0.09, APRON: 0.20, CREST: 22, WATER: 8, BED: 5 },
+            // Heights roughly doubled from the flat-ribbon days. With the outer
+            // edge now a wall rather than a ramp, CREST is literally how tall that
+            // wall is: at 22 it came out a 14px band (22 x LEAN) against a ~150px
+            // strip — under a tenth of the width, far too little to read as a
+            // raised bank. The reference's banks stand about a third of the river's
+            // width, which is what these are aiming at. The CREST-to-WATER gap is
+            // the drop from the top down to the surface, and is the whole effect.
+            BANK: { INNER: 0.13, CREST_W: 0.09, APRON: 0.20, CREST: 42, WATER: 14, BED: 8 },
             // ...which it only can if height leans toward the viewer. coin3d's
             // camera is orthographic and points straight down its own z, so a
             // vertical rise moves nothing on screen — build a mountain along z and
@@ -713,28 +1223,45 @@
             // 0.62 is roughly the table's own elevation — the same cheat the site's
             // near-top-down art uses to make an upright thing look upright.
             LEAN: 0.62,
-            STONES: 22, STONE_R: [3, 8], STONE_JITTER: 0.42,
-            // [faces, subdivisions] — a tetrahedron through to a 32-face octahedron,
-            // so the bank is not lined with thirty identical crystals.
-            STONE_SHAPES: [[4, 0], [8, 0], [20, 0], [8, 1]],
-            STONE: [0.26, 0.32], STONE_VAR: 0.26,
-            RIM_FADE: 6,          // px of the outer apron over which the grass fades into the cloth
-            CUT_SHADE: 0.72,      // the cut face at each end, against the ground's own colour
-            WET_EDGE: 4,          // px of waterline over which the water fades into the bank
-            SHADE: 0.62, SHADE_W: 0.34,   // the bank's shadow on the water: depth, and how far it reaches
-            WET_ALPHA: 0.94,
-            // Vertex colours are LINEAR — the renderer converts on the way out —
+            // Vertex colors are LINEAR — the renderer converts on the way out —
             // so these look about half as dark as they read on screen. They are
             // set to what comes out the far end under coin3d's lights, which are
             // bright: ambient 1.35 with a key on top of it.
-            GRASS_CELL: 9,        // px per patch of ground mottling
-            GRASS: [0.13, 0.26, 0.06], GRASS_VAR: 0.08,
-            EARTH: [0.14, 0.09, 0.05],
-            DEEP: [0.02, 0.14, 0.36], FOAM: [0.70, 0.90, 1.0],
-            // The swell: two trains whose wavelengths are deliberately not
-            // multiples of one another, so the pattern never comes back round.
-            WAVE: 1.9, WAVE_LEN: 61, WAVE_HZ: 0.5,
-            HEAD: 0.55,           // seconds for the water to cross the table
+            // Two solid colors carry the whole landform: sage green on top, pale
+            // stone for every face that is not the top. Both are a good deal
+            // lighter than the greens they replace, which were chosen to survive
+            // being mottled and blended; a flat color does not need that headroom.
+            // The grass reads DARKER than the felt it sits on, so the landform
+            // separates from the cloth instead of glowing against it. Solved from a
+            // render rather than guessed: the felt measures #2d504a (luma 72), the
+            // vertex-to-screen gain here is about 0.85 in linear light, and these
+            // land near #2c4323 (luma 60) — clearly under the cloth, still clearly
+            // green.
+            GRASS: [0.030, 0.066, 0.020],
+            // Left where it was. Trimming this 12% to stop the bright cobbles
+            // clipping on a low-ratio display moved the clipped fraction from
+            // 5.32% to 5.17% — those pixels are far over 255, not marginally
+            // over, so scaling the albedo is the wrong lever and the trim only
+            // cost brightness. See the note on stone clipping in LAMP.
+            ROCK: [0.52, 0.55, 0.56],
+            // Sampled from a screenshot rather than guessed: [0.02, 0.14, 0.36]
+            // came out #346a98, a bright mid-blue, where the look wanted a deep
+            // navy for the dashes to read against.
+            DEEP: [0.008, 0.022, 0.088],
+            // The dashes, which are the whole motion cue now the surface is flat.
+            // Lanes are fractions of the channel's half-width and deliberately
+            // uneven — evenly spaced they line up into a grid the eye reads as a
+            // pattern rather than as drifting water. Kept inside 0.72 so a dash
+            // never rides up onto the waterline.
+            DASH: 15,
+            DASH_LANES: [-0.66, -0.31, 0.06, 0.41, 0.70, -0.48, 0.24],
+            DASH_LEN: [13, 29],   // px along the flow; varied so they don't read as one object
+            DASH_W: 1.8,          // px across it
+            // Slower than the cargo floating past. The water reads as carrying the
+            // chips rather than racing them, and a dash moving at FLOW looks like
+            // one more thing being swept along instead of the sweeping.
+            DASH_SPEED: 0.6,
+            DASH_COLOR: [0.30, 0.55, 0.85],
             SPAWN: 2.7,           // ...over which bills and chips are launched
             // Water moves at a speed, not in a fixed time: a swimmer's crossing
             // is the channel's own length divided by this, so the long river and
@@ -762,7 +1289,10 @@
             // under them — the grass crest, which stands over the waterline. When
             // the water was a flat sheet this was 4 and fine; once the landscape
             // had a body, anything below it was painted over by it.
-            Z_LAND: 1, Z_WATER: 1.2, Z_SWIM: 11,
+            // Z_SWIM has to clear the tallest thing under a swimmer, and the
+            // landscape's own z runs to CREST x sqrt(1 - LEAN^2) — so raising the
+            // banks raises this with it, or the grass draws over the cargo.
+            Z_LAND: 1, Z_WATER: 1.2, Z_SWIM: 44,
             build(T, ctx, spec, opts) {
                 const M = MOTIONS.river;
                 const f = ctx.felt;
@@ -784,7 +1314,12 @@
                 // the answer stretched back — one line, and exact at any angle.
                 // Both ends of the chord are the same reach, so the river runs
                 // from one edge through the pot to the other.
-                const reach = f ? M.RAIL / (Math.hypot(ux / f.ax, uy / f.by) || 1) : Math.max(h, 120);
+                // Reach far enough to cross the felt from ANY direction — the
+                // longest way across, not this heading's own chord — so the built
+                // length is constant too and the mask decides where it stops. The
+                // old per-heading chord is what made a river to a near seat a
+                // stubby chute and one to the end a long one.
+                const reach = f ? (f.ax + M.OVER) : Math.max(h, 120);
                 const len = reach * 2;
                 if (len < 40) return null;
                 const src = { x: mid.x - ux * reach, y: mid.y - uy * reach };
@@ -793,102 +1328,160 @@
                 group.position.set(src.x, -src.y, 0);
                 group.rotation.z = Math.atan2(-uy, ux);   // world y is screen y flipped
 
-                const strip = Math.min(clamp(len * M.STRIP_OF_LEN, M.STRIP[0], M.STRIP[1]), len / M.THIN);
+                // ONE width, and one length, whatever the heading. Both used to be
+                // derived from the chord through the felt — and that chord is long
+                // across the table's width and short across its depth, so turning
+                // the river squashed and re-stretched it. It is a river; it is the
+                // same river at every angle. The width is a fraction of the felt's
+                // short axis so it still tracks the table's size, and the length is
+                // simply enough to cross the felt from any direction, with the mask
+                // taking care of where it actually stops.
+                const strip = f ? f.by * M.STRIP_OF_FELT : M.STRIP_FALLBACK;
                 const hb = strip / 2;                                  // the ground, half-width
 
-                // How far the water reaches along a given LANE of the channel,
-                // which is a straight line offset sideways from the centre one.
-                // Substituting that line into the ellipse gives a quadratic in x,
-                // and its two roots are where the lane enters and leaves the felt.
-                // The centre lane's roots are 0 and len by construction; every
-                // other lane's fall short at both ends, which is exactly the curve
-                // the rail cuts. Returns null for a lane that misses the felt.
-                const px = uy, py = -ux;                  // river +y, in screen space
-                const sx = src.x - mid.x, sy = src.y - mid.y;
-                // `hgt` is how high the lane will be drawn: the lean moves it that
-                // far up-screen, so it has to be trimmed where it will LAND rather
-                // than where it was measured, or the raised ground overhangs the
-                // rail by exactly the amount that makes it look three-dimensional.
-                const laneSpan = (y, hgt) => {
-                    const dx = upx * (hgt || 0) * M.LEAN, dy = upy * (hgt || 0) * M.LEAN;
-                    if (!f) return { x0: -dx, x1: len - dx };
-                    y += dy;
-                    const qx = sx + y * px, qy = sy + y * py;
-                    const A = (ux * ux) / (f.ax * f.ax) + (uy * uy) / (f.by * f.by);
-                    const B = 2 * (qx * ux / (f.ax * f.ax) + qy * uy / (f.by * f.by));
-                    const C = (qx * qx) / (f.ax * f.ax) + (qy * qy) / (f.by * f.by) - 1;
-                    const disc = B * B - 4 * A * C;
-                    if (disc <= 0 || A <= 0) return null;
-                    const r = Math.sqrt(disc);
-                    return { x0: (-B - r) / (2 * A) - dx, x1: (-B + r) / (2 * A) - dx };
-                };
+                // How far a lane of the channel runs — the strip's full length
+                // plus OVER at both ends, and NOT trimmed to the felt. The mask
+                // decides what is visible, which is the whole point. This used to
+                // solve the felt's edge per lane, and with thirteen lanes across
+                // the strip that approximated the rail as a thirteen-step
+                // staircase, each step trimmed at one height while the surface
+                // over it varied: ragged, and wrong in both directions at once.
+                // Nothing in here knows about the rail any more.
+                // Height is not this function's business — place() below applies
+                // it. Shifting the extent by the shear as well counted it twice,
+                // sliding the high rows of the landscape along the flow relative
+                // to the low ones. OVER at both ends is slop the mask eats anyway.
+                const laneSpan = () => ({ x0: -M.OVER, x1: len + M.OVER });
 
-                // Ground and water are both that clipped strip, not rectangles:
-                // straight banks and ends that follow the felt's own edge. A
-                // rectangle laid across an oval has to either stop short of the
-                // rail in the middle or put its corners over it — there is no
-                // length that does neither.
-                // Where a point of the landscape actually lands. The group is
-                // rotated to the heading, so "up the screen" in here is whatever
-                // world up became under that rotation — height is laid along it
-                // (times LEAN) and along z (times what is left), which is what
-                // turns a height field into something you can see the side of.
-                const theta = Math.atan2(-uy, ux);
-                const upx = Math.sin(theta), upy = Math.cos(theta);
+                // Ground and water are both plain rectangles now — straight banks,
+                // square ends, built past the rail at both. What makes them follow
+                // the felt's own edge is the mask, not their shape.
+                //
+                // The group is already rotated to the heading (see group.rotation.z
+                // above), so everything below is in the river's own frame: x runs
+                // downstream, y across the channel. Height goes partly into that
+                // frame and partly into z — LEAN across, and what is left of the
+                // unit vector into depth, which is only ever used for draw order.
                 const flat = Math.sqrt(Math.max(0, 1 - M.LEAN * M.LEAN));
+
+                // Height, laid OUTWARD from the channel rather than all one way.
+                //
+                // This is the part that kept going wrong. Faking height with a 2D
+                // offset means shearing, and a shear applied to a symmetric channel
+                // slides the whole landscape in one direction: on one side the grass
+                // pulls back off the water and shows a wide wall, on the other it
+                // overhangs and hides its wall completely. That is the skew — the
+                // river looked like it was leaning over, and which side leaned
+                // depended on the heading. Borrowing the table camera's parallax per
+                // point did the same thing, plus made the two edges fan apart,
+                // because the camera's offset grows across the felt.
+                //
+                // So the offset is signed by which bank the point is on: each side
+                // lifts away from the centreline by the same amount. Both walls are
+                // visible, both the same width, at every angle — which is what "we
+                // want both walls" and "it is mostly top down" actually describe. It
+                // is parallel by construction (a line of constant y gets a constant
+                // shift), the same size at every heading, and it asks the camera for
+                // nothing, so it cannot differ between two machines.
+                //
+                // What it gives up is the camera-matched lean. Nothing here converges
+                // toward a vanishing point any more; it reads as a trench seen from
+                // above, which at 64 degrees of elevation over a table this size is
+                // very close to what the perspective was drawing anyway.
                 const place = (x, y, hgt, out, i) => {
-                    out[i] = x + upx * hgt * M.LEAN;
-                    out[i + 1] = y + upy * hgt * M.LEAN;
-                    out[i + 2] = hgt * flat;
+                    const h = hgt || 0;
+                    const lift = h * M.LEAN;
+                    // Math.sign, but without the -0 case: the river bed sits at y = 0
+                    // and must not pick a side.
+                    const side = y > 0 ? 1 : (y < 0 ? -1 : 0);
+                    out[i] = x;
+                    out[i + 1] = y + side * lift;
+                    out[i + 2] = h * flat;          // depth order only
                 };
 
-                const terrain = riverTerrain(T, hb, len, laneSpan, M, place, upy >= 0 ? 1 : -1);
+                const mask = feltMask(T, f);
+
+                const terrain = riverTerrain(T, hb, reach, len, laneSpan, M, place);
                 if (!terrain) return null;
                 const width = terrain.whw * 2;      // the water the cargo rides in
-                // Both surfaces are lit by their own vertex colours: the ground
+                // Both surfaces are lit by their own vertex colors: the ground
                 // matte, the water glossy enough to catch the key light off a
-                // crest. Alpha rides in the colour too — it is what fades the
+                // crest. Alpha rides in the color too — it is what fades the
                 // apron into the cloth and both of them out at the ends.
-                const landMat = new T.MeshStandardMaterial({
+                // Grass and stone are separate materials because they carry
+                // separate maps. Both keep vertexColors, so the base tint still
+                // comes from GRASS/ROCK and the texture modulates it rather than
+                // replacing it — which is what lets the grass stay darker than the
+                // felt while still reading as grass.
+                const mkGround = (map, rough) => new T.MeshStandardMaterial({
                     vertexColors: true, transparent: true, depthWrite: false,
-                    roughness: 0.95, metalness: 0,
+                    map: map, roughness: rough, metalness: 0,
                     // Faceted, like the low-poly ground it is imitating: the bank
                     // is only a dozen lanes wide, and smoothing them out throws
                     // away the one thing that says this is a landform.
                     flatShading: true,
                 });
+                const grassMat = mkGround(makeGrassTexture(T), 0.95);
+                const stoneMat = mkGround(makeStoneTexture(T), 0.80);
                 const waterMat = new T.MeshStandardMaterial({
                     vertexColors: true, transparent: true, depthWrite: false,
-                    // Glossy, but not a mirror: at 0.16 the key light came off
-                    // every crest as a hard white glare and drowned the foam that
-                    // is supposed to be doing that job.
-                    roughness: 0.32, metalness: 0.1,
-                    emissive: 0x08324f, emissiveIntensity: 0.3,
+                    // Matte, and flat-shaded like the ground and the walls. Without
+                    // flatShading the lattice's normals interpolate and the sheet
+                    // shades smoothly across itself — a gradient produced by the
+                    // renderer rather than by anything in the scene. The emissive
+                    // went for the same reason it was never right: a self-glow is
+                    // not light from a light.
+                    roughness: 0.85, metalness: 0, flatShading: true,
                 });
+                // The dashes are unlit on purpose: they are a graphic mark, not a
+                // wet surface, and a key light raking across them would make the
+                // upstream ones brighter than the downstream ones for no reason.
+                const dashMat = new T.MeshBasicMaterial({
+                    vertexColors: true, transparent: true, depthWrite: false,
+                });
+                // Everything the river draws goes through the mask — the surfaces
+                // here, and every bill, chip and bottle riding it (see board()).
+                //
+                // No felt means no mask, and the geometry is built well past the
+                // rail now — so drawing it would put a slab of landscape over the
+                // wood. Refuse instead, and say why: silently painting outside the
+                // table is worse than the celebration not playing.
+                if (!mask) {
+                    grassMat.dispose(); stoneMat.dispose();
+                    waterMat.dispose(); dashMat.dispose();
+                    terrain.grassL.geo.dispose(); terrain.grassR.geo.dispose();
+                    terrain.bank.geo.dispose(); terrain.water.geo.dispose();
+                    console.warn("[GPokr Tools] river: no felt bounds, so nothing to mask to — skipped");
+                    return null;
+                }
+                // Ground, walls and water are lit by the pool over the table's
+                // centre (see LAMP in feltMask); the dashes are not, because they
+                // are a graphic mark and dimming them toward the rail would read as
+                // them fading out rather than as the table being lit.
+                mask.apply(grassMat); mask.apply(stoneMat); mask.apply(waterMat);
+                mask.apply(dashMat, { lamp: false });
+                riverDiag(T, mask, f, grassMat.map, stoneMat.map);
+
                 const water = new T.Group();
-                const land = new T.Mesh(terrain.land.geo, landMat);
+                const gL = new T.Mesh(terrain.grassL.geo, grassMat);
+                const gR = new T.Mesh(terrain.grassR.geo, grassMat);
+                const bank = new T.Mesh(terrain.bank.geo, stoneMat);
                 const wet = new T.Mesh(terrain.water.geo, waterMat);
-                land.position.z = M.Z_LAND;
+                gL.position.z = gR.position.z = bank.position.z = M.Z_LAND;
                 wet.position.z = M.Z_WATER;
-                if (terrain.cap) {
-                    const cut = new T.Mesh(terrain.cap, landMat);
-                    cut.position.z = M.Z_LAND;
-                    cut.renderOrder = 1;
-                    water.add(cut);
+                if (terrain.dash) {
+                    const dash = new T.Mesh(terrain.dash.geo, dashMat);
+                    dash.position.z = M.Z_WATER + 0.1;
+                    dash.renderOrder = 3;            // on the water
+                    water.add(dash);
                 }
-                if (terrain.rock) {
-                    const rock = new T.Mesh(terrain.rock, landMat);
-                    rock.position.z = M.Z_LAND + 0.1;
-                    rock.renderOrder = 3;            // on the bank, over the water's edge
-                    water.add(rock);
-                }
-                // Both are transparent and neither writes depth, so the order they
-                // are drawn in is the order they stack — and 0.2px of separation is
-                // too little to trust a depth sort with. Say it outright.
-                land.renderOrder = 1;
+                // All transparent and none writes depth, so the order they are
+                // drawn in IS the order they stack — 0.2px of separation is too
+                // little to trust a depth sort with. Grass and bank are coplanar
+                // neighbours rather than overlapping, so they share an order.
+                gL.renderOrder = gR.renderOrder = bank.renderOrder = 1;
                 wet.renderOrder = 2;
-                water.add(land, wet);
-                water.scale.x = 0.001;
+                water.add(gL, gR, bank, wet);
                 group.add(water);
 
                 // ---- swimmers ----
@@ -898,6 +1491,23 @@
                 const board = (mesh, scale, opt) => {
                     if (!mesh) return;
                     group.add(mesh);
+                    // Masked like the water it floats on, or the cargo sails out
+                    // over the rail while the river it is riding stops at it.
+                    //
+                    // Safe to do in place because every source hands out per-
+                    // instance materials: instance() clones them, and coin3d's chip
+                    // maker clones per throw. A source that SHARED a material would
+                    // clip thrown chips to the felt too, which is why this is worth
+                    // stating rather than assuming.
+                    mesh.traverse((n) => {
+                        if (!n.material) return;
+                        const mats = Array.isArray(n.material) ? n.material : [n.material];
+                        // Masked but not lit by the pool: a bill or a chip is an
+                        // object on the river, not part of the ground, and dimming
+                        // it as it drifts toward the rail would read as the thing
+                        // itself fading rather than as the table being lit.
+                        for (const m of mats) mask.apply(m, { lamp: false });
+                    });
                     // Each one rides its OWN lane, so it enters and leaves the water
                     // where that lane does rather than at the centre line's ends —
                     // otherwise an off-centre swimmer spends its first and last
@@ -996,15 +1606,20 @@
                     object3D: group,
                     step(dt) {
                         t += dt;
-                        // Run the landscape in from the upstream edge.
-                        const grow = Math.max(0.001, easeOutCubic(Math.min(1, t / M.HEAD)));
-                        water.scale.x = grow;
-                        // Roll the swell downstream — but no more than 60 times a
-                        // second. Actors are stepped on a fixed 1/120 clock and up
-                        // to 8 times per drawn frame, and reshading and renormalling
-                        // the surface eight times to draw it once is seven rivers
-                        // nobody sees. (The ground never moves at all.)
-                        if (t - lifted >= 1 / 60) { terrain.water.shade(t); lifted = t; }
+                        // No run-in. The river is simply there, at full size, from
+                        // the first frame — it does not grow, sweep or scale in.
+                        // Every version of that read as the landform inflating, and
+                        // in the inspector a rebuild on each drag step replayed it,
+                        // so dragging was a river endlessly re-expanding.
+
+                        // Drift the dashes downstream — but no more than 60 times
+                        // a second. Actors are stepped on a fixed 1/120 clock and
+                        // up to 8 times per drawn frame, and rewriting the marks
+                        // eight times to draw them once is seven rivers nobody
+                        // sees. (Neither the ground nor the water moves at all now.)
+                        if (terrain.dash && t - lifted >= 1 / 60) {
+                            terrain.dash.step(t); lifted = t;
+                        }
 
                         for (const s of swimmers) {
                             const u = (t - s.t0) / s.dur;
@@ -1015,11 +1630,13 @@
                             const sway = Math.sin((t * s.hz + s.phase) * 2 * Math.PI);
                             // On the water, which means through the same lean the
                             // landscape went through — otherwise the cargo floats
-                            // where the river would have been if it were flat, and
-                            // slides visibly off the downstream bank.
+                            // where the river would have been without the lean, and
+                            // slides visibly off the downstream bank. The surface is
+                            // flat, so the height is simply the waterline; this used
+                            // to add the swell so a chip bobbed over the crests.
                             const sx2 = s.from + Math.min(1, u) * (s.to - s.from);
                             const sy2 = (s.lane * M.LANE + sway * M.SWAY) * width;
-                            place(sx2, sy2, M.BANK.WATER + RIVER_WAVE(sx2, sy2, t, M), swimAt, 0);
+                            place(sx2, sy2, M.BANK.WATER, swimAt, 0);
                             s.mesh.position.set(swimAt[0], swimAt[1], M.Z_SWIM + s.z);
                             spin.setFromAxisAngle(Z, s.spin * t);
                             roll.setFromAxisAngle(X, s.roll * sway);
@@ -1030,12 +1647,19 @@
                             if (gone > 0) setAlpha(s.mesh, 1 - gone);
                         }
 
+                        // Held open for the inspector: no lifetime, no fade, and it
+                        // ends only when whoever holds it says so. Everything above
+                        // still runs, so the dashes drift and the cargo floats the
+                        // way they do in the real thing.
+                        if (opts && opts.hold) return !opts.hold();
                         const left = M.LIFE - t;
                         if (left <= 0) return false;
                         if (left < M.FADE) {
                             const a = left / M.FADE;
-                            landMat.opacity = a;
+                            grassMat.opacity = a;
+                            stoneMat.opacity = a;
                             waterMat.opacity = a;
+                            dashMat.opacity = a;
                             for (const s of swimmers) {
                                 const u = (t - s.t0) / s.dur;
                                 const gone = clamp((u - 1) / M.ARRIVE, 0, 1);
@@ -1045,12 +1669,12 @@
                         return true;
                     },
                     // coin3d frees the materials it can see; the lattices and the
-                    // stones are built per river and are this actor's own to free.
+                    // lattices are built per river and are this actor's own to free.
                     dispose() {
-                        terrain.land.geo.dispose();
+                        terrain.grassL.geo.dispose();
+                        terrain.grassR.geo.dispose();
+                        terrain.bank.geo.dispose();
                         terrain.water.geo.dispose();
-                        if (terrain.rock) terrain.rock.dispose();
-                        if (terrain.cap) terrain.cap.dispose();
                     },
                 };
                 return actor;
@@ -1437,8 +2061,43 @@
         return true;
     }
 
+    // ---------- the inspector ----------
+    // One river, held on the felt at a heading of your choosing, for looking at.
+    // It exists because the celebration is a five-second event behind a
+    // between-hands gate, which makes judging how the thing actually looks a
+    // reload-and-wait cycle per attempt.
+    //
+    // Deliberately built through toss() and the ordinary river motion rather than
+    // a private path: what you are inspecting has to be the same geometry, the
+    // same mask and the same projection players get, or it is worth nothing.
+    // The heading comes from a synthetic target out on the felt's edge, which is
+    // exactly how a real one aims itself (mid -> the winner's seat).
+    let held = null;
+    function holdRiver(angleRad, tableRect) {
+        releaseRiver();
+        if (typeof GPE_COIN === "undefined" || !GPE_COIN) return false;
+        const felt = (typeof GPE_COIN.feltBounds === "function")
+            ? GPE_COIN.feltBounds(tableRect) : null;
+        if (!felt) return false;
+        const x = felt.cx + felt.ax * Math.cos(angleRad);
+        const y = felt.cy + felt.by * Math.sin(angleRad);
+        const toRect = { left: x - 20, top: y - 20, right: x + 20, bottom: y + 20,
+            width: 40, height: 40 };
+        let dead = false;
+        const ok = toss("river", null, toRect, tableRect, { hold: () => dead });
+        if (ok) held = { kill: () => { dead = true; } };
+        return ok;
+    }
+    function releaseRiver() {
+        if (held) held.kill();
+        held = null;
+    }
+
     window.GPE_PROPS = {
         toss: toss,
+        holdRiver: holdRiver,
+        releaseRiver: releaseRiver,
+        isHolding: () => !!held,
         ready: ready,
         has: (key) => !!CATALOG[key],
         // Menu data for content.js, so the item list has one home rather than two.

@@ -27,6 +27,14 @@
     let testerDock = false;       // docked to the left of the table, mirroring the right rail (settings.testerDock)
     let SHOW_BET_BUTTONS = true; // bet-size columns default on (opt-out, unlike the rest)
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
+    let FOUR_COLOR = false;      // blue diamonds / green clubs, for color-blind players (opt-in)
+    let CARD_BACK = "";          // which bundled card back to use; "" = the site's own
+    let RIVER_LAB = false;       // hold the river on the felt and let it be dragged round (dev tool)
+    // The inspector's button is off for release builds: it is authoring gear, not
+    // a player feature, and it parks a river on the felt until you turn it off.
+    // The tool itself still works — flip settings.riverLab in extension storage —
+    // so flip this back to true when the river needs looking at again.
+    const RIVER_LAB_BTN = false;
     let TABLE_3D = false;        // replace the flat felt with a live 3D render (opt-in)
     let TABLE3D_FELT_ZOOM = 0.5, TABLE3D_LEATHER_ZOOM = 10; // texture zoom (tools editor)
     let TABLE3D_FELT_DEPTH = 0, TABLE3D_LEATHER_DEPTH = 0.1; // relief depth (tools editor)
@@ -35,9 +43,9 @@
     // Surround = what shows outside the rail. "" means "follow the page's own felt
     // art", which table3d samples — the right default in BOTH themes, since dark
     // mode swaps in our dark table.png and light mode keeps the site's pale jpg.
-    // A picked colour overrides it.
+    // A picked color overrides it.
     let TABLE3D_BG_COLOR = "";
-    let TABLE3D_BACKDROP = "";   // "" = no floor, just the flat surround colour
+    let TABLE3D_BACKDROP = "";   // "" = no floor, just the flat surround color
     let TABLE3D_SEATS = "";      // "" = nothing around the table; "stool" or "chair"
     // Single source of truth for the 3D-table editor defaults (used by
     // applySettings' fallbacks and the "Reset to defaults" button).
@@ -152,6 +160,16 @@
         const prevShowBet = SHOW_BET_BUTTONS;
         SHOW_BET_BUTTONS = !(s && s.showBetButtons === false);
         HAND_SUMMARY = !(s && s.handSummary === false); // opt-out
+        FOUR_COLOR = !!(s && s.fourColor); // opt-in
+        // Checked against the list rather than trusted: an unknown value would
+        // point every back at a 404 and leave the seats blank.
+        CARD_BACK = CARD_BACK_STYLES.indexOf(s && s.cardBack) >= 0 ? s.cardBack : "";
+        RIVER_LAB = !!(s && s.riverLab); // opt-in dev tool
+        syncRiverLab();
+        updateRiverLabBtn();
+        if (FOUR_COLOR) ensureSuitFilters(); // must exist before the class references it
+        document.documentElement.classList.toggle("gpe-fourcolor", FOUR_COLOR);
+        sweepCardImgs(); // apply to whatever is already on screen, not just the next change
         TABLE_3D = !!(s && s.table3d); // opt-in
         TABLE3D_FELT_ZOOM = clampZoom(s && s.table3dFeltZoom, TABLE3D_DEFAULTS.table3dFeltZoom);
         TABLE3D_LEATHER_ZOOM = clampZoom(s && s.table3dLeatherZoom, TABLE3D_DEFAULTS.table3dLeatherZoom);
@@ -878,7 +896,7 @@
 
     // ---------- interactions: the wire ----------
     // Small seeded PRNG (mulberry32). The seed travels in the payload so every
-    // viewer picks the same chip colours for the same throw instead of each
+    // viewer picks the same chip colors for the same throw instead of each
     // rolling its own. In-flight jitter stays local on purpose — matching spin
     // and scatter frame-for-frame would mean threading this through the
     // renderer's animation loop, for a difference nobody can see.
@@ -2557,6 +2575,255 @@
         return { cards, gameId: null, fmt: "v1" };
     }
 
+    // ---------- four-color deck (accessibility) ----------
+    // Blue diamonds and green clubs, for players who can't reliably tell the two
+    // red suits apart from each other or the two black ones. Nothing is redrawn:
+    // the site's own art is recolored in place by two SVG filters (defined
+    // below, applied from overlay.css). That is exact rather than approximate
+    // because the pips and the rank are a single pure ink — #ff0000 or #000000 —
+    // sitting on neutral paper, so a filter can move the ink without touching the
+    // card. Hearts and spades are left alone, so red and black still mean what
+    // they always did.
+    //
+    // Aiming a filter is the hard part, not the recoloring. Hearts are exactly
+    // as red as diamonds and spades exactly as black as clubs, so one blanket
+    // rule would give blue hearts and green spades and help nobody: every card
+    // has to be identified individually. The site offers nothing to identify it
+    // with — GWT inlines the whole deck into its bundle, so each card is an <img>
+    // whose src is a data: URI (no filename for a selector to match), the bundle
+    // is obfuscated (no class names the suit survives), and the <img>s are
+    // recycled between hands with their src swapped (so position is no anchor
+    // either; see showHandLocal).
+    //
+    // What *is* stable is the artwork: 52 fixed data: URIs, one per card. So
+    // identity is a hash lookup on the src — exact, with no heuristics that could
+    // silently mislabel a suit. If gpokr ever reships its deck the hashes stop
+    // matching, every card reads as unknown, and the feature turns itself off
+    // rather than guessing.
+    const DECK_RANKS = "23456789TJQKA";
+    // FNV-1a/32 of the base64 payload of each card's data: URI, by suit, in
+    // DECK_RANKS order. Collision-free across the 52, and identical in both of
+    // the GWT permutations the site ships.
+    const DECK_HASHES = {
+        c: "4ac44c7c d599cf06 0fa9537a 44ef3388 eb369393 da03663a 77e2ec23 b1f2c64d a5853044 3428c57a d054af58 b55cb8b1 30448f62",
+        d: "54d0d261 e22bdbe5 d1d0a35b 8b5d8c11 d0900dc7 ce561029 7f7e4617 84d310b8 0ffdafd7 6d038aae fb567275 1325ec21 2c343cba",
+        h: "ad5be844 5ac9a050 787aa083 aebbca34 1a4a1467 df10b629 518fd554 af09ae6f c19df70d df3f023b 3d4e5c7a 32ea59f4 65f28d86",
+        s: "c22aa8ee 2d988a6d 64a6e85c 33269658 e44e77f3 0fb34bd9 acc5e3e8 0165fe69 c16fd024 4248766a 039a8790 14206239 14d8de9c",
+    };
+    const DECK_BY_HASH = (() => {
+        const m = new Map();
+        for (const suit of Object.keys(DECK_HASHES)) {
+            DECK_HASHES[suit].split(" ").forEach((h, i) => m.set(h, DECK_RANKS[i] + suit));
+        }
+        return m;
+    })();
+
+    function fnv1a32(s) {
+        let h = 0x811c9dc5;
+        for (let i = 0; i < s.length; i++) {
+            h ^= s.charCodeAt(i);
+            h = Math.imul(h, 0x01000193);
+        }
+        return (h >>> 0).toString(16).padStart(8, "0");
+    }
+
+    // Matches both forms a data: URI can reach us in: an <img src> (bare) and a
+    // background-image (wrapped in url("...")). Only the base64 body is hashed,
+    // so the table survives a change in the mime prefix.
+    const DATA_URI_B64 = /;base64,([A-Za-z0-9+/=]+)/;
+    // Our own cards (shared hands, the hand-summary panel) are not data: URIs —
+    // they come from the canonical CDN path, which spells the card out in the
+    // filename. See cardImageUrl(). Reading it here rather than trusting the
+    // data-gpe-card that makeCardEl sets keeps one function the authority on
+    // what a card image is: otherwise this would run on our own <img>, find no
+    // base64 to hash, and clear the stamp makeCardEl had just applied.
+    const CARD_URL_NAME = /\/GPokr\/cards\/([2-9TJQKA][cdhs])\.png/;
+    // Natural size of every card in the deck — used only to tell "this is a card
+    // we can't name" from "this is some other image", for the warning below.
+    const CARD_W = 53, CARD_H = 69;
+    let deckWarned = false;
+
+    // Name one image, if it is a card. Stamps data-gpe-card="Td"; overlay.css
+    // does the rest. Runs for everyone, not just when the setting is on: it is a
+    // string compare for anything that hasn't changed, and always-stamping means
+    // enabling the option can't leave a stale suit on a card for a frame.
+    function stampCardImg(img) {
+        const src = img.currentSrc || img.getAttribute("src") || "";
+        if (src === img._gpeCardSrc) return;
+        img._gpeCardSrc = src;
+        const m = DATA_URI_B64.exec(src);
+        const named = CARD_URL_NAME.exec(src);
+        const card = m ? DECK_BY_HASH.get(fnv1a32(m[1])) : (named ? named[1] : null);
+        if (card) { img.dataset.gpeCard = card; return; }
+        delete img.dataset.gpeCard;
+        // A card-shaped image we can't name means the deck was reshipped and the
+        // table above is stale. Say so once — the filters stay off either way.
+        if (m && FOUR_COLOR && !deckWarned &&
+            img.naturalWidth === CARD_W && img.naturalHeight === CARD_H) {
+            deckWarned = true;
+            console.warn("[GPokr Tools] card artwork not recognised — the four-color " +
+                "deck is off for it. The site's deck images may have changed.");
+        }
+    }
+
+    // Everything we do to a card image, in one place: name it for the four-color
+    // deck, and swap it if it is the back. Both are no-ops for an image that has
+    // not changed since we last looked at it.
+    function processCardImg(img) {
+        stampCardImg(img);
+        styleCardBack(img);
+    }
+
+    function sweepCardImgs() {
+        document.querySelectorAll("img").forEach(processCardImg);
+    }
+
+    // Driven by mutations, with the 300ms poll only as a backstop. Both features
+    // need that: the poll alone would leave a swapped card wearing the previous
+    // card's suit for up to a third of a second (long enough to watch a heart
+    // flash blue), and would let GWT's own card back show between a re-render and
+    // our replacing it. Observer callbacks run before paint, so neither is seen.
+    function watchCardImages() {
+        const obs = new MutationObserver((recs) => {
+            for (const r of recs) {
+                if (r.type === "attributes") { processCardImg(r.target); continue; }
+                r.addedNodes.forEach((n) => {
+                    if (n.nodeType !== 1) return;
+                    if (n.tagName === "IMG") processCardImg(n);
+                    else if (n.querySelectorAll) n.querySelectorAll("img").forEach(processCardImg);
+                });
+            }
+        });
+        obs.observe(document.documentElement, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ["src"],
+        });
+    }
+
+    // A CSS filter can only reference an SVG filter that is in the same document,
+    // so the definitions have to be injected rather than living in overlay.css.
+    // Added before the root class goes on: filter: url() pointing at nothing
+    // renders the card unfiltered, which would look like the feature failing.
+    const SUIT_FILTER_SVG =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" focusable="false">' +
+        // Diamonds. R'=G and B'=R-G+B, i.e. the red ink is moved into the blue
+        // channel: #ff0000 lands exactly on #0000ff, while every neutral pixel
+        // (R==G — the paper, the grey frame, the black rank on a black card)
+        // comes back bit-identical. No hue-rotate, which only approximates this.
+        '<filter id="gpe-suit-diamond" color-interpolation-filters="sRGB">' +
+        '<feColorMatrix type="matrix" values="0 1 0 0 0  0 1 0 0 0  1 -1 1 0 0  0 0 0 1 0"/>' +
+        '</filter>' +
+        // Clubs. hue-rotate cannot touch these at all: black has zero saturation,
+        // so there is no hue to rotate. The green has to be painted on through a
+        // mask instead.
+        '<filter id="gpe-suit-club" color-interpolation-filters="sRGB">' +
+        // alpha = 1 - luma, i.e. "how dark is this pixel".
+        '<feColorMatrix result="dark" type="matrix" ' +
+        'values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -0.2126 -0.7152 -0.0722 0 1"/>' +
+        // Clipped to the card's own alpha, or the transparent rounded corners —
+        // whose RGB is arbitrary, and read as dark — would come back solid green.
+        '<feComposite in="dark" in2="SourceGraphic" operator="in" result="inside"/>' +
+        // Threshold, so full green lands on the ink and nothing lands on the pale
+        // grey card frame (which is dark enough to tint without it).
+        '<feComponentTransfer in="inside" result="mask">' +
+        '<feFuncA type="table" tableValues="0 0 0 0.4 1 1"/>' +
+        '</feComponentTransfer>' +
+        '<feFlood flood-color="#008000" result="ink"/>' +
+        '<feComposite in="ink" in2="mask" operator="in" result="green"/>' +
+        '<feComposite in="green" in2="SourceGraphic" operator="over"/>' +
+        '</filter></svg>';
+
+    function ensureSuitFilters() {
+        // Idempotent by id, which also means a holder left behind by a previous
+        // extension context is reused rather than duplicated. Safe: it is inert
+        // markup with no timers or listeners to have gone stale.
+        if (document.getElementById("gpe-suit-filters") || !document.body) return;
+        const holder = document.createElement("div");
+        holder.id = "gpe-suit-filters";
+        holder.innerHTML = SUIT_FILTER_SVG;
+        document.body.appendChild(holder);
+    }
+
+    // ---------- card backs ----------
+    // A player's two face-down cards are ONE 23x26 image on gpokr, not two: the
+    // pair, the rear card peeking out up-and-left, and the soft grey halo they
+    // sit on, all in a single asset drawn once per seat. So swapping the back
+    // means swapping that whole little still life, and a replacement has to keep
+    // the same footprint or it reads as misaligned rather than as a new deck.
+    // tools/make_cardbacks.py draws ours on that geometry, at 4x and from vectors
+    // so they stay sharp where there are device pixels to spare. They are original
+    // drawings in the idiom of classic casino backs — bordered, an all-over
+    // ornamental ground, a center medallion holding a G — rather than any house's
+    // artwork, which is trademarked and could not ship here.
+    //
+    // Unlike the four-color deck this cannot be done with a filter — there is no
+    // recoloring of the site's back that yields a *different design* — so it is
+    // the one place we do change the site's DOM, by pointing the <img> at a
+    // bundled PNG. GWT owns that element and re-sets its src whenever it
+    // re-renders a seat, so the swap is re-applied on mutation rather than once.
+    // That settles rather than oscillating: our own write fires the observer
+    // again, sees the src already correct, and stops.
+    const CARD_BACK_STYLES = ["rosette", "lattice", "fan", "deco"];
+    // "" is a real choice, not a fallback: it means gpokr's own back.
+    const CARD_BACK_LABELS = { "": "classic (site)", rosette: "rosette (red)", lattice: "lattice (blue)", fan: "fan (green)", deco: "deco (gold)" };
+    // FNV-1a/32 of the base64 payload of gpokr's own back, the same way the deck
+    // faces are keyed (see DECK_HASHES). Recognizing it exactly is what keeps us
+    // from swapping some other 23x26 image that happens to be on the page.
+    const SITE_BACK_HASH = "adf3d312";
+    // The site's own back measures this. Ours are drawn at 4x (see
+    // tools/make_cardbacks.py) so they stay sharp on HiDPI, which only works
+    // because the <img> display size is pinned: GWT does set width/height
+    // attributes, but a 4x image on an unpinned <img> would render four times
+    // too big, so the swap pins them itself rather than trusting that.
+    const SITE_BACK_W = 23, SITE_BACK_H = 26;
+    // Matches a src we put there ourselves, so re-entry is cheap to detect.
+    const OUR_BACK_RE = /\/assets\/backs\/([a-z]+)\.png(?:[?#].*)?$/;
+
+    // Bundled-file URL, resolved the same two ways as assetAudioUrl(): relative
+    // to this script where gpokr hosts the tools itself, and via the extension
+    // otherwise. assets/* is already web-accessible, so no manifest change.
+    function cardBackUrl(style) {
+        const path = "assets/backs/" + style + ".png";
+        if (SELF_SRC) return SELF_SRC.replace(/[^/]*$/, "") + path;
+        try { return chrome.runtime.getURL(path); } catch (e) { return null; }
+    }
+
+    // Point one back <img> at whichever back is currently chosen, or put the
+    // site's own back on it again. Cheap to call repeatedly: the memo below
+    // folds in CARD_BACK, so a settings change re-examines every image while an
+    // unchanged one costs a string compare.
+    function styleCardBack(img) {
+        const src = img.getAttribute("src") || "";
+        const memo = src + "|" + CARD_BACK;
+        if (memo === img._gpeBackMemo) return;
+
+        if (OUR_BACK_RE.test(src)) {
+            // Already swapped. Follow a changed choice, and restore the site's
+            // own back when the choice is cleared — which is only possible
+            // because we stashed it before overwriting it.
+            const want = CARD_BACK ? cardBackUrl(CARD_BACK) : img._gpeSiteBack;
+            if (want && want !== src) { img.setAttribute("src", want); return; }
+            img._gpeBackMemo = memo;
+            return;
+        }
+        // Not ours. Only gpokr's own back is a candidate, identified by hash so
+        // no other image can be caught by mistake.
+        const m = DATA_URI_B64.exec(src);
+        if (!m || fnv1a32(m[1]) !== SITE_BACK_HASH) { img._gpeBackMemo = memo; return; }
+        img._gpeSiteBack = src;   // the only copy we keep, for putting it back
+        // Measured while the site's own back is still in place; falls back to the
+        // known asset size when the image hasn't decoded yet.
+        img._gpeBackW = img.naturalWidth || SITE_BACK_W;
+        img._gpeBackH = img.naturalHeight || SITE_BACK_H;
+        img._gpeBackMemo = memo;
+        if (!CARD_BACK) return;
+        const url = cardBackUrl(CARD_BACK);
+        if (!url) return;
+        // Pin first, then swap, so the oversized image is never laid out raw.
+        img.setAttribute("width", String(img._gpeBackW));
+        img.setAttribute("height", String(img._gpeBackH));
+        img.setAttribute("src", url);
+    }
+
     // ---------- rendering shared hands ----------
     // The site publishes every card as a plain image, keyed exactly the way
     // parseCard already spells them: rank uppercase, suit lowercase ("Ah", "Th",
@@ -2586,6 +2853,10 @@
         const img = document.createElement("img");
         img.className = "gpe-shared-card";
         img.alt = card;
+        // What the four-color deck selects on. stampCardImg would derive the same
+        // value from the URL, but setting it here means it is right on the first
+        // frame rather than on the first mutation.
+        img.dataset.gpeCard = card;
         // Swap in the text card if the image never arrives, so a blocked or offline
         // fetch degrades to what this used to draw rather than to a gap.
         img.addEventListener("error", () => {
@@ -3810,7 +4081,7 @@
         if (month && month.rank) {
             const chip = document.createElement("span");
             chip.className = "gpe-pf-rank" + (month.rank <= 3 ? " gpe-pf-elite" : "");
-            // ★ + the word "rank" keep the top-3 gold from being colour-alone.
+            // ★ + the word "rank" keep the top-3 gold from being color-alone.
             chip.textContent = (month.rank <= 3 ? "★ " : "") + "#" + month.rank.toLocaleString() +
                 " " + String(prof.monthName || "").slice(0, 3);
             top.appendChild(chip);
@@ -4303,6 +4574,11 @@
         ["gpe-dark-mode", "dark mode", "darkMode", () => DARK_MODE],
         ["gpe-hand-summary", "hand summary", "handSummary", () => HAND_SUMMARY,
             "recap panel in the game log at the end of each hand"],
+        ["gpe-four-color", "four-color deck", "fourColor", () => FOUR_COLOR,
+            "Recolors the card art so diamonds are blue and clubs are green, " +
+            "leaving hearts red and spades black. For anyone who can't reliably " +
+            "separate the two red suits from the two black ones. The site's own " +
+            "images are recolored in place — nothing about the game changes."],
         ["gpe-hotkeys", "keyboard shortcuts", "hotkeys", () => HOTKEYS,
             "F = fold · C = check/call · 1–9 = bet-size buttons · ↑/↓ = ±1 big blind"],
         ["gpe-bet-buttons", "bet buttons", "showBetButtons", () => SHOW_BET_BUTTONS],
@@ -4333,11 +4609,45 @@
     // hidden behind a hardcoded username check while it was a dev tool; it's a
     // player feature now, so everyone gets it.
     let chainBtn = null;
+    let riverLabBtn = null;
+    function updateRiverLabBtn() {
+        if (riverLabBtn) riverLabBtn.classList.toggle("gpe-active", RIVER_LAB);
+    }
     // Lit while the panel is open. Called both when settings change and from the
     // 1.5s tab poll.
     function updateChainBtn() {
         if (!chainBtn) return;
         chainBtn.classList.toggle("gpe-active", SHOW_TESTER);
+    }
+
+    // The card back is a choice, not a toggle, so it gets a <select> row of its
+    // own rather than riding SIDE_OPTIONS. Not a <label>: there is no checkbox
+    // for a click to fall through to.
+    function buildCardBackRow() {
+        const row = document.createElement("div");
+        row.className = "gpe-side-option";
+        row.appendChild(document.createTextNode("card back"));
+        const info = document.createElement("span");
+        info.className = "gpe-info";
+        info.textContent = "\u24d8";
+        attachInstantTip(info,
+            "Replaces the face-down cards at every seat with one of our own " +
+            "designs. Local only \u2014 other players still see whatever back they " +
+            "picked, and nothing about the game changes. \"classic\" is gpokr's own.");
+        row.appendChild(info);
+        const sel = document.createElement("select");
+        sel.id = "gpe-card-back";
+        sel.className = "gpe-side-select";
+        for (const style of [""].concat(CARD_BACK_STYLES)) {
+            const opt = document.createElement("option");
+            opt.value = style;
+            opt.textContent = CARD_BACK_LABELS[style] || style;
+            sel.appendChild(opt);
+        }
+        sel.value = CARD_BACK;
+        sel.addEventListener("change", () => saveSetting("cardBack", sel.value));
+        row.appendChild(sel);
+        return row;
     }
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
@@ -4347,8 +4657,11 @@
             const box = document.getElementById(id);
             if (box) box.checked = current();
         }
+        const back = document.getElementById("gpe-card-back");
+        if (back && document.activeElement !== back) back.value = CARD_BACK;
         syncBetWindowInputs();
         updateChainBtn();
+        updateRiverLabBtn();
     }
 
     // The hand-count lives in two places (tools tab + bets tab); keep both in
@@ -4484,6 +4797,22 @@
                     row.appendChild(badge);
                 }
             }
+            // Celebrations get a "river" button: holds one on the felt so it can be
+            // dragged round and looked at. A dev tool, same as "chain" once was —
+            // hidden in release builds, see RIVER_LAB_BTN.
+            if (id === "gpe-celebrations" && RIVER_LAB_BTN) {
+                const lab = document.createElement("button");
+                lab.type = "button";
+                lab.className = "gpe-side-edit gpe-river-lab-btn";
+                lab.textContent = "river";
+                lab.title = "hold the river on the felt — drag it to any angle";
+                lab.addEventListener("click", (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    saveSetting("riverLab", !RIVER_LAB);
+                });
+                row.appendChild(lab);
+                riverLabBtn = lab;
+            }
             // The interactions option gets a "chain" button — the scripted-throw
             // tester — shown only to us (updateChainBtn gates it). Toggles the panel.
             if (id === "gpe-coin-toss") {
@@ -4555,6 +4884,7 @@
             }
             pane.appendChild(row);
         }
+        pane.appendChild(buildCardBackRow());
 
         // "who's here" roster: its own tab pane
         const rosterPane = document.createElement("div");
@@ -5754,7 +6084,7 @@
             () => TABLE3D_FELT_COLOR,
             (c) => { TABLE3D_FELT_COLOR = c; if (window.GPE_TABLE3D) GPE_TABLE3D.setFeltColor(c); },
             "table3dFeltColor");
-        // Background gets its own row shape: a colour input can't express "unset",
+        // Background gets its own row shape: a color input can't express "unset",
         // so it pairs with an auto button that hands control back to the art.
         const bgRow = (() => {
             const row = document.createElement("div");
@@ -5783,9 +6113,9 @@
             return row;
         })();
 
-        // Floor under the table. A row of toggles rather than a colour input,
+        // Floor under the table. A row of toggles rather than a color input,
         // because these are whole generated surfaces, not a value — and "none"
-        // is one of the choices, which a colour picker cannot express.
+        // is one of the choices, which a color picker cannot express.
         const backdropRow = (() => {
             const row = document.createElement("div");
             row.className = "gpe-slider-row";
@@ -7165,6 +7495,96 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         return !!GPE_PROPS.toss("river", fromRect, seat || fromRect, tableRect);
     }
 
+    // ---------- river inspector ----------
+    // Holds one river on the felt and lets you drag it round to any heading.
+    //
+    // The celebration is a 5s event behind a between-hands gate, so looking at it
+    // properly used to mean a reload, a wait for the gate, and a screenshot race —
+    // per attempt. This keeps it on screen and turnable, which is the only sane
+    // way to judge a 3D shape. It holds a REAL one through GPE_PROPS.holdRiver, so
+    // what you turn over is the same geometry, mask and projection players get.
+    let riverLabAngle = -Math.PI / 4;   // start on a diagonal, where the lean shows most
+    let riverLabDrag = false;
+    let riverLabAt = 0;                 // last rebuild, for throttling
+
+    function riverLabTable() { return document.querySelector(".iogc-GameWindow-table"); }
+
+    // Rebuilding is the only way to change the heading: the lean and the camera
+    // projection are baked into the vertices, so spinning the group would spin
+    // those with it and the light would come from the wrong side. A river is a few
+    // hundred vertices, but not per mousemove — hence the throttle.
+    function riverLabRender(force) {
+        if (!RIVER_LAB || !window.GPE_PROPS || !GPE_PROPS.holdRiver) return;
+        const now = Date.now();
+        if (!force && now - riverLabAt < 60) return;
+        riverLabAt = now;
+        const el = riverLabTable();
+        if (el) GPE_PROPS.holdRiver(riverLabAngle, liveRect(el));
+    }
+
+    function riverLabAngleFrom(ev) {
+        const el = riverLabTable();
+        if (!el || !window.GPE_COIN || typeof GPE_COIN.feltBounds !== "function") return null;
+        const f = GPE_COIN.feltBounds(liveRect(el));
+        if (!f) return null;
+        // Measured against the felt's own ellipse rather than raw pixels, so
+        // dragging to a spot on the rail gives the heading that actually points
+        // there — the felt is well under half as tall as it is wide.
+        return Math.atan2((ev.clientY - f.cy) / f.by, (ev.clientX - f.cx) / f.ax);
+    }
+
+    function onRiverLabDown(ev) {
+        if (!RIVER_LAB || ev.button !== 0) return;
+        const a = riverLabAngleFrom(ev);
+        if (a === null) return;
+        riverLabDrag = true;
+        riverLabAngle = a;
+        riverLabRender(true);
+        ev.preventDefault();
+    }
+    function onRiverLabMove(ev) {
+        if (!riverLabDrag) return;
+        const a = riverLabAngleFrom(ev);
+        if (a === null) return;
+        riverLabAngle = a;
+        riverLabRender(false);
+    }
+    function onRiverLabUp() {
+        if (!riverLabDrag) return;
+        riverLabDrag = false;
+        riverLabRender(true);      // land exactly where the mouse was let go
+    }
+
+    // move/up listen on the document so a drag that wanders off the table still
+    // tracks, and still ends when the button comes up somewhere else.
+    let riverLabWired = false;
+    function syncRiverLab() {
+        const el = riverLabTable();
+        if (RIVER_LAB) {
+            if (!riverLabWired && el) {
+                el.addEventListener("mousedown", onRiverLabDown);
+                document.addEventListener("mousemove", onRiverLabMove);
+                document.addEventListener("mouseup", onRiverLabUp);
+                riverLabWired = true;
+            }
+            document.documentElement.classList.add("gpe-river-lab");
+            // The models have to be loaded before a river can be built, and the
+            // celebration's own ensure() is what knows which ones.
+            const item = INTERACT_ITEMS.river;
+            if (item && item.ensure) item.ensure().then((ok) => { if (ok) riverLabRender(true); });
+            return;
+        }
+        if (riverLabWired) {
+            if (el) el.removeEventListener("mousedown", onRiverLabDown);
+            document.removeEventListener("mousemove", onRiverLabMove);
+            document.removeEventListener("mouseup", onRiverLabUp);
+            riverLabWired = false;
+        }
+        riverLabDrag = false;
+        document.documentElement.classList.remove("gpe-river-lab");
+        if (window.GPE_PROPS && GPE_PROPS.releaseRiver) GPE_PROPS.releaseRiver();
+    }
+
     // Rail slide: leap up onto the rail, grind a full lap around the table's oval,
     // then hop back down to the seat.
     function railSlideAvatar(avatarEl, fromRect, tableRect) {
@@ -7316,6 +7736,8 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     // the page's own world, which is the only way to beat the client's socket).
     ensureWsMonitor();
     warmSounds();
+    watchCardImages(); // track card images as GWT swaps them
+    sweepCardImgs();
     // As an extension props3d is already a content script, so its catalog is here
     // immediately; the site build fetches it now (the poll below also re-syncs, but
     // only this kicks off the fetch).
@@ -7335,6 +7757,10 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         placeSplashButton(); // follows the pot total as it changes
         placePersonalButton(); // rides Splash's right edge; also tracks seat/send-ability
         syncTable3d(); // keep the 3D felt attached across GWT re-renders
+        sweepCardImgs(); // backstop for any card the observer missed
+        // The inspector may have been switched on before the table existed, or
+        // GWT may have replaced the element under us; re-arm if so.
+        if (RIVER_LAB && !riverLabWired) syncRiverLab();
     }, 300); // track avatars + turn highlight live
     const boot = setInterval(() => {
         const ready = watchChat();

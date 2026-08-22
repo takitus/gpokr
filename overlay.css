@@ -61,6 +61,27 @@
     color: #c81818;
 }
 
+/* ---- Four-color deck (accessibility): blue diamonds, green clubs ----
+   The filters themselves are built in content.js (SUIT_FILTER_SVG) — a CSS
+   filter can only reference an SVG one that lives in the same document. All
+   this does is aim them, at the site's cards and at ours alike: both carry
+   data-gpe-card="Td", the site's stamped by stampCardImg() and ours set when
+   the element is built. Hearts and spades are deliberately absent — red and
+   black keep meaning what they always did, so only the ambiguity is removed. */
+html.gpe-fourcolor [data-gpe-card$="d"] { filter: url(#gpe-suit-diamond); }
+html.gpe-fourcolor [data-gpe-card$="c"] { filter: url(#gpe-suit-club); }
+/* Holds the injected <svg> of filter definitions: present, never seen. */
+#gpe-suit-filters {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+/* The text cards (the fallback when a card image won't load) are colored by
+   suit, not by ink, so they follow the same four colors. */
+html.gpe-fourcolor .gpe-suit-d { color: #0000ff; }
+html.gpe-fourcolor .gpe-suit-c { color: #008000; }
+
 /* ---- End-of-hand card summary in the game log (header + You/Board/Winner + detail) ---- */
 .gpe-log-cards {
     display: flex;
@@ -398,7 +419,7 @@
 #gpe-personal-panel .gpe-interact-item.gpe-interact-cool:hover { background: transparent; }
 
 /* The background row's "auto" toggle: pressed-in when the surround is following
-   the page's own table art rather than a picked colour. */
+   the page's own table art rather than a picked color. */
 .gpe-bg-auto {
     margin-left: 6px;
     font-size: 11px !important;
@@ -1197,7 +1218,7 @@ tr.gpe-menu-off { display: none !important; }
 /* ---- Site-profile card at the top of the stats tooltip ----
    gpokr's own record for the player: monthly standing, today's numbers as a row
    of stat tiles, and their trophy artwork. Signs (+/−) and the ★ carry meaning
-   on their own; colour only reinforces them. */
+   on their own; color only reinforces them. */
 .gpe-pf {
     margin: -1px 0 6px;
     padding-bottom: 6px;
@@ -1482,6 +1503,21 @@ tr.gpe-menu-off { display: none !important; }
 .gpe-side-options .gpe-side-num {
     margin-left: auto;
     width: 40px;
+    box-sizing: border-box;
+    font: 11px/1 Arial, sans-serif;
+    padding: 2px 3px;
+    border: 1px solid #c9c9c9;
+    border-radius: 4px;
+    background: #fff;
+    color: #333;
+}
+/* River inspector: the felt becomes a dial while it's held, so say so. */
+html.gpe-river-lab .iogc-GameWindow-table { cursor: grab; }
+html.gpe-river-lab .iogc-GameWindow-table:active { cursor: grabbing; }
+
+/* card-back picker: sits where .gpe-side-num sits, but sized to its labels */
+.gpe-side-options .gpe-side-select {
+    margin-left: auto;
     box-sizing: border-box;
     font: 11px/1 Arial, sans-serif;
     padding: 2px 3px;

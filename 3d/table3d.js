@@ -10,7 +10,8 @@
  * the tilt + rail bevel + lighting give real 3D depth.
  *
  * Loaded as a content script after vendor/three.iife.js (THREE) and chips3d.js;
- * exposes window.GPE_TABLE3D = { enable, disable, isOn }. content.js drives it
+ * exposes window.GPE_TABLE3D = { enable, disable, isOn, projectAbove, ... }.
+ * content.js drives it
  * from the "3D table" setting. Opt-in; fully disposed when off (no context leak).
  */
 (function () {
@@ -58,11 +59,14 @@
 
     const COL_FELT = 0x2f6360;   // gpokr's teal-green felt
     const COL_FELT_EDGE = 0x213f40;
+    // How far past the felt stadium another renderer should mask to, in world
+    // units, to cover the raised felt-edge ring. See feltMaskParams.
+    const FELT_BLEED = 0.30;
     const COL_RAIL = 0x211d15;   // warm dark leather (a touch lighter so the grain reads)
     // Outside the rail. Black matches the DARK art's corners, which is where this
     // came from — and it is wrong in light mode, where the site's own felt art has
     // pale corners and a black surround reads as a hole punched in the page. So
-    // black is only the fallback: sampleSurround() below takes the colour from
+    // black is only the fallback: sampleSurround() below takes the color from
     // whatever art the page actually has behind the table, and the user can
     // override it outright.
     const COL_SURROUND = 0x000000;
@@ -99,7 +103,7 @@
     let feltColorHex = "#2f6360";    // COL_FELT as a hex tint for the felt material
     let leatherColorHex = "#1d1a16"; // near-black brown tint for the rail material
     let logoOpacity = LOGO_OPACITY;  // felt-center watermark opacity (editor)
-    let backdropStyle = "";          // "" = none, the flat surround colour as before
+    let backdropStyle = "";          // "" = none, the flat surround color as before
     let seatStyle = "";              // "" = bare floor, "stool" or "chair" at every seat
 
     // The floor is a real table height below the top. The scale is fixed by the
@@ -284,7 +288,7 @@
     // Each style declares how it wants to be laid down. `tile` styles repeat a
     // seamless swatch; "glow" does not, because the pool of light it bakes is a
     // single gradient centred on the table and repeating it would print a grid
-    // of suns. Colour is the material tint, so a style's map only carries
+    // of suns. color is the material tint, so a style's map only carries
     // luminance and pattern — the same split the felt uses.
     const BACKDROPS = {
         // Two tints per style. `color` is dark mode's, and is deliberately darker
@@ -701,7 +705,7 @@
 
     // Read the corner pixel of the felt art the page is showing and use that as the
     // surround, so the canvas blends into the page instead of announcing itself.
-    // This is what makes light mode work without a hardcoded colour: dark mode
+    // This is what makes light mode work without a hardcoded color: dark mode
     // swaps in our dark table.png (black corners), light mode keeps the site's own
     // pale jpg, and both are sampled the same way. Same-origin art, so the canvas
     // read is clean; anything unexpected leaves the fallback in place.
@@ -757,7 +761,7 @@
         return document.documentElement.classList.contains("gpe-dark");
     }
 
-    // Darken the floor with distance from the table, baked into vertex colours.
+    // Darken the floor with distance from the table, baked into vertex colors.
     //
     // Lighting alone will not do this. The overhead lamp does fall off with
     // distance, but ambient and the key/fill directionals are uniform everywhere,
@@ -981,7 +985,7 @@
     // its neighbour. A little noise on top keeps it from looking machined.
     //
     // Same gradient-of-a-heightfield trick as the felt, and it is a normal map
-    // rather than a colour map on purpose: the weave should show as relief that
+    // rather than a color map on purpose: the weave should show as relief that
     // moves with the light, not as a pattern printed on the cloth.
     function fabricNormalTexture(T) {
         const N = 256, K = 16;          // K threads across the tile
@@ -1207,7 +1211,7 @@
         if (session) applySeats(session);
     }
 
-    // "" / unknown -> no floor, back to the flat surround colour.
+    // "" / unknown -> no floor, back to the flat surround color.
     function setBackdrop(style) {
         backdropStyle = (typeof style === "string" && BACKDROPS[style]) ? style : "";
         if (session) applyBackdrop(session);
@@ -1308,6 +1312,97 @@
 
         s.placed = { w: r.width, h: r.height };
         return true;
+    }
+
+    // Where a point sitting `hCss` css px above the felt, at page position
+    // (pageX, pageY), lands on screen — in page css px. Null when the table is
+    // not rendering.
+    //
+    // This exists so another renderer can borrow the table's perspective instead
+    // of approximating it. props3d's river faked height with a linear shear (its
+    // LEAN): every face projected into the same plane, so a wall had no
+    // convergence and the whole landform read as paint on the felt however it was
+    // coloured. Going through this camera instead gives it the projection the felt
+    // and the rail were actually drawn with — FOV degrees of perspective at
+    // ELEV_DEG of elevation — so a raised bank foreshortens and converges the way
+    // the table does.
+    //
+    // The inverse of syncToTable's placement: world origin is the felt's centre,
+    // x maps straight through, and z is stretched by 1/sinE because the plane is
+    // seen at an angle (which is why FELT_HALF_D_PX is described as already
+    // foreshortened).
+    // Everything another renderer needs to mask itself to the felt EXACTLY.
+    //
+    // A screen-space stadium is not good enough. The felt is a stadium on the
+    // ground plane, and this camera is perspective — so its outline on screen is
+    // NOT a stadium: the near end is larger than the far one. Clipping to a
+    // symmetric screen shape therefore misses the rail on one side and crosses it
+    // on the other, which is exactly the "not perfect to the rail" you can see.
+    //
+    // The fix is to do the test on the ground plane instead. Projection restricted
+    // to y=0 is a homography, so it inverts exactly: `inv` takes (ndc.x, ndc.y, 1)
+    // to (X, Z, w) on the felt, and a stadium test there is exact at any angle.
+    // A, B and the arc radius are the same numbers the felt geometry is built from.
+    function feltMaskParams() {
+        const s = session;
+        if (!s || !s.camera || !s.placed || !s.feltA) return null;
+        const el = tableEl();
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        if (r.width < 40 || r.height < 40) return null;
+        const T = window.THREE;
+        if (!T) return null;
+        s.camera.updateMatrixWorld(true);
+        const M = new T.Matrix4().multiplyMatrices(s.camera.projectionMatrix,
+            s.camera.matrixWorldInverse);
+        const m = M.elements;   // column-major: element[col * 4 + row]
+        // Rows 0, 1 and 3 of M, keeping only the X and Z columns plus translation:
+        // the Y column drops out because the plane is y = 0.
+        const H = new T.Matrix3().set(
+            m[0], m[8], m[12],
+            m[1], m[9], m[13],
+            m[3], m[11], m[15]);
+        const inv = H.clone().invert();
+        // Expanded outward by BLEED. The playing surface is not only the felt
+        // stadium: there is a felt-edge wall ring just inside the rail, from A in
+        // to A - 0.45 (see the wall geometry below), and it is EXTRUDED, so its top
+        // face sits a hair above the felt plane. Anything above the plane projects
+        // slightly outside its own footprint on it, so a mask computed exactly at A
+        // leaves that rim showing as a thin dark crescent hugging the rail —
+        // strongest at the caps, where the outline curves fastest.
+        //
+        // Growing the stadium is the honest fix: the visible surface really does
+        // reach past A once the rim is raised. BLEED is well under the ring's own
+        // width, so it closes the crescent without climbing the rail's inner face.
+        const rad = Math.min(s.feltB, s.feltA);
+        return {
+            inv: inv,
+            rect: [r.left, r.top, r.width, r.height],
+            // Only the radius grows: halfRun is A - rad, so holding it fixed while
+            // rad increases moves the whole outline out by the same amount.
+            radius: rad + FELT_BLEED,
+            halfRun: Math.max(0, s.feltA - rad),
+        };
+    }
+
+    function projectAbove(pageX, pageY, hCss) {
+        const s = session;
+        if (!s || !s.camera || !s.placed) return null;
+        const el = tableEl();
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        if (r.width < 40 || r.height < 40) return null;
+        const T = window.THREE;
+        if (!T) return null;
+        const wpp = VIEW_W / r.width;          // world units per css px
+        const scale = r.width / ART_W;         // css px per art px
+        const X = (pageX - r.left - FELT_CX_PX * scale) * wpp;
+        const Z = (pageY - r.top - (FELT_CY_PX + FELT_Y_NUDGE) * scale) * wpp / s.sinE;
+        const v = new T.Vector3(X, hCss * wpp, Z).project(s.camera);   // -> NDC
+        return {
+            x: r.left + (v.x * 0.5 + 0.5) * r.width,
+            y: r.top + (-v.y * 0.5 + 0.5) * r.height,
+        };
     }
 
     function buildScene(s) {
@@ -1528,5 +1623,5 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, isOn: () => !!session, _session: () => session };
+    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, isOn: () => !!session, _session: () => session };
 })();

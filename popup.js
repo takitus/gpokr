@@ -1,12 +1,17 @@
-/* Popup for GPokr Tools: settings toggles + learned-card-store progress and
- * export/import. All state lives in chrome.storage.local; the content script
- * picks changes up via chrome.storage.onChanged. */
+/* Popup for GPokr Tools: settings toggles, the bet-button editor and the session
+ * graph. All state lives in chrome.storage.local; the content script picks
+ * changes up via chrome.storage.onChanged. */
 (function () {
     "use strict";
 
     const SETTINGS_KEY = "gpe_settings";
     const SESSION_KEY = "gpe_session";
-    const TOGGLE_IDS = ["showOdds", "showStats", "darkMode", "shareHand", "localTest", "hotkeys", "showBetButtons"];
+    const TOGGLE_IDS = ["showOdds", "showStats", "darkMode", "fourColor", "shareHand", "localTest", "hotkeys", "showBetButtons"];
+    // Card backs are a choice rather than a toggle, so they sit outside
+    // TOGGLE_IDS. Must match CARD_BACK_STYLES in content.js; "" = gpokr's own.
+    const CARD_BACK_STYLES = ["rosette", "lattice", "fan", "deco"];
+    const cardBackValue = () =>
+        CARD_BACK_STYLES.indexOf(settings.cardBack) >= 0 ? settings.cardBack : "";
     // Toggles that default on when nothing was ever saved (opt-out, not opt-in).
     const TOGGLE_DEFAULTS = { showBetButtons: true };
     const toggleChecked = (id) =>
@@ -33,9 +38,15 @@
     chrome.storage.local.get([SETTINGS_KEY, SESSION_KEY], (res) => {
         settings = res[SETTINGS_KEY] || {};
         TOGGLE_IDS.forEach((id) => { $(id).checked = toggleChecked(id); });
+        $("cardBack").value = cardBackValue();
         applyPopupTheme();
         renderBetRows();
         renderSession(res[SESSION_KEY]);
+    });
+
+    $("cardBack").addEventListener("change", () => {
+        settings.cardBack = $("cardBack").value;
+        saveSettings();
     });
 
     TOGGLE_IDS.forEach((id) => {
@@ -190,6 +201,7 @@
         if (changes[SETTINGS_KEY]) {
             settings = changes[SETTINGS_KEY].newValue || {};
             TOGGLE_IDS.forEach((id) => { $(id).checked = toggleChecked(id); });
+            $("cardBack").value = cardBackValue();
             applyPopupTheme();
             renderBetRows();
         }

@@ -87,7 +87,7 @@
         { denom: 500,   body: "#a4007c" },
         // The site abbreviates the big two on the chip face rather than printing
         // all the digits, so they carry explicit labels. Kept in ascending order.
-        // The 2500's blue takes the default glyph colour; the 10,000's pale green
+        // The 2500's blue takes the default glyph color; the 10,000's pale green
         // needs a darker one, because #606060 goes muddy on a body that light.
         { denom: 2500,  body: "#5292d0", label: "2.5K" },
         { denom: 10000, body: "#bde9a4", label: "10K", text: "#3c3c3c" },

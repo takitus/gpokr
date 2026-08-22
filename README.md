@@ -88,8 +88,24 @@ When a hand ends, a compact panel is dropped into the game log (replacing the ha
 
 Betting is reconstructed from the log (which omits call amounts and blinds): calls are inferred as the amount-to-match, blinds are seeded to the SB/BB seats (the occupied seats clockwise of the button), and an uncalled bet is returned to its bettor — so the per-player totals sum to the pot. The full hand is accumulated across the log's rolling window, so long/multi-way hands aren't truncated. Local view only — nothing is sent to chat. Toggle it with **hand summary** in the tools tab.
 
-### Card-image learning
-The site renders cards as inline images. The extension learns which image is which card from your own hands, the board, and showdowns — used to render shared hands as real card images (text fallback until learned). The popup shows progress (n / 52) and supports **Copy JSON** / **Import** to share a learned set between machines.
+### Four-color deck *(off by default)*
+Recolors the cards so **diamonds are blue** and **clubs are green**, leaving hearts red and spades black — for players who can't reliably separate the two red suits from the two black ones. Applies everywhere cards are drawn: the board, hole cards, showdowns, shared hands and the end-of-hand summary. Toggle it in the popup or with **four-color deck** in the tools tab.
+
+No new images are involved: the site's own art is recolored in place by two SVG filters, which works because the pips and rank are a single pure ink (`#ff0000` or `#000000`) on neutral paper. Diamonds move that red ink into the blue channel, which leaves every neutral pixel — paper, frame, black text — mathematically untouched. Clubs can't use `hue-rotate` at all (black has no hue to rotate), so the green is flooded through a mask keyed on darkness and thresholded, so the ink turns green and the pale card frame doesn't. Face-card illustrations contain the same ink and so pick up the tint too.
+
+The work is in aiming the filters, not in the recoloring. Hearts are exactly as red as diamonds and spades exactly as black as clubs, so one blanket rule would give blue hearts and green spades and help nobody — every card has to be identified individually, and the site offers nothing to identify it with. GWT inlines all 52 faces into its bundle as data: URIs (no filename in the `src`), the bundle is minified (no identifier survives), and the `<img>`s are recycled between hands with their `src` swapped (so position is no anchor either). What *is* stable is the artwork, so each card is identified by hashing its `src` against a table of the 52 — exact, with nothing that could guess a suit wrong. If gpokr ever reships its deck the hashes stop matching and the feature turns itself off rather than mislabelling; `tools/deck_hashes.py` regenerates the table.
+
+### Card backs
+Replaces the face-down cards at every seat with one of four bundled designs — **rosette** (red), **lattice** (blue), **fan** (green) or **deco** (gold) — or leaves gpokr's own in place (**classic**). Pick one in the popup or from **card back** in the tools tab. Local to you: other players see whatever back they picked, and nothing about the game changes.
+
+Each is an original drawing in the idiom of a classic casino back — a light border, an all-over ornamental ground, and a center medallion holding an ornate **G**. They take inspiration from that tradition rather than reproducing any house's artwork: Bicycle's Rider Back, Bee's diamond back, a Bellagio deck and the rest are live trademarks and trade dress, so they can't ship here. What carries the look is the structure, which is generic and centuries old.
+
+gpokr draws a player's two face-down cards as a *single* 23×26 image — the pair, the rear card peeking up-and-left, and the soft grey halo they sit on — so a replacement is that whole little still life, not one card. `tools/make_cardbacks.py` draws ours on the same geometry so the swap lines up, and draws it **at 4× from vectors**: GWT pins the `<img>` display size with width/height attributes, so intrinsic size can't affect layout, and on a HiDPI display there are twice the device pixels to fill. The macro composition (border, ground, medallion) is what survives being squashed to 23×26 on a 1× display; the filigree is a bonus where there's resolution for it. `--preview` renders both sizes side by side so that stays honest.
+
+Unlike the four-color deck this can't be done with a filter — no recoloring of one back yields a different *design* — so it's the one place the extension changes the site's DOM: the `<img>` is pointed at a bundled PNG, with width/height pinned first so the 4× asset is never laid out raw. GWT owns that element and re-sets its `src` whenever it re-renders a seat, so the swap is re-applied on mutation rather than once — which settles rather than oscillating, since our own write is recognized and left alone. Observer callbacks run before paint, so the site's back is never seen flashing through.
+
+### Card images
+Cards for shared hands and the summary panel are drawn from the site's own canonical images (`img.iogc.org/GPokr/cards/<card>.png`, all 52 verified), with a styled text card as the fallback if one won't load. This replaced an earlier learned store that correlated the game log against the images in your seat — which meant a card you'd never been dealt couldn't be drawn at all, and could be poisoned by learning from other players' showdowns. A canonical URL makes both failure modes impossible.
 
 ## Settings & storage
 
@@ -101,7 +117,6 @@ All state lives in `chrome.storage.local` and syncs live between the popup and o
 | `gpe_player_stats` | per-player VPIP/PFR/aggression/showdown counters |
 | `gpe_player_notes` | per-player note text |
 | `gpe_session` | stack history for the session graph |
-| `gpe_card_images_v2` | learned card images |
 
 Nothing is sent anywhere — no servers, no analytics, no permissions beyond `storage`.
 
@@ -112,8 +127,12 @@ Nothing is sent anywhere — no servers, no analytics, no permissions beyond `st
 | `content.js` | all table logic: log parsing, overlays, HUD, badges, bet columns |
 | `odds.js` | pure poker math (no DOM): evaluator, Monte Carlo equity, draws, labels — exposed as `window.GPE_ODDS`, also a CommonJS module |
 | `odds.test.js` | offline unit tests — `node odds.test.js` |
+| `deck.test.js` | offline unit tests for four-color card identification — `node deck.test.js` |
+| `cardbacks.test.js` | offline unit tests keeping the card-back style list, assets and picker in agreement — `node cardbacks.test.js` |
 | `popup.html` / `popup.js` | settings UI, bet-button editor, session graph, card store export/import |
 | `overlay.css` | styles for all injected UI |
 | `launch-debug-chrome.sh` | starts a dedicated Chrome with remote debugging on :9222 (separate profile) for live DOM inspection |
+| `tools/deck_hashes.py` | regenerates the four-color deck's `DECK_HASHES` table from the live site — run it if the recoloring stops working |
+| `tools/make_cardbacks.py` | draws `assets/backs/*.png`; `--preview` writes a magnified sheet to `assets-src/` (not shipped) |
 
 After editing, reload the extension at `chrome://extensions` and refresh the gpokr tab. Content-script crashes don't appear in the page console — check **Errors** on the extension's card at `chrome://extensions`.

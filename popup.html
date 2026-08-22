@@ -60,6 +60,16 @@
         padding: 0 3px;
     }
     .hint { font-size: 11px; color: #888; margin: 4px 0 0; }
+    label select {
+        font: 12px/1 inherit;
+        padding: 2px 4px;
+        border: 1px solid #c9c9c9;
+        border-radius: 4px;
+        background: #fff;
+        color: #222;
+        margin: 0 4px;
+    }
+    body.dark label select { background: #262e3b; color: #d2d8e2; border-color: #44516a; }
     /* popup's own dark theme, driven by the same setting */
     body.dark { background: #1f2530; color: #d2d8e2; }
     body.dark hr { border-top-color: #39455a; }
@@ -96,6 +106,17 @@
 <label><input type="checkbox" id="showOdds"> Odds HUD</label>
 <label><input type="checkbox" id="showStats"> Player stats on avatars</label>
 <label><input type="checkbox" id="darkMode"> Dark mode</label>
+<label><input type="checkbox" id="fourColor"> Four-color deck <span class="hint">(blue diamonds, green clubs)</span></label>
+<label>Card back
+    <select id="cardBack">
+        <option value="">classic (site)</option>
+        <option value="rosette">rosette (red)</option>
+        <option value="lattice">lattice (blue)</option>
+        <option value="fan">fan (green)</option>
+        <option value="deco">deco (gold)</option>
+    </select>
+    <span class="hint">(local to you)</span>
+</label>
 <label><input type="checkbox" id="shareHand"> Always share hand at showdown</label>
 <label><input type="checkbox" id="localTest"> Local test mode</label>
 <label><input type="checkbox" id="hotkeys"> Keyboard shortcuts <span class="hint">(F fold · C check/call · 1–9 bet sizes · ↑↓ ±1 blind)</span></label>

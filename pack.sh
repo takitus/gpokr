@@ -73,10 +73,13 @@ VERBATIM="manifest.json popup.html"
 ASSETS="assets"
 # Checked below because the directory copy can't catch a file that was renamed
 # or deleted upstream. Only the ones something else hardcodes belong here:
-# dark.css:62 builds a chrome-extension URL for table.png, and 3d/table3d.js
-# does the same for gpokr-logo.svg. Models are found at runtime, not hardcoded, so
-# they're deliberately absent — a per-model list is what we're getting rid of.
-REQUIRED_ASSETS="assets/table.png assets/gpokr-logo.svg"
+# dark.css:62 builds a chrome-extension URL for table.png, 3d/table3d.js does the
+# same for gpokr-logo.svg, and content.js builds assets/backs/<style>.png from
+# CARD_BACK_STYLES (a missing one leaves the face-down cards blank, so it's worth
+# failing the build over; cardbacks.test.js checks the same set). Models are found
+# at runtime, not hardcoded, so they're deliberately absent — a per-model list is
+# what we're getting rid of.
+REQUIRED_ASSETS="assets/table.png assets/gpokr-logo.svg assets/backs/rosette.png assets/backs/lattice.png assets/backs/fan.png assets/backs/deco.png"
 
 cp $VERBATIM "$STAGE/"
 cp -R icons "$STAGE/icons"
