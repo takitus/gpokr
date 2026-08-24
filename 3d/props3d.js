@@ -40,10 +40,15 @@
     // launchSound  the same, played as the object LEAVES — the throw's two moments
     //         are separately voiced, and either may be omitted.
     const CATALOG = {
+        // No cooldownMs on this one or the life ring: nothing beyond the 2s the
+        // server itself enforces, which syncInteractCatalog fills in when a row
+        // leaves it out. The beer's ten seconds was about not letting the rail
+        // fill up with bottles, and maxLive already does that — the sixth one
+        // retires the first.
         beer: {
             model: "beer.glb", height: 42, tiltDeg: 43, yawDeg: -90,
             motion: "slide", maxLive: 6,
-            glyph: "🍺", label: "beer", cooldownMs: 10000, flinch: false,
+            glyph: "🍺", label: "beer", flinch: false,
         },
         flower: {
             model: "flower.glb", height: 96,
@@ -126,7 +131,7 @@
             // It is the only one that IS a life ring, so it is worth the vintage,
             // but anyone still on Windows 10 gets tofu where the rest get a
             // picture. ⛑ (Emoji 1.0) is the fallback if that ever matters.
-            glyph: "🛟", label: "life ring", cooldownMs: 6000,
+            glyph: "🛟", label: "life ring",
             sound: "check", launchSound: "fold",
         },
     };

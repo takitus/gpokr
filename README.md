@@ -33,7 +33,7 @@ Hover the button on another player's avatar to open a small menu of things to se
 
 Unlike the older local-only chip toss, these **propagate**: everyone at the table running the extension sees the same throw, at the same time, because the animation plays from the event the server broadcasts back rather than from your click. A send the server refuses (you're watching, you're muted, or you're inside the cooldown) shows as nothing happening, which is the truth.
 
-Cosmetic only — interactions never touch game state. Requires a seat; the chip has the server's 2s cooldown and the beer waits 10s. Turn the whole thing off with the "interactions" checkbox in the tools tab.
+Cosmetic only — interactions never touch game state. Requires a seat, and everything is held to the server's own 2s cooldown; a few of the bigger ones wait longer than that. Turn the whole thing off with the "interactions" checkbox in the tools tab.
 
 ### Opponent stats (badges)
 Every completed hand is parsed from the game log and per-player counters persist across sessions. With **Player stats on avatars** enabled, each seat gets a badge:
