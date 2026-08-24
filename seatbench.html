@@ -23,9 +23,19 @@
        ?player=tester   the seat's name
      Then, from the console:
        __fire("dance"), __fire("rail"), __fire("clap")
-       __state()        what the avatar and its stunt count look like right now
+       __state()        what the avatar and its cover count look like right now
        __overlap()      the back-to-back case: two stunts alive at once, then
                         report whether the avatar came back
+
+     For the dealing animation there is also a board, in a container matching the
+     one content.js looks for. Its cards are served from a path containing
+     /GPokr/cards/<card>.png, which is the site's canonical path and the other
+     thing stampCardImg recognises besides the deck's own hashes — the real art
+     is inlined in GWT's bundle and is not ours to have, so a placeholder at that
+     path is what gets a card stamped here.
+
+       __flop(), __turn(), __river()   deal, the way GWT does: swap the src
+       __board()                       per-slot card, cover count, visibility
 -->
 <!-- The extension's own stylesheet, which the manifest injects on the real
      site. Without it the stunt hold (img[data-gpe-stunt]) does nothing here and
@@ -40,14 +50,49 @@
   img.iogc-PlayerPanel-avatar{display:block;width:100px;height:100px;border:1px solid #8e99ad;
       border-radius:6px;object-fit:contain;background-color:#20242c}
   #log{position:fixed;right:12px;top:12px;width:360px;white-space:pre-wrap}
+  /* The board, laid across the middle of the felt at the card's own size. */
+  #board{position:absolute;left:300px;top:300px;display:flex;gap:8px}
+  #board img.bcard{width:53px;height:69px;display:block}
+  #board img.bcard:not([src]){visibility:hidden}
 </style>
+<div class="iogc-GameWindow-container">
 <div id="table" class="iogc-GameWindow-table"></div>
+<!-- Five board slots, blank until dealt, recycled by src swap — as GWT does. -->
+<div id="board">
+  <img class="bcard" alt=""><img class="bcard" alt=""><img class="bcard" alt="">
+  <img class="bcard" alt=""><img class="bcard" alt="">
+</div>
+</div>
 <table class="iogc-PlayerPanel-x"><tbody>
   <tr><td><img class="iogc-PlayerPanel-avatar" alt="avatar"
        src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiPjxyZWN0IHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiM3ZDg3OTgiLz48Y2lyY2xlIGN4PSI0MCIgY3k9IjM4IiByPSIyMiIgZmlsbD0iI2U4ZDNiZCIvPjxwYXRoIGQ9Ik02IDEwMGMwLTIyIDE1LTMyIDM0LTMyczM0IDEwIDM0IDMyeiIgZmlsbD0iIzNmNWQ4YSIvPjxjaXJjbGUgY3g9IjMxIiBjeT0iMzYiIHI9IjMiIGZpbGw9IiMyYjJiMmIiLz48Y2lyY2xlIGN4PSI0OSIgY3k9IjM2IiByPSIzIiBmaWxsPSIjMmIyYjJiIi8+PHBhdGggZD0iTTMxIDQ4cTkgOCAxOCAwIiBzdHJva2U9IiMyYjJiMmIiIHN0cm9rZS13aWR0aD0iMi41IiBmaWxsPSJub25lIi8+PC9zdmc+"></td></tr>
   <tr><td><a id="who" href="/profile/4242">tester</a></td></tr>
 </tbody></table>
 <div id="log">loading…</div>
+<script>
+  // ---- hand-cranked clock (?manual=1) ------------------------------------
+  // coin3d takes its dt from the rAF timestamp, so parking rAF and feeding it a
+  // clock we control makes the ~0.7s deal inspectable frame by frame instead of
+  // being over before a screenshot lands. content.js's own timers keep running;
+  // only the renderer's loop is held. dt there is clamped to 50ms, so the slice
+  // has to stay under that or time goes missing.
+  (function () {
+    if (new URLSearchParams(location.search).get("manual") !== "1") return;
+    var pending = [], clock = 0;
+    window.requestAnimationFrame = function (cb) { pending.push(cb); return pending.length; };
+    window.cancelAnimationFrame = function () {};
+    window.__step = function (ms, sliceMs) {
+      var slice = Math.min(sliceMs || 16, 40);
+      var n = Math.max(1, Math.round(ms / slice));
+      for (var i = 0; i < n; i++) {
+        clock += slice;
+        var due = pending; pending = [];
+        for (var j = 0; j < due.length; j++) { try { due[j](clock); } catch (e) {} }
+      }
+      return clock;
+    };
+  })();
+</script>
 <script>
   // ---- stubs, before content.js sees them --------------------------------
   // Settings are all opt-out or default-off, so an empty object is a valid
@@ -140,6 +185,52 @@
       });
     };
 
-    log("ready. __fire('dance') | __overlap() | __state()");
+    // ---- the board ---------------------------------------------------------
+    const slots = () => [...document.querySelectorAll("#board img.bcard")];
+    const DECK = ["Ah", "Kd", "2c", "Ts", "7h", "Qs", "9d"];
+
+    // Deal by swapping src, which is the only thing GWT does and the only signal
+    // content.js gets. Relative, so it resolves under whatever root is serving.
+    const deal = (n, from) => {
+        const s = slots();
+        for (let i = 0; i < n; i++) {
+            const el = s[from + i];
+            // Absolute, so getAttribute("src") already contains the canonical
+            // path. Relative would only match once the image had loaded and
+            // currentSrc filled in, which delays the stamp by a poll and is not
+            // how the real thing behaves — GWT sets a data: URI, matched at once.
+            if (el) el.src = "/GPokr/cards/" + DECK[from + i] + ".png";
+        }
+    };
+    window.__flop = () => deal(3, 0);
+    window.__turn = () => deal(1, 3);
+    window.__river = () => deal(1, 4);
+    window.__undeal = () => { slots().forEach((el) => el.removeAttribute("src")); };
+
+    window.__board = () => slots().map((el, i) => ({
+        slot: i,
+        card: el.dataset.gpeCard || null,
+        covered: el.getAttribute("data-gpe-covered"),
+        visibility: getComputedStyle(el).visibility,
+    }));
+
+    // Actors and textures the renderer is holding, for leak checks.
+    window.__running = () => !!(window.GPE_COIN && GPE_COIN.isRunning());
+
+    // The renderer on its own, bypassing content.js's detector and — the point —
+    // its watchdog, which under a frozen clock reasonably concludes the animation
+    // has stalled and hands the card back. Use this to park the deal on any frame
+    // and look at it: __dealRaw(0); __step(180).
+    window.__dealRaw = function (i, opts) {
+        const el = slots()[i];
+        el.src = "/GPokr/cards/" + DECK[i] + ".png";
+        el.setAttribute("data-gpe-covered", "1");     // cover it by hand
+        const b = el.getBoundingClientRect();
+        return window.GPE_COIN.dealCard(
+            { left: b.left, top: b.top, width: b.width, height: b.height },
+            el, Object.assign({ backStyle: "" }, opts || {}));
+    };
+
+    log("ready. __fire('dance') | __overlap() | __flop() | __board()");
   })();
 </script>

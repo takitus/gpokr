@@ -80,6 +80,9 @@
     const MAX_SUBSTEPS = 8;
 
     const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+    // Used by the deal; the ballistic paths above are integrated, not eased.
+    const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+    const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
     const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
     const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 
@@ -222,6 +225,219 @@
         const mesh = def.make(T, s, { denom: denom });
         if (mesh) def.basePose(T, mesh.quaternion);
         return mesh;
+    }
+
+    // ---------- dealing a community card ----------
+    // A card slides in from off the top of the screen, face down, spinning, and
+    // flips over as it lands on the spot the real one is about to occupy. Then it
+    // hands off: content.js uncovers the site's own <img> and this comes away.
+    //
+    // The face is the site's OWN card image, used as a texture directly from the
+    // decoded <img> — GWT inlines the deck as data: URIs, so there is nothing to
+    // fetch and nothing to taint the texture. A cross-origin card would fail the
+    // upload, so callers hand us the element and we say no rather than guess.
+    //
+    // MeshBasicMaterial, not a lit one, and that is the whole trick of the
+    // handoff: unlit means the texture renders exactly as the browser draws the
+    // same image in the page, so the moment the animation ends and the DOM card
+    // appears underneath, nothing shifts in brightness. Shading it would look
+    // better in flight and worse at the only frame that has to be invisible.
+    const CARD_TH = 0.6;         // half the card's thickness, CSS px
+    const CARD_RADIUS = 0.07;    // corner radius, as a fraction of the card's width
+
+    // The back. Nothing ships a single-card back — assets/backs/*.png are the
+    // PAIR still-life gpokr draws at a seat, 23x26, which is the wrong shape — so
+    // it is drawn here, the same way the river's ground is drawn rather than
+    // sampled. One design, tinted: a border, a panel inset inside it, and a
+    // lattice of thin diagonals, which is what survives being 53px wide.
+    const CARD_BACK_TINTS = {
+        rosette: "#8d2230", lattice: "#1f4f86", fan: "#1f6b45", deco: "#8a6a1e",
+        "": "#8d2230",           // gpokr's own back is red, so the default matches
+    };
+    let backTexCache = Object.create(null);
+    let cardGeo = null;
+
+    function cardBackTexture(T, style) {
+        const key = style || "";
+        if (backTexCache[key]) return backTexCache[key];
+        const w = 106, h = 138;                  // 2x the card, for a HiDPI display
+        const cv = document.createElement("canvas");
+        cv.width = w; cv.height = h;
+        const g = cv.getContext("2d");
+        if (!g) return null;
+        const tint = CARD_BACK_TINTS[key] || CARD_BACK_TINTS[""];
+        const r = w * CARD_RADIUS * 2;
+        // Rounded, and transparent outside the corners, so the silhouette matches
+        // the face image's own rounded corners instead of squaring them off.
+        const round = (x, y, ww, hh, rr) => {
+            g.beginPath();
+            g.moveTo(x + rr, y);
+            g.arcTo(x + ww, y, x + ww, y + hh, rr);
+            g.arcTo(x + ww, y + hh, x, y + hh, rr);
+            g.arcTo(x, y + hh, x, y, rr);
+            g.arcTo(x, y, x + ww, y, rr);
+            g.closePath();
+        };
+        g.fillStyle = "#f4f1ea";                 // the paper edge, as on a real back
+        round(0, 0, w, h, r);
+        g.fill();
+        g.fillStyle = tint;
+        round(3, 3, w - 6, h - 6, r * 0.8);
+        g.fill();
+        // The lattice. Clipped to the panel so it cannot spill onto the border,
+        // and drawn in both directions so it reads as a weave at any size.
+        g.save();
+        round(7, 7, w - 14, h - 14, r * 0.6);
+        g.clip();
+        g.strokeStyle = "rgba(255,255,255,0.20)";
+        g.lineWidth = 1.5;
+        for (let i = -h; i < w + h; i += 9) {
+            g.beginPath(); g.moveTo(i, 0); g.lineTo(i + h, h); g.stroke();
+            g.beginPath(); g.moveTo(i + h, 0); g.lineTo(i, h); g.stroke();
+        }
+        g.restore();
+        const tex = new T.CanvasTexture(cv);
+        tex.colorSpace = T.SRGBColorSpace;
+        tex.anisotropy = 4;
+        backTexCache[key] = tex;
+        return tex;
+    }
+
+    // Two planes back to back rather than a box: a box cannot have the face's
+    // rounded corners, and the face image carries them in its own alpha. At
+    // exactly edge-on the pair is a zero-width sliver for one frame, which is
+    // what an edge-on card looks like anyway.
+    function cardMesh(T, faceImg, backStyle) {
+        let faceTex = null;
+        try {
+            faceTex = new T.Texture(faceImg);
+            faceTex.colorSpace = T.SRGBColorSpace;   // matches the renderer's output
+            faceTex.needsUpdate = true;
+        } catch (e) { return null; }
+        const backTex = cardBackTexture(T, backStyle);
+        if (!backTex) return null;
+
+        // One unit plane for every card ever dealt; the size comes from the
+        // group's scale. Shared and never disposed, like the chip's cylinder.
+        if (!cardGeo) cardGeo = new T.PlaneGeometry(1, 1);
+        const geo = cardGeo;
+        const face = new T.Mesh(geo, new T.MeshBasicMaterial({
+            map: faceTex, transparent: true, side: T.FrontSide, depthWrite: false,
+        }));
+        const back = new T.Mesh(geo, new T.MeshBasicMaterial({
+            map: backTex, transparent: true, side: T.FrontSide, depthWrite: false,
+        }));
+        // The back looks the other way and sits a hair behind, so neither z-fights
+        // the other and the card has a thickness you can see at a glancing angle.
+        back.rotation.y = Math.PI;
+        face.position.z = CARD_TH;
+        back.position.z = -CARD_TH;
+        const group = new T.Group();
+        group.add(face, back);
+        // The face texture is per-card and has to be freed by hand: three's
+        // Material.dispose() releases the material, never the textures on it.
+        // The back is cached and shared, so it is deliberately left alone.
+        group.userData.gpeFaceTex = faceTex;
+        return group;
+    }
+
+    // The deal itself. Timings are one choreography: it slides in over FLY,
+    // holds for a beat, turns over FLIP, and the caller is told the instant the
+    // face is square to the screen — which is when the real card underneath can
+    // be uncovered, one frame before this comes away.
+    const DEAL = {
+        // The whole thing is 0.55s per card, and that is a budget rather than a
+        // taste: it is how long the site's own card is covered up, and a player
+        // may be looking at the board to decide something. Slower reads better
+        // and is not ours to spend.
+        FLY: 0.28,          // s, off-screen to the slot
+        HOLD: 0.04,         // s, a beat face-down before it turns
+        FLIP: 0.18,         // s, the turn
+        REST: 0.05,         // s, square to the screen before the handoff
+        OVER: 90,           // px above the viewport it starts
+        SPIN: 0.55,         // rad of in-plane spin on the way in, unwinding to 0
+        LEAD: 26,           // px it comes in from the side, so it arcs rather than drops
+        GROW: 1.14,         // scale it arrives at, easing to 1 as it lands
+        Z: 12,              // over the felt and the props, under nothing that matters
+    };
+
+    // rect is where the real card sits (viewport px). faceImg is the site's own
+    // decoded <img>. onFaceUp fires once, at the end of the turn.
+    function dealCard(rect, faceImg, opts) {
+        const s = ensureSession();
+        if (!s || !rect || !rect.width || !faceImg) return null;
+        const T = window.THREE;
+        if (!T) return null;
+        const o = opts || {};
+        const group = cardMesh(T, faceImg, o.backStyle);
+        if (!group) return null;
+
+        const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+        // Scaling the unit planes is what sizes the card, so it lands exactly the
+        // size of the element it is standing in for however the table is scaled.
+        const w = rect.width, h = rect.height;
+        const fromX = cx + (o.lead == null ? DEAL.LEAD : o.lead);
+        const fromY = -DEAL.OVER;                  // off the top of the viewport
+        const delay = Math.max(0, o.delay || 0);
+
+        let t = -delay, facedUp = false, done = false;
+        const put = (x, y, turn, spin, scale) => {
+            group.position.set(x, -y, DEAL.Z);
+            // Turn about screen Y is the flip; the camera is orthographic, so the
+            // card's width is simply scaled by cos(turn) — which is what an
+            // edge-on card does, no perspective needed.
+            group.rotation.set(0, turn, spin);
+            group.scale.set(w * scale, h * scale, 1);
+        };
+        // Face down: the back is the side pointing at us, so start turned over.
+        put(fromX, fromY, Math.PI, DEAL.SPIN, DEAL.GROW);
+        group.visible = false;                     // nothing to see during the delay
+
+        const actor = {
+            object3D: group,
+            step(dt) {
+                t += dt;
+                if (t < 0) return true;
+                group.visible = true;
+                if (t < DEAL.FLY) {
+                    const p = easeOutCubic(t / DEAL.FLY);
+                    put(fromX + (cx - fromX) * p, fromY + (cy - fromY) * p,
+                        Math.PI, DEAL.SPIN * (1 - p), DEAL.GROW + (1 - DEAL.GROW) * p);
+                    return true;
+                }
+                const afterFly = t - DEAL.FLY;
+                if (afterFly < DEAL.HOLD) { put(cx, cy, Math.PI, 0, 1); return true; }
+                const fp = (afterFly - DEAL.HOLD) / DEAL.FLIP;
+                if (fp < 1) {
+                    // Lifts as it turns and settles back, so the card looks like
+                    // it is being turned over rather than swivelling in place.
+                    const lift = Math.sin(fp * Math.PI) * 7;
+                    put(cx, cy - lift, Math.PI * (1 - easeInOutCubic(fp)), 0,
+                        1 + Math.sin(fp * Math.PI) * 0.06);
+                    return true;
+                }
+                put(cx, cy, 0, 0, 1);
+                if (!facedUp) {
+                    facedUp = true;
+                    if (o.onFaceUp) { try { o.onFaceUp(); } catch (e) {} }
+                }
+                // One frame of overlap with the real card rather than a gap: both
+                // are the same image at the same place, so it cannot be seen, and
+                // there is no instant where neither is drawn.
+                if (afterFly - DEAL.HOLD - DEAL.FLIP < DEAL.REST) return true;
+                done = true;
+                return false;
+            },
+            // For the caller's own watchdog: a card can be told to give up.
+            kill() { if (!done) { done = true; actor.step = () => false; } },
+            // removeActor frees the materials; the face texture is ours.
+            dispose() {
+                const tex = group.userData && group.userData.gpeFaceTex;
+                if (tex) { try { tex.dispose(); } catch (e) {} }
+            },
+        };
+        if (!addActor(actor)) return null;
+        return actor;
     }
 
     // A projectile is either a Mesh (one material, or an array of them) or a whole
@@ -751,7 +967,7 @@
     }
 
     window.GPE_COIN = {
-        toss, confetti, disable, registerProjectile, addActor, feltBounds, chipMesh,
+        toss, confetti, disable, registerProjectile, addActor, feltBounds, chipMesh, dealCard,
         isRunning: () => !!(session && (session.coins.length || session.actors.length)),
         _session: () => session,
     };

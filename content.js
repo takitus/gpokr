@@ -29,6 +29,7 @@
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
     let FOUR_COLOR = false;      // blue diamonds / green clubs, for color-blind players (opt-in)
     let CARD_BACK = "";          // which bundled card back to use; "" = the site's own
+    let DEAL_ANIM = true;        // slide + flip each community card in as it's dealt (opt-out)
     let RIVER_LAB = false;       // hold the river on the felt and let it be dragged round (dev tool)
     // The inspector's button is off for release builds: it is authoring gear, not
     // a player feature, and it parks a river on the felt until you turn it off.
@@ -164,6 +165,13 @@
         // Checked against the list rather than trusted: an unknown value would
         // point every back at a 404 and leave the seats blank.
         CARD_BACK = CARD_BACK_STYLES.indexOf(s && s.cardBack) >= 0 ? s.cardBack : "";
+        DEAL_ANIM = !(s && s.dealAnimation === false); // opt-out
+        // The deal needs coin3d's canvas, and a card gives no notice: by the time
+        // one is dealt there is no time to fetch a renderer. As an extension that
+        // is already a content script and this is a no-op; in the site-hosted
+        // build it is fetched on demand, so ask for it now rather than missing the
+        // first flop of the session. Memoized, so repeat calls cost nothing.
+        if (DEAL_ANIM) ensureCoin3d();
         RIVER_LAB = !!(s && s.riverLab); // opt-in dev tool
         syncRiverLab();
         updateRiverLabBtn();
@@ -2677,7 +2685,13 @@
     // deck, and swap it if it is the back. Both are no-ops for an image that has
     // not changed since we last looked at it.
     function processCardImg(img) {
+        const before = img.dataset.gpeCard || "";
         stampCardImg(img);
+        const after = img.dataset.gpeCard || "";
+        // A card this <img> was not showing a moment ago. GWT recycles the board's
+        // images by swapping their src, so this — not an element appearing — is
+        // what "a card was just dealt" looks like in the DOM.
+        if (after && after !== before) onCardShown(img, after);
         styleCardBack(img);
     }
 
@@ -2748,6 +2762,109 @@
         holder.id = "gpe-suit-filters";
         holder.innerHTML = SUIT_FILTER_SVG;
         document.body.appendChild(holder);
+    }
+
+    // ---------- dealing animation ----------
+    // Each community card slides in from off the top of the screen, face down and
+    // spinning, and turns over on the spot the real one is about to occupy. Then
+    // the real one is uncovered and the 3D card comes away (GPE_COIN.dealCard).
+    //
+    // Which <img> is a community card is decided by ELIMINATION, not by a
+    // selector: nothing in this file has ever needed gpokr's board markup, and
+    // guessing at it is what would break the day the site touches it. A card
+    // image in the game window that belongs to no seat and is not one of ours can
+    // only be the board.
+    //
+    // It is driven by the four-color deck's stamping rather than by the game log.
+    // The log is authoritative about what is on the board but arrives on its own
+    // schedule; the stamp happens in the MutationObserver, before the frame that
+    // would paint the new card. Only that is early enough to cover it without a
+    // flicker of the card appearing first.
+    //
+    // Everything here fails OPEN. A card that cannot be animated — no renderer,
+    // an image that has not decoded, a texture the GPU refuses — is simply left
+    // alone and appears the way it always did. It hides live game information for
+    // about a third of a second, so a bug here has to cost the animation, never
+    // the card.
+    // Between the flop's three. With the 0.55s animation this puts the last of
+    // them face-up 0.77s after the deal, which is the real cost of the feature.
+    const DEAL_STAGGER_MS = 110;
+    const DEAL_BATCH_MS = 400;     // cards this close together are one deal
+    const DEAL_DECODE_MS = 200;    // longest we'll wait on an image to decode
+    const DEAL_WATCHDOG_MS = 1500; // ...and the outside limit on the whole thing
+    let dealBatchAt = 0, dealBatchN = 0;
+    // Nothing animates until the first sweep has run: the board can already be
+    // dealt when we arrive mid-hand, and those cards were not dealt to us.
+    let dealArmed = false;
+
+    function isCommunityCard(img) {
+        if (!img.isConnected) return false;
+        if (img.classList.contains("gpe-shared-card")) return false;   // ours
+        if (typeof img.closest !== "function") return false;
+        if (img.closest('table[class*="iogc-PlayerPanel"]')) return false;  // a seat's hole cards
+        return !!img.closest(".iogc-GameWindow-container");
+    }
+
+    function onCardShown(img, card) {
+        if (!DEAL_ANIM || !dealArmed) return;
+        if (!window.GPE_COIN || typeof GPE_COIN.dealCard !== "function") return;
+        if (!isCommunityCard(img)) return;
+        if (img._gpeDealt === card) return;   // same card, re-rendered: not a new deal
+        img._gpeDealt = card;
+        dealCardIn(img);
+    }
+
+    function dealCardIn(img) {
+        const rect = liveRect(img);
+        if (!rect) return;
+        // The flop is three images changing in one tick, so they queue rather than
+        // landing on top of each other. A gap longer than DEAL_BATCH_MS is a new
+        // street and starts the count again.
+        const now = Date.now();
+        if (now - dealBatchAt > DEAL_BATCH_MS) dealBatchN = 0;
+        dealBatchAt = now;
+        const delay = (dealBatchN++) * DEAL_STAGGER_MS / 1000;
+
+        coverHold(img);
+        let released = false;
+        let actor = null;
+        const release = () => {
+            if (released) return;
+            released = true;
+            clearTimeout(timer);
+            coverRelease(img);
+        };
+        // The outside limit. Whatever happens — a texture that never uploads, a
+        // renderer that stops stepping, a tab hidden mid-flight so the animation
+        // frames stop — the card comes back. This is the guard that makes the
+        // feature safe to have on by default.
+        const timer = setTimeout(() => {
+            release();
+            if (actor && actor.kill) actor.kill();
+        }, DEAL_WATCHDOG_MS + delay * 1000);
+
+        const fly = () => {
+            if (released) return;                       // the watchdog got there first
+            actor = GPE_COIN.dealCard(rect, img, {
+                delay: delay,
+                backStyle: CARD_BACK,
+                // Uncover the real card the moment the 3D one is square to the
+                // screen. dealCard holds its own for one more frame, so the two
+                // overlap rather than leaving a gap — same image, same place.
+                onFaceUp: release,
+            });
+            if (!actor) release();                      // no animation: give it straight back
+        };
+
+        // A texture from an image that has not decoded uploads nothing. These are
+        // data: URIs out of GWT's own bundle so they are usually ready at once,
+        // but "usually" would show as a blank card.
+        if (img.complete && img.naturalWidth) { fly(); return; }
+        let waited = false;
+        const once = () => { if (waited) return; waited = true; fly(); };
+        img.addEventListener("load", once, { once: true });
+        img.addEventListener("error", () => { waited = true; release(); }, { once: true });
+        setTimeout(once, DEAL_DECODE_MS);
     }
 
     // ---------- card backs ----------
@@ -4581,6 +4698,13 @@
         ["gpe-dark-mode", "dark mode", "darkMode", () => DARK_MODE],
         ["gpe-hand-summary", "hand summary", "handSummary", () => HAND_SUMMARY,
             "recap panel in the game log at the end of each hand"],
+        ["gpe-deal-anim", "dealing animation", "dealAnimation", () => DEAL_ANIM,
+            "Each community card slides in from the top of the screen face down " +
+            "and turns over on the spot it lands \u2014 the flop dealt one at a " +
+            "time, then the turn and the river. Local and cosmetic, but it does " +
+            "cover the site's own card while it runs \u2014 0.55s per card, so the " +
+            "last of the flop lands 0.77s after the deal. If anything isn't ready " +
+            "the card simply appears the way it always did."],
         ["gpe-four-color", "four-color deck", "fourColor", () => FOUR_COLOR,
             "Recolors the card art so diamonds are blue and clubs are green, " +
             "leaving hearts red and spades black. For anyone who can't reliably " +
@@ -7358,8 +7482,12 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     //   table rect.
     // opts.cls adds a class to the clone — the one use is dropping it below the 3D
     // layer so a stunt can have props drawn IN FRONT of the avatar (see clap).
-    // Hiding a seat's own avatar while its clone is off doing a stunt, COUNTED,
-    // because two stunts can overlap on one seat: runningInteractions frees a
+    // Hiding an element while something of ours stands in for it: a seat's avatar
+    // while its clone is off doing a stunt, and a board card while the dealing
+    // animation flies a 3D one into its place.
+    //
+    // COUNTED, because two holders can overlap on one element. Two stunts on one
+    // seat is the case that proved it: runningInteractions frees a
     // sender's slot when the interaction's promise chain resolves, which is long
     // before the animation that chain started has finished. So dance followed by
     // a rail slide a second later runs both clones at once, both holding the same
@@ -7375,16 +7503,16 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     // hiding is a rule in overlay.css keyed on it. Dropping the attribute returns
     // the element to whatever the page says about it, which is a state we can no
     // longer get wrong, and the count is visible in the inspector.
-    const STUNT_ATTR = "data-gpe-stunt";
-    function stuntHold(el) {
+    const COVER_ATTR = "data-gpe-covered";
+    function coverHold(el) {
         if (!el) return;
-        el.setAttribute(STUNT_ATTR, String((parseInt(el.getAttribute(STUNT_ATTR), 10) || 0) + 1));
+        el.setAttribute(COVER_ATTR, String((parseInt(el.getAttribute(COVER_ATTR), 10) || 0) + 1));
     }
-    function stuntRelease(el) {
+    function coverRelease(el) {
         if (!el) return;
-        const n = (parseInt(el.getAttribute(STUNT_ATTR), 10) || 0) - 1;
-        if (n > 0) el.setAttribute(STUNT_ATTR, String(n));
-        else el.removeAttribute(STUNT_ATTR);
+        const n = (parseInt(el.getAttribute(COVER_ATTR), 10) || 0) - 1;
+        if (n > 0) el.setAttribute(COVER_ATTR, String(n));
+        else el.removeAttribute(COVER_ATTR);
     }
 
     function avatarStunt(avatarEl, fromRect, tableRect, step, opts) {
@@ -7399,7 +7527,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         img.style.height = fromRect.height + "px";
         document.body.appendChild(img);
 
-        stuntHold(avatarEl);
+        coverHold(avatarEl);
         // Guarded because a double release would decrement the hold twice and
         // uncover the seat while another stunt is still using it. cleanup() only
         // has one caller today; the counter is what makes that worth insuring.
@@ -7408,7 +7536,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
             if (released) return;
             released = true;
             img.remove();
-            stuntRelease(avatarEl);
+            coverRelease(avatarEl);
         };
 
         // perspective() leads so rotateX reads as a somersault and rotateY as a
@@ -7782,6 +7910,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     warmSounds();
     watchCardImages(); // track card images as GWT swaps them
     sweepCardImgs();
+    dealArmed = true;  // ...and only now is a changed card a card being DEALT
     // As an extension props3d is already a content script, so its catalog is here
     // immediately; the site build fetches it now (the poll below also re-syncs, but
     // only this kicks off the fetch).

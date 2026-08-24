@@ -105,6 +105,15 @@ gpokr draws a player's two face-down cards as a *single* 23×26 image — the pa
 
 Unlike the four-color deck this can't be done with a filter — no recoloring of one back yields a different *design* — so it's the one place the extension changes the site's DOM: the `<img>` is pointed at a bundled PNG, with width/height pinned first so the 4× asset is never laid out raw. GWT owns that element and re-sets its `src` whenever it re-renders a seat, so the swap is re-applied on mutation rather than once — which settles rather than oscillating, since our own write is recognized and left alone. Observer callbacks run before paint, so the site's back is never seen flashing through.
 
+### Dealing animation
+Each community card slides in from off the top of the screen, face down and spinning, and turns over on the spot it lands — the flop one card at a time, then the turn and the river. Toggle it with **dealing animation** in the tools tab (on unless you turn it off).
+
+The card is a real 3D object on the same layer the chips fly on, textured with the site's *own* card image: gpokr inlines its deck as `data:` URIs, so the decoded `<img>` goes straight into a texture with nothing to fetch and nothing to taint it. Unlit, deliberately — that makes the texture render exactly as the browser draws the same image in the page, so when the animation ends and the real card is uncovered underneath, nothing shifts. The back is drawn at runtime rather than shipped (`assets/backs/*.png` are the *pair* still-life a seat shows, the wrong shape for one card) and takes its colour from whichever card back you picked.
+
+Which `<img>` is a community card is decided by elimination, not by a selector: a card image inside the game window that belongs to no seat and isn't one of ours can only be the board. Nothing here has ever needed gpokr's board markup, and guessing at it is what would break the day the site changes it.
+
+It hides live game information while it runs, so the timings are a budget rather than a taste: 0.46s for the first card, 0.69s for the last of the flop, which is fully face-up 0.75s after the deal. Everything fails **open** — no renderer, an image that hasn't decoded, a texture the GPU refuses, a tab hidden mid-flight — and a watchdog uncovers the card regardless after 1.5s. A bug here costs the animation, never the card.
+
 ### Card images
 Cards for shared hands and the summary panel are drawn from the site's own canonical images (`img.iogc.org/GPokr/cards/<card>.png`, all 52 verified), with a styled text card as the fallback if one won't load. This replaced an earlier learned store that correlated the game log against the images in your seat — which meant a card you'd never been dealt couldn't be drawn at all, and could be poisoned by learning from other players' showdowns. A canonical URL makes both failure modes impossible.
 
