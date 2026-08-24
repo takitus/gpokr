@@ -592,12 +592,17 @@
         // half a second each, every hand.
         let t = o.instant ? (DEAL.FLY + DEAL.HOLD + DEAL.FLIP + DEAL.REST) : -delay;
         let facedUp = false, parked = !!o.instant, gone = false;
+        // Which card is in front, for a hand held as a stack. Every card sits at
+        // the same DEAL.Z otherwise, and two slabs at the same depth sort
+        // arbitrarily — which showed up as the left card of a pair covering the
+        // right one.
+        let zBias = 0;
         let thick = clampThick(o.thickness);
         let lean = leanFor(thick);
         // Mutable, so move() can follow the slot after the card has landed.
         let atX = cx, atY = cy, atW = w, atH = h;
         const put = (x, y, turn, spin, scale) => {
-            group.position.set(x, -y, DEAL.Z);
+            group.position.set(x, -y, DEAL.Z + zBias);
             // Turn about screen Y is the flip; the camera is orthographic, so the
             // card's width is simply scaled by cos(turn) — which is what an
             // edge-on card does, no perspective needed. The lean is outermost of
@@ -755,6 +760,17 @@
                 kick(s);
             },
             thickness() { return thick; },
+            // Higher is nearer the viewer. Only the hand uses it, to say which of
+            // its cards is on top.
+            setDepth(bias) {
+                if (gone) return;
+                const next = (typeof bias === "number" && isFinite(bias)) ? bias : 0;
+                if (next === zBias) return;
+                zBias = next;
+                if (parked) put(atX, atY, 0, 0, 1);
+                s.dirty = true;
+                kick(s);
+            },
             isParked() { return parked && !gone; },
             isGone() { return gone; },
         };
