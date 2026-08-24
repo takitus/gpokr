@@ -128,18 +128,22 @@
         s.scene.add(amb, key);
     }
 
-    // The shadow a card drops. Card-shaped and blurred, rather than the coin's
-    // radial blob: a rectangle's shadow has corners, and at this size the
-    // difference between the two is the difference between a card lying on felt
-    // and a card floating over a smudge.
+    // The shadow a card drops. Card-shaped rather than the coin's radial blob: a
+    // rectangle's shadow has corners.
+    //
+    // And TIGHT. A card resting on felt has a contact shadow — a hard, close,
+    // dark line under its edge — not a soft halo. The first version was blurred
+    // 9px and offset up to 11px, which is the shadow of a card held an inch above
+    // the table, and it read exactly like that: floating. 4px of blur and about a
+    // pixel of offset is a card lying on something.
     function cardShadowTexture(T) {
-        const S = 128, PAD = 18, R = 12;
+        const S = 128, PAD = 8, R = 10;
         const cv = document.createElement("canvas");
         cv.width = cv.height = S;
         const g = cv.getContext("2d");
         if (!g) return null;
-        try { g.filter = "blur(9px)"; } catch (e) { /* drawn hard, still passable */ }
-        g.fillStyle = "rgba(0,0,0,0.55)";
+        try { g.filter = "blur(4px)"; } catch (e) { /* drawn hard, still passable */ }
+        g.fillStyle = "rgba(0,0,0,0.72)";
         const w = S - PAD * 2, h = S - PAD * 2;
         g.beginPath();
         g.moveTo(PAD + R, PAD);
@@ -582,7 +586,12 @@
         const fromY = -DEAL.OVER;                  // off the top of the viewport
         const delay = Math.max(0, o.delay || 0);
 
-        let t = -delay, facedUp = false, parked = false, gone = false;
+        // instant: no flight and no flip, parked where it stands. For a card
+        // whose face is ALREADY visible and must stay that way — a player's own
+        // hand. Dealing those in would hide the two cards they are deciding on,
+        // half a second each, every hand.
+        let t = o.instant ? (DEAL.FLY + DEAL.HOLD + DEAL.FLIP + DEAL.REST) : -delay;
+        let facedUp = false, parked = !!o.instant, gone = false;
         let thick = clampThick(o.thickness);
         let lean = leanFor(thick);
         // Mutable, so move() can follow the slot after the card has landed.
@@ -619,19 +628,28 @@
                 // as the card thickens — a card standing higher off the felt
                 // throws its shadow further. Down and to the right, because the
                 // light is up and to the left (CARD_KEY_DIR).
-                const drop = 0.03 + thick * 0.006;
+                // About a pixel on a 75px card, creeping out as it thickens: a
+                // card standing higher off the felt does throw its shadow
+                // further, just nowhere near as far as the first version did.
+                const drop = 0.012 + thick * 0.0015;
                 sh.position.set(drop * 0.6, -drop, -0.55);
-                // 1.39, because the blur is padding INSIDE the texture: 18px of
-                // 128 at each edge leaves the solid part 72% of it, so the quad
-                // has to be 1/0.72 for that part to cover the card.
-                const spread = 1.39 + thick * 0.004;
+                // 1.143, because the blur is padding INSIDE the texture: 8px of
+                // 128 at each edge leaves the solid part 87.5% of it, so the quad
+                // has to be 1/0.875 for that part to cover the card.
+                const spread = 1.143 + thick * 0.002;
                 sh.scale.set(spread, spread, 1);
-                sh.material.opacity = Math.min(0.95, 0.4 + thick * 0.025);
+                sh.material.opacity = Math.min(0.9, 0.5 + thick * 0.012);
             }
         };
-        // Face down: the back is the side pointing at us, so start turned over.
-        put(fromX, fromY, Math.PI, DEAL.SPIN, DEAL.GROW);
-        group.visible = false;                     // nothing to see during the delay
+        if (o.instant) {
+            // Placed now rather than on the first step, so there is no frame with
+            // the site's card covered and nothing of ours drawn yet.
+            put(atX, atY, 0, 0, 1);
+        } else {
+            // Face down: the back is the side pointing at us, so start turned over.
+            put(fromX, fromY, Math.PI, DEAL.SPIN, DEAL.GROW);
+            group.visible = false;                 // nothing to see during the delay
+        }
 
         const actor = {
             object3D: group,

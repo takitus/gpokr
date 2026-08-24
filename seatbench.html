@@ -239,6 +239,32 @@
     window.__logFlop = () => window.__log("Dealing flop: [" + DECK.slice(0, 3).join(", ") + "]");
     window.__logTurn = () => window.__log("Dealing turn: [" + DECK[3] + "]");
     window.__logRiver = () => window.__log("Dealing river: [" + DECK[4] + "]");
+    // Your own two cards: the log line content.js reads them from, plus two
+    // slots in the game window that belong to no seat, which is where gpokr puts
+    // them (and why the DOM-only detector once mistook them for the board).
+    window.__logHand = (a, b) => window.__log("Your pocket cards: [" + a + ", " + b + "]");
+    window.__hand = (a, b) => {
+        let wrap = document.getElementById("hand");
+        if (!wrap) {
+            wrap = document.createElement("div");
+            wrap.id = "hand";
+            wrap.style.cssText = "position:absolute;left:620px;top:430px;display:flex;gap:10px";
+            document.querySelector(".iogc-GameWindow-container").appendChild(wrap);
+            for (let i = 0; i < 2; i++) {
+                const im = document.createElement("img");
+                im.className = "hcard";
+                im.style.cssText = "width:75px;height:103px;display:block";
+                wrap.appendChild(im);
+            }
+        }
+        const els = wrap.querySelectorAll("img.hcard");
+        els[0].src = "/GPokr/cards/" + a + ".png";
+        els[1].src = "/GPokr/cards/" + b + ".png";
+        return [a, b];
+    };
+    window.__handState = () => [...document.querySelectorAll("#hand img.hcard")].map((e) => ({
+        card: e.dataset.gpeCard || null, covered: e.getAttribute("data-gpe-covered"),
+        visibility: getComputedStyle(e).visibility }));
 
     // A card in the game window, in no seat panel, that the log never mentions —
     // the local player's own hole cards, which is what the DOM-only detector got

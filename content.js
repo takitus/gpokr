@@ -2931,10 +2931,14 @@
             // business standing in front of the site's own image, whatever put it
             // there. This is what keeps a covered card from being stranded for a
             // whole hand if anything above is ever wrong again.
-            // The cached board is right for this: it runs every poll for every
-            // parked card, and a card that has just left the board can wait a
-            // quarter second to be handed back.
-            if (logBoardCards().indexOf(img.dataset.gpeCard) < 0) { unparkCard(img); continue; }
+            // The cached answers are right for this: it runs every poll for every
+            // parked card, and a card that has just left play can wait a quarter
+            // second to be handed back.
+            const held = img.dataset.gpeCard;
+            if (logBoardCards().indexOf(held) < 0 && logPocketCards().indexOf(held) < 0) {
+                unparkCard(img);
+                continue;
+            }
             if (rec.handle && rec.handle.isGone && rec.handle.isGone()) { unparkCard(img); continue; }
             const r = liveRect(img);
             if (!r) { unparkCard(img); continue; }
@@ -2959,6 +2963,29 @@
         try { cards = boardFromScope(currentHandScope()); } catch (e) { cards = []; }
         dealBoardCache = { at: now, cards: cards };
         return cards;
+    }
+
+    // Your own two cards, from the log's "pocket cards" line — the same kind of
+    // authority the board comes from, so a hand card is identified rather than
+    // guessed at. Cached and re-read on a miss for exactly the reason the board
+    // is: at the moment a card appears, a cached answer can predate it.
+    let dealHandCache = { at: 0, cards: [] };
+    function logPocketCards(fresh) {
+        const now = Date.now();
+        if (!fresh && now - dealHandCache.at < 250) return dealHandCache.cards;
+        let cards = [];
+        try {
+            const mine = readMyHand();
+            if (mine) cards = mine.map(normCard);
+        } catch (e) { cards = []; }
+        dealHandCache = { at: now, cards: cards };
+        return cards;
+    }
+
+    function handHasCard(card) {
+        if (!card) return false;
+        if (logPocketCards().indexOf(card) >= 0) return true;
+        return logPocketCards(true).indexOf(card) >= 0;
     }
 
     // Is this card on the board right now?
@@ -2995,13 +3022,19 @@
     // The DOM tests that remain are only to keep our OWN card images out of it:
     // the hand-summary panel draws the real board, so those images match the log
     // exactly and would otherwise be dealt in too.
-    function isCommunityCard(img, card) {
-        if (!img.isConnected) return false;
-        if (img.classList.contains("gpe-shared-card")) return false;       // ours
-        if (typeof img.closest !== "function") return false;
-        if (img.closest(".gpe-log-cards, .gpe-hand-wrap, #gpe-local-hand")) return false;   // ours
-        if (!boardHasCard(card)) return false;                              // not on the board
-        return !!img.closest(".iogc-GameWindow-container");
+    // "board", "hand", or null: what this image is, if it is a card in play at
+    // all. The DOM tests only rule OUT our own card images; which cards are real
+    // is the log's business, and a card is unique so the two sets cannot overlap.
+    function cardRole(img, card) {
+        if (!img.isConnected) return null;
+        if (img.classList.contains("gpe-shared-card")) return null;         // ours
+        if (typeof img.closest !== "function") return null;
+        if (img.closest(".gpe-log-cards, .gpe-hand-wrap, #gpe-local-hand")) return null;   // ours
+        if (!img.closest(".iogc-GameWindow-container")) return null;
+        if (img.closest('table[class*="iogc-PlayerPanel"]')) return null;   // somebody's seat
+        if (boardHasCard(card)) return "board";
+        if (handHasCard(card)) return "hand";
+        return null;
     }
 
     // Any change of what an <img> is showing, in one place, because the teardown
@@ -3015,20 +3048,27 @@
     function onCardShown(img, card) {
         if (!DEAL_ANIM || !dealArmed) return;
         if (!window.GPE_COIN || typeof GPE_COIN.dealCard !== "function") return;
-        if (!isCommunityCard(img, card)) return;
-        dealCardIn(img);
+        const role = cardRole(img, card);
+        if (!role) return;
+        // A hand card is placed, not dealt: its face is already on screen and
+        // covering it to fly it back in would hide the two cards the player is
+        // deciding on, every hand. The board is a reveal; a hand is not.
+        dealCardIn(img, role === "hand");
     }
 
-    function dealCardIn(img) {
+    function dealCardIn(img, instant) {
         const rect = liveRect(img);
         if (!rect) return;
         // The flop is three images changing in one tick, so they queue rather than
         // landing on top of each other. A gap longer than DEAL_BATCH_MS is a new
         // street and starts the count again.
-        const now = Date.now();
-        if (now - dealBatchAt > DEAL_BATCH_MS) dealBatchN = 0;
-        dealBatchAt = now;
-        const delay = (dealBatchN++) * DEAL_STAGGER_MS / 1000;
+        let delay = 0;
+        if (!instant) {
+            const now = Date.now();
+            if (now - dealBatchAt > DEAL_BATCH_MS) dealBatchN = 0;
+            dealBatchAt = now;
+            delay = (dealBatchN++) * DEAL_STAGGER_MS / 1000;
+        }
 
         coverHold(img);
         const rec = {
@@ -3047,7 +3087,8 @@
         const fly = () => {
             if (dealtCards.get(img) !== rec) return;   // superseded, or already undone
             rec.handle = GPE_COIN.dealCard(rect, img, {
-                delay: delay,
+                delay: instant ? 0 : delay,
+                instant: !!instant,
                 backStyle: CARD_BACK,
                 thickness: CARD_THICK,
                 onFaceUp: () => {
