@@ -172,6 +172,7 @@
         // build it is fetched on demand, so ask for it now rather than missing the
         // first flop of the session. Memoized, so repeat calls cost nothing.
         if (DEAL_ANIM) ensureCoin3d();
+        else unparkAllCards();   // turning it off returns the board at once
         RIVER_LAB = !!(s && s.riverLab); // opt-in dev tool
         syncRiverLab();
         updateRiverLabBtn();
@@ -2688,10 +2689,10 @@
         const before = img.dataset.gpeCard || "";
         stampCardImg(img);
         const after = img.dataset.gpeCard || "";
-        // A card this <img> was not showing a moment ago. GWT recycles the board's
-        // images by swapping their src, so this — not an element appearing — is
-        // what "a card was just dealt" looks like in the DOM.
-        if (after && after !== before) onCardShown(img, after);
+        // GWT recycles the board's images by swapping their src, so a change here
+        // — not an element appearing or leaving — is what both a card being dealt
+        // and a board being cleared look like in the DOM.
+        if (after !== before) onCardChanged(img, before, after);
         styleCardBack(img);
     }
 
@@ -2766,8 +2767,24 @@
 
     // ---------- dealing animation ----------
     // Each community card slides in from off the top of the screen, face down and
-    // spinning, and turns over on the spot the real one is about to occupy. Then
-    // the real one is uncovered and the 3D card comes away (GPE_COIN.dealCard).
+    // spinning, and turns over on the spot the real one is about to occupy — and
+    // then it STAYS. The 3D card is the card on the board from that point, and
+    // the site's own image stays covered behind it for as long as it is there.
+    //
+    // Which means the card's life is ours to manage rather than a half-second
+    // animation that cleans up after itself. Three things follow, and they are
+    // most of the code below:
+    //
+    //   - it has to follow its slot. gpokr's table scales with the window, so a
+    //     card left where it landed would drift off the slot it is standing in
+    //     for, with the real one still hidden underneath.
+    //   - it has to come away the moment the board changes. A slot's <img> is
+    //     recycled, so "this card is gone" is its src changing to another card or
+    //     to nothing at all.
+    //   - a covered slot with no card over it must never survive. Every failure
+    //     path uncovers: no renderer, no canvas, an image that never decoded, an
+    //     animation that never reported landing (a 1.5s watchdog), the setting
+    //     being turned off.
     //
     // Which <img> is a community card is decided by ELIMINATION, not by a
     // selector: nothing in this file has ever needed gpokr's board markup, and
@@ -2783,9 +2800,8 @@
     //
     // Everything here fails OPEN. A card that cannot be animated — no renderer,
     // an image that has not decoded, a texture the GPU refuses — is simply left
-    // alone and appears the way it always did. It hides live game information for
-    // about a third of a second, so a bug here has to cost the animation, never
-    // the card.
+    // alone and appears the way it always did. What is on screen is live game
+    // information, so a bug here has to cost the animation, never the card.
     // Between the flop's three. With the 0.55s animation this puts the last of
     // them face-up 0.77s after the deal, which is the real cost of the feature.
     const DEAL_STAGGER_MS = 110;
@@ -2793,9 +2809,54 @@
     const DEAL_DECODE_MS = 200;    // longest we'll wait on an image to decode
     const DEAL_WATCHDOG_MS = 1500; // ...and the outside limit on the whole thing
     let dealBatchAt = 0, dealBatchN = 0;
+    // Board <img> -> { handle, timer, at }. handle is coin3d's; `at` is the rect
+    // the card was last placed on, so a moved slot can be spotted by comparison.
+    const dealtCards = new Map();
     // Nothing animates until the first sweep has run: the board can already be
     // dealt when we arrive mid-hand, and those cards were not dealt to us.
     let dealArmed = false;
+
+    // Take our card away and give the site's own image back. The only way a
+    // covered slot is ever uncovered, so every failure path routes through here.
+    function unparkCard(img) {
+        const rec = dealtCards.get(img);
+        if (!rec) return;
+        dealtCards.delete(img);
+        if (rec.timer) clearTimeout(rec.timer);
+        if (rec.handle) { try { rec.handle.remove(); } catch (e) {} }
+        coverRelease(img);
+    }
+
+    function unparkAllCards() {
+        for (const img of Array.from(dealtCards.keys())) unparkCard(img);
+    }
+
+    // Parked cards ARE the board, so they have to be kept honest: followed when
+    // the layout moves under them, and dropped when the slot they stand for goes
+    // away without its src changing (a re-render, the table being rebuilt).
+    // Called from the fast poll.
+    function syncDealtCards() {
+        if (!dealtCards.size) return;
+        // The one state that must not persist: no canvas to draw on, with the
+        // site's own cards still hidden behind cards nobody can see.
+        if (!window.GPE_COIN || typeof GPE_COIN.hasCanvas !== "function" || !GPE_COIN.hasCanvas()) {
+            unparkAllCards();
+            return;
+        }
+        for (const img of Array.from(dealtCards.keys())) {
+            const rec = dealtCards.get(img);
+            if (!img.isConnected || !img.dataset.gpeCard) { unparkCard(img); continue; }
+            if (rec.handle && rec.handle.isGone && rec.handle.isGone()) { unparkCard(img); continue; }
+            const r = liveRect(img);
+            if (!r) { unparkCard(img); continue; }
+            const at = rec.at;
+            const moved = !at || Math.abs(at.left - r.left) > 0.5 || Math.abs(at.top - r.top) > 0.5 ||
+                Math.abs(at.width - r.width) > 0.5 || Math.abs(at.height - r.height) > 0.5;
+            if (!moved) continue;
+            rec.at = { left: r.left, top: r.top, width: r.width, height: r.height };
+            if (rec.handle) rec.handle.move(r);
+        }
+    }
 
     function isCommunityCard(img) {
         if (!img.isConnected) return false;
@@ -2805,12 +2866,18 @@
         return !!img.closest(".iogc-GameWindow-container");
     }
 
+    // Any change of what an <img> is showing, in one place, because the teardown
+    // has to happen whether or not the new state is animatable — a slot going
+    // blank at the end of a hand is exactly as important as one being dealt.
+    function onCardChanged(img, before, after) {
+        if (before) unparkCard(img);   // not our card any more, whatever it is now
+        if (after) onCardShown(img, after);
+    }
+
     function onCardShown(img, card) {
         if (!DEAL_ANIM || !dealArmed) return;
         if (!window.GPE_COIN || typeof GPE_COIN.dealCard !== "function") return;
         if (!isCommunityCard(img)) return;
-        if (img._gpeDealt === card) return;   // same card, re-rendered: not a new deal
-        img._gpeDealt = card;
         dealCardIn(img);
     }
 
@@ -2826,34 +2893,29 @@
         const delay = (dealBatchN++) * DEAL_STAGGER_MS / 1000;
 
         coverHold(img);
-        let released = false;
-        let actor = null;
-        const release = () => {
-            if (released) return;
-            released = true;
-            clearTimeout(timer);
-            coverRelease(img);
+        const rec = {
+            handle: null,
+            at: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+            // The animation's own deadline, cleared once it reports landing. It
+            // does NOT expire the parked card — that stays until the board says
+            // otherwise — it only catches an animation that never arrives, which
+            // would otherwise leave the slot covered by nothing. A tab hidden
+            // mid-flight is the ordinary way that happens: the frames stop.
+            timer: 0,
         };
-        // The outside limit. Whatever happens — a texture that never uploads, a
-        // renderer that stops stepping, a tab hidden mid-flight so the animation
-        // frames stop — the card comes back. This is the guard that makes the
-        // feature safe to have on by default.
-        const timer = setTimeout(() => {
-            release();
-            if (actor && actor.kill) actor.kill();
-        }, DEAL_WATCHDOG_MS + delay * 1000);
+        dealtCards.set(img, rec);
+        rec.timer = setTimeout(() => unparkCard(img), DEAL_WATCHDOG_MS + delay * 1000);
 
         const fly = () => {
-            if (released) return;                       // the watchdog got there first
-            actor = GPE_COIN.dealCard(rect, img, {
+            if (dealtCards.get(img) !== rec) return;   // superseded, or already undone
+            rec.handle = GPE_COIN.dealCard(rect, img, {
                 delay: delay,
                 backStyle: CARD_BACK,
-                // Uncover the real card the moment the 3D one is square to the
-                // screen. dealCard holds its own for one more frame, so the two
-                // overlap rather than leaving a gap — same image, same place.
-                onFaceUp: release,
+                onFaceUp: () => {
+                    if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; }
+                },
             });
-            if (!actor) release();                      // no animation: give it straight back
+            if (!rec.handle) unparkCard(img);          // nothing to show: give the real one back
         };
 
         // A texture from an image that has not decoded uploads nothing. These are
@@ -2863,7 +2925,7 @@
         let waited = false;
         const once = () => { if (waited) return; waited = true; fly(); };
         img.addEventListener("load", once, { once: true });
-        img.addEventListener("error", () => { waited = true; release(); }, { once: true });
+        img.addEventListener("error", () => { waited = true; unparkCard(img); }, { once: true });
         setTimeout(once, DEAL_DECODE_MS);
     }
 
@@ -4701,10 +4763,11 @@
         ["gpe-deal-anim", "dealing animation", "dealAnimation", () => DEAL_ANIM,
             "Each community card slides in from the top of the screen face down " +
             "and turns over on the spot it lands \u2014 the flop dealt one at a " +
-            "time, then the turn and the river. Local and cosmetic, but it does " +
-            "cover the site's own card while it runs \u2014 0.55s per card, so the " +
-            "last of the flop lands 0.77s after the deal. If anything isn't ready " +
-            "the card simply appears the way it always did."],
+            "time, then the turn and the river. The 3D card stays as the board's " +
+            "card, drawn from the site's own artwork, so nothing about the board " +
+            "looks different once it lands. A card is face-down while it flies, " +
+            "so it reads about half a second later than usual \u2014 and if " +
+            "anything isn't ready, it simply appears the way it always did."],
         ["gpe-four-color", "four-color deck", "fourColor", () => FOUR_COLOR,
             "Recolors the card art so diamonds are blue and clubs are green, " +
             "leaving hearts red and spades black. For anyone who can't reliably " +
@@ -7911,6 +7974,14 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     watchCardImages(); // track card images as GWT swaps them
     sweepCardImgs();
     dealArmed = true;  // ...and only now is a changed card a card being DEALT
+    // A resize both moves the slots and clears the canvas the parked cards are
+    // held on, and the loop may be idle with nothing due to redraw them. Do it
+    // now rather than waiting up to a poll for the board to reappear.
+    window.addEventListener("resize", () => {
+        if (!dealtCards.size) return;
+        syncDealtCards();
+        if (window.GPE_COIN && GPE_COIN.redraw) GPE_COIN.redraw();
+    });
     // As an extension props3d is already a content script, so its catalog is here
     // immediately; the site build fetches it now (the poll below also re-syncs, but
     // only this kicks off the fetch).
@@ -7931,6 +8002,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         placePersonalButton(); // rides Splash's right edge; also tracks seat/send-ability
         syncTable3d(); // keep the 3D felt attached across GWT re-renders
         sweepCardImgs(); // backstop for any card the observer missed
+        syncDealtCards(); // dealt cards follow their slots, and go when they do
         // The inspector may have been switched on before the table existed, or
         // GWT may have replaced the element under us; re-arm if so.
         if (RIVER_LAB && !riverLabWired) syncRiverLab();

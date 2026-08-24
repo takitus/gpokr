@@ -229,19 +229,21 @@
 
     // ---------- dealing a community card ----------
     // A card slides in from off the top of the screen, face down, spinning, and
-    // flips over as it lands on the spot the real one is about to occupy. Then it
-    // hands off: content.js uncovers the site's own <img> and this comes away.
+    // flips over as it lands on the spot the real one occupies — and then it
+    // stays there, as the board's card, with the site's own <img> covered behind
+    // it for as long as it lives. Nothing here expires; the caller owns it (see
+    // the handle dealCard returns).
     //
     // The face is the site's OWN card image, used as a texture directly from the
     // decoded <img> — GWT inlines the deck as data: URIs, so there is nothing to
     // fetch and nothing to taint the texture. A cross-origin card would fail the
     // upload, so callers hand us the element and we say no rather than guess.
     //
-    // MeshBasicMaterial, not a lit one, and that is the whole trick of the
-    // handoff: unlit means the texture renders exactly as the browser draws the
-    // same image in the page, so the moment the animation ends and the DOM card
-    // appears underneath, nothing shifts in brightness. Shading it would look
-    // better in flight and worse at the only frame that has to be invisible.
+    // MeshBasicMaterial, not a lit one. Unlit means the texture renders exactly
+    // as the browser draws the same image in the page, which is what lets this
+    // stand in for a real card indefinitely without the board looking different —
+    // and what makes the fallback invisible if a card is ever handed back.
+    // Shading would look better in flight and wrong for as long as it sits still.
     const CARD_TH = 0.6;         // half the card's thickness, CSS px
     const CARD_RADIUS = 0.07;    // corner radius, as a fraction of the card's width
 
@@ -363,6 +365,16 @@
 
     // rect is where the real card sits (viewport px). faceImg is the site's own
     // decoded <img>. onFaceUp fires once, at the end of the turn.
+    //
+    // The card STAYS when the animation finishes — it is the card on the board
+    // from then on, and the site's own image stays covered behind it. So the mesh
+    // is added to the scene directly and the animation drives it from the
+    // outside: the actor's own object3D is an empty stand-in, which is what lets
+    // the actor end (and the loop idle) while the card remains.
+    //
+    // Returns a handle. The caller owns the card's life from that point: move()
+    // it when the slot moves, remove() it when the board changes. Nothing here
+    // expires on its own.
     function dealCard(rect, faceImg, opts) {
         const s = ensureSession();
         if (!s || !rect || !rect.width || !faceImg) return null;
@@ -371,6 +383,7 @@
         const o = opts || {};
         const group = cardMesh(T, faceImg, o.backStyle);
         if (!group) return null;
+        s.scene.add(group);
 
         const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
         // Scaling the unit planes is what sizes the card, so it lands exactly the
@@ -380,14 +393,16 @@
         const fromY = -DEAL.OVER;                  // off the top of the viewport
         const delay = Math.max(0, o.delay || 0);
 
-        let t = -delay, facedUp = false, done = false;
+        let t = -delay, facedUp = false, parked = false, gone = false;
+        // Mutable, so move() can follow the slot after the card has landed.
+        let atX = cx, atY = cy, atW = w, atH = h;
         const put = (x, y, turn, spin, scale) => {
             group.position.set(x, -y, DEAL.Z);
             // Turn about screen Y is the flip; the camera is orthographic, so the
             // card's width is simply scaled by cos(turn) — which is what an
             // edge-on card does, no perspective needed.
             group.rotation.set(0, turn, spin);
-            group.scale.set(w * scale, h * scale, 1);
+            group.scale.set(atW * scale, atH * scale, 1);
         };
         // Face down: the back is the side pointing at us, so start turned over.
         put(fromX, fromY, Math.PI, DEAL.SPIN, DEAL.GROW);
@@ -401,43 +416,69 @@
                 group.visible = true;
                 if (t < DEAL.FLY) {
                     const p = easeOutCubic(t / DEAL.FLY);
-                    put(fromX + (cx - fromX) * p, fromY + (cy - fromY) * p,
+                    put(fromX + (atX - fromX) * p, fromY + (atY - fromY) * p,
                         Math.PI, DEAL.SPIN * (1 - p), DEAL.GROW + (1 - DEAL.GROW) * p);
                     return true;
                 }
                 const afterFly = t - DEAL.FLY;
-                if (afterFly < DEAL.HOLD) { put(cx, cy, Math.PI, 0, 1); return true; }
+                if (afterFly < DEAL.HOLD) { put(atX, atY, Math.PI, 0, 1); return true; }
                 const fp = (afterFly - DEAL.HOLD) / DEAL.FLIP;
                 if (fp < 1) {
                     // Lifts as it turns and settles back, so the card looks like
                     // it is being turned over rather than swivelling in place.
                     const lift = Math.sin(fp * Math.PI) * 7;
-                    put(cx, cy - lift, Math.PI * (1 - easeInOutCubic(fp)), 0,
+                    put(atX, atY - lift, Math.PI * (1 - easeInOutCubic(fp)), 0,
                         1 + Math.sin(fp * Math.PI) * 0.06);
                     return true;
                 }
-                put(cx, cy, 0, 0, 1);
+                put(atX, atY, 0, 0, 1);
                 if (!facedUp) {
                     facedUp = true;
                     if (o.onFaceUp) { try { o.onFaceUp(); } catch (e) {} }
                 }
-                // One frame of overlap with the real card rather than a gap: both
-                // are the same image at the same place, so it cannot be seen, and
-                // there is no instant where neither is drawn.
                 if (afterFly - DEAL.HOLD - DEAL.FLIP < DEAL.REST) return true;
-                done = true;
+                // Done animating; the card stays exactly here. The actor ends so
+                // the loop can idle, and the mesh is not the actor's to take with
+                // it — see the stand-in object3D below.
+                parked = true;
                 return false;
             },
-            // For the caller's own watchdog: a card can be told to give up.
-            kill() { if (!done) { done = true; actor.step = () => false; } },
-            // removeActor frees the materials; the face texture is ours.
-            dispose() {
+            // Deliberately an empty group: addActor puts this in the scene and
+            // removeActor takes it out again, which must not touch the card.
+            object3D: new T.Group(),
+        };
+        if (!addActor(actor)) { s.scene.remove(group); return null; }
+
+        return {
+            // Follow the slot. Called when the layout has shifted under a card
+            // that has already landed; while the loop is idle nothing would
+            // redraw on its own, hence the dirty flag.
+            move(r) {
+                if (gone || !r || !r.width) return;
+                atX = r.left + r.width / 2;
+                atY = r.top + r.height / 2;
+                atW = r.width; atH = r.height;
+                if (parked) put(atX, atY, 0, 0, 1);
+                s.dirty = true;
+                kick(s);
+            },
+            remove() {
+                if (gone) return;
+                gone = true;
+                actor.step = () => false;           // stop it if still animating
+                s.scene.remove(group);
+                // Ours to free: the per-card materials and the face texture.
+                // (three's Material.dispose() never frees the textures on it, and
+                // the back is shared across every card so it is left alone.)
+                eachMaterial(group, (m) => m.dispose());
                 const tex = group.userData && group.userData.gpeFaceTex;
                 if (tex) { try { tex.dispose(); } catch (e) {} }
+                s.dirty = true;
+                kick(s);
             },
+            isParked() { return parked && !gone; },
+            isGone() { return gone; },
         };
-        if (!addActor(actor)) return null;
-        return actor;
     }
 
     // A projectile is either a Mesh (one material, or an array of them) or a whole
@@ -746,6 +787,18 @@
 
         if (!s.coins.length && !s.actors.length) {
             // Nothing in the air: idle the loop rather than burning frames.
+            //
+            // Cards PARKED on the board are still in the scene and still on
+            // screen while it idles: the context keeps its last frame, because
+            // the renderer is built with preserveDrawingBuffer. So a board full
+            // of dealt cards costs nothing per frame — it only has to be drawn
+            // again when one of them moves, which is what dirty is for (a window
+            // resize, or the table being scaled under them).
+            if (s.dirty) {
+                s.dirty = false;
+                syncViewport(s);
+                s.renderer.render(s.scene, s.camera);
+            }
             s.idle += dt;
             if (s.idle > 0.5) { cancelAnimationFrame(s.raf); s.raf = 0; s.running = false; }
             return;
@@ -968,6 +1021,11 @@
 
     window.GPE_COIN = {
         toss, confetti, disable, registerProjectile, addActor, feltBounds, chipMesh, dealCard,
+        // Draw once more. Needed because parked cards are held on a canvas the
+        // loop is allowed to stop rendering — a resize clears it, and nothing
+        // else would put them back.
+        redraw: () => { const s = session; if (s) { s.dirty = true; kick(s); } },
+        hasCanvas: () => !!(session && session.canvas && session.canvas.isConnected),
         isRunning: () => !!(session && (session.coins.length || session.actors.length)),
         _session: () => session,
     };
