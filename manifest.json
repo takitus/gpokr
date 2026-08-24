@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GPokr Tools",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "description": "Dark mode, four-color deck, card backs, odds HUD, player stats & notes, table roster, bet sizing, session tracker, emotes, table interactions, and hand sharing.",
   "permissions": ["storage"],
   "icons": {
