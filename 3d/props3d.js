@@ -1880,21 +1880,40 @@
         // it, and it has to keep moving afterwards, because a life preserver
         // sitting perfectly still is just a doughnut.
         //
-        // The first two are one trick, and the camera does the work. gpokr's
-        // table is drawn from a near-top-down elevation, and from up there a ring
-        // lying flat around a swimmer reads as a full ellipse with the swimmer
-        // inside it — no part of it needs to pass BEHIND them. That matters more
-        // than it looks: the props canvas is one flat layer over the page at z 9
-        // and the avatar is DOM underneath it, so a prop is either wholly in front
-        // of a seat or wholly behind it. Nothing here can thread through an
-        // avatar, and at this elevation nothing has to.
+        // The camera does most of the work. gpokr's table is drawn from a
+        // near-top-down elevation, and from up there a ring lying flat around a
+        // swimmer reads as a full ellipse with the swimmer inside it.
         //
-        // So the ring is posed to lie in the table's own plane and drawn over the
-        // seat, and the avatar shows through the hole. TILT comes from the river's
-        // LEAN rather than being eyeballed: LEAN is cos(E) for the table's
-        // elevation E, a circle lying flat projects to an ellipse squashed to
-        // sin(E), and rotation.x = acos(LEAN) is the angle that gives both at once
-        // — so the ring agrees with the river about which way the table is tipped.
+        // The rest is the wrap, and that needed solving. The props canvas is one
+        // flat layer over the page at z 9 with the avatars as DOM underneath, so
+        // a prop is either wholly in front of a seat or wholly behind it: no
+        // amount of z-ordering puts the ring's far band behind a head and its
+        // near band in front of the same chest. What does is CUTTING the ring —
+        // the far half of it is clipped away exactly where the portrait covers
+        // it, and the canvas being transparent there means the real avatar shows
+        // through the hole it leaves. Outside the portrait the far band carries
+        // on, so it reads as passing behind them and coming out the other side.
+        //
+        // The region to remove is (behind the ring's own centre plane) AND
+        // (inside the portrait) — an intersection of five half-spaces, and
+        // clipping planes remove a union, not an intersection. So the five are
+        // flipped to name what is KEPT: in front of centre, or left of the
+        // portrait, or right of it, or above it, or below it. clipIntersection
+        // then keeps anything satisfying at least one of them, which is the
+        // complement of the intersection — the cut wanted, exactly.
+        //
+        // The planes live on this ring's own cloned materials, so nothing else on
+        // the layer is touched. That is the reason for doing it this way rather
+        // than with an invisible depth-writing proxy at the seat, which is fewer
+        // lines and would quietly swallow any other prop that passed behind it.
+        //
+        // TILT comes from the river's LEAN rather than being eyeballed: LEAN is
+        // cos(E) for the table's elevation E, a circle lying flat projects to an
+        // ellipse squashed to sin(E), and rotation.x = acos(LEAN) is the angle
+        // that gives both at once — so the ring agrees with the river about which
+        // way the table is tipped. Measured on the bench once it settles: 96 x 71
+        // on screen, and 96 x 81.5 with the cut disarmed, which is the ratio
+        // 0.858 against the 0.860 that predicts.
         //
         // The rig is three nested groups, one rotation each, because they are
         // three different axes and one Euler triple would make their order matter:
@@ -1944,7 +1963,38 @@
                 rig.add(lean);
 
                 const avH = (ctx.toSize && ctx.toSize.h) || 64;
+                const avW = (ctx.toSize && ctx.toSize.w) || 64;
                 const rest = { x: ctx.to.x, y: ctx.to.y + avH * M.SIT };
+
+                // The cut, as five planes over the portrait's own box. World y is
+                // negative screen y here, hence the sign flips on the last two.
+                // A three plane keeps normal·p + constant > 0.
+                //
+                // The near/far split is the ring's CENTRE plane, z = M.Z: the rig
+                // only ever rotates about its own centre and bobs in y, so the
+                // split never moves, and the whole far band stays behind it —
+                // the tube is 15px deep either side of the ring's line at this
+                // size, against the 29px the band itself stands off centre.
+                //
+                // Parked at 1e6 until the drop starts, which keeps everything: an
+                // unclipped flight costs no shader recompile later, since only
+                // these constants change and they are plain uniforms.
+                const V = (x, y, z) => new T.Vector3(x, y, z);
+                const nearPlane = new T.Plane(V(0, 0, 1), 1e6);
+                const cut = [
+                    nearPlane,                                           // in front of centre
+                    new T.Plane(V(-1, 0, 0), ctx.to.x - avW / 2),        // ...or left of the portrait
+                    new T.Plane(V(1, 0, 0), -(ctx.to.x + avW / 2)),      // ...or right of it
+                    new T.Plane(V(0, 1, 0), ctx.to.y - avH / 2),         // ...or above it
+                    new T.Plane(V(0, -1, 0), -(ctx.to.y + avH / 2)),     // ...or below it
+                ];
+                mesh.traverse((n) => {
+                    const mats = n.material ? (Array.isArray(n.material) ? n.material : [n.material]) : [];
+                    for (const m of mats) {
+                        m.clippingPlanes = cut;
+                        m.clipIntersection = true;   // keep the union, i.e. cut the intersection
+                    }
+                });
                 const hover = { x: rest.x, y: rest.y - M.DROP_H };
                 // Thrown from the sender's seat when we know it, otherwise lobbed
                 // in off the near rail — the same fallback the slide uses, and the
@@ -1985,6 +2035,10 @@
                             return true;
                         }
                         if (t < M.FLY + M.DROP) {
+                            // Arm the cut for the descent: the far band is still
+                            // clear of the portrait up here, so it comes in as the
+                            // ring sinks over the head instead of switching on.
+                            nearPlane.constant = -M.Z;
                             const p = easeInQuad((t - M.FLY) / M.DROP);   // it falls
                             put(hover.x, lerp(hover.y, rest.y, p), 0, 0, lerp(M.GROW, 1, p));
                             return true;

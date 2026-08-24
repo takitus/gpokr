@@ -29,7 +29,7 @@ Hover the button on another player's avatar to open a small menu of things to se
 
 - **🪙 chip** — a real 3D chip arcs from your seat, bounces off their avatar and settles on the felt.
 - **🍺 beer** — slides across the table, stays upright, and sits on the rail in front of them for ten seconds.
-- **🛟 life ring** — lobbed over a player who's going down with the ship: it drops over their avatar, settles, and bobs there for five seconds as if they were treading water.
+- **🛟 life ring** — lobbed over a player who's going down with the ship: it drops over their avatar, passing behind the portrait and out the other side, then bobs there for five seconds as if they were treading water.
 
 Unlike the older local-only chip toss, these **propagate**: everyone at the table running the extension sees the same throw, at the same time, because the animation plays from the event the server broadcasts back rather than from your click. A send the server refuses (you're watching, you're muted, or you're inside the cooldown) shows as nothing happening, which is the truth.
 
