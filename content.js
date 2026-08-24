@@ -7358,6 +7358,35 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     //   table rect.
     // opts.cls adds a class to the clone — the one use is dropping it below the 3D
     // layer so a stunt can have props drawn IN FRONT of the avatar (see clap).
+    // Hiding a seat's own avatar while its clone is off doing a stunt, COUNTED,
+    // because two stunts can overlap on one seat: runningInteractions frees a
+    // sender's slot when the interaction's promise chain resolves, which is long
+    // before the animation that chain started has finished. So dance followed by
+    // a rail slide a second later runs both clones at once, both holding the same
+    // avatar.
+    //
+    // Each stunt saving and restoring style.visibility is what broke. The second
+    // one to start saved "hidden" — the value the first had just written — so
+    // whichever finished LAST wrote that back, and the seat stayed empty until the
+    // page was reloaded. It also meant the avatar flashed back into its seat when
+    // the first of the two finished, with a clone still flying around.
+    //
+    // So nothing is saved now: the hold is a counter in an attribute and the
+    // hiding is a rule in overlay.css keyed on it. Dropping the attribute returns
+    // the element to whatever the page says about it, which is a state we can no
+    // longer get wrong, and the count is visible in the inspector.
+    const STUNT_ATTR = "data-gpe-stunt";
+    function stuntHold(el) {
+        if (!el) return;
+        el.setAttribute(STUNT_ATTR, String((parseInt(el.getAttribute(STUNT_ATTR), 10) || 0) + 1));
+    }
+    function stuntRelease(el) {
+        if (!el) return;
+        const n = (parseInt(el.getAttribute(STUNT_ATTR), 10) || 0) - 1;
+        if (n > 0) el.setAttribute(STUNT_ATTR, String(n));
+        else el.removeAttribute(STUNT_ATTR);
+    }
+
     function avatarStunt(avatarEl, fromRect, tableRect, step, opts) {
         if (!avatarEl || !fromRect || typeof step !== "function") return false;
         const src = avatarEl.currentSrc || avatarEl.src;
@@ -7370,9 +7399,17 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         img.style.height = fromRect.height + "px";
         document.body.appendChild(img);
 
-        const prevVis = avatarEl.style.visibility;
-        avatarEl.style.visibility = "hidden";
-        const cleanup = () => { img.remove(); if (avatarEl.isConnected) avatarEl.style.visibility = prevVis; };
+        stuntHold(avatarEl);
+        // Guarded because a double release would decrement the hold twice and
+        // uncover the seat while another stunt is still using it. cleanup() only
+        // has one caller today; the counter is what makes that worth insuring.
+        let released = false;
+        const cleanup = () => {
+            if (released) return;
+            released = true;
+            img.remove();
+            stuntRelease(avatarEl);
+        };
 
         // perspective() leads so rotateX reads as a somersault and rotateY as a
         // turn-around, not flat squashes. put(x, y, scale, rotZ, flipX, spinY).

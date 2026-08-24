@@ -338,6 +338,16 @@ html.gpe-fourcolor .gpe-suit-c { color: #008000; }
    table, so there are no chips to be hidden behind. */
 .gpe-dance.gpe-under-props { z-index: 8; }
 
+/* The seat's own avatar, while its clone is off doing a stunt. The attribute is
+   a COUNT of how many stunts are holding it (see stuntHold in content.js), so
+   two overlapping celebrations can't uncover the seat when the first finishes.
+   It replaced each stunt saving and restoring style.visibility, which stranded
+   the avatar hidden whenever two of them overlapped.
+
+   !important because this used to be written as an inline style and has to keep
+   beating whatever the page has on the element. */
+img[data-gpe-stunt] { visibility: hidden !important; }
+
 #gpe-chips-layer {
     position: fixed;
     pointer-events: none;

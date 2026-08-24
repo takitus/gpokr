@@ -1,0 +1,145 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>seat bench</title>
+<!-- Drives REAL interaction events at a fake seat, so the celebrations can be
+     tested without a table, a login, or somebody's seat.
+
+     content.js only ever learns about another player's celebration one way: the
+     page-world socket tap posts it to the window (see bridge/ws-monitor.js, and
+     the "gpe-ws" branch of the message listener in content.js). That is a seam a
+     test can use — post the same message and the whole real path runs, gate and
+     payload validation included.
+
+     What has to be faked is small: a stub for chrome.storage (settings default
+     to on, so {} is enough), one seat panel with a profile link — nameForUserId
+     resolves ids by scanning those — and a table element for the stunts to aim
+     at. Loading content.js as a plain script makes SELF_SRC truthy, which is the
+     site-hosted build's path, so the 3D files load by URL from this same server.
+
+     It has to sit at the repo root for those paths to resolve, and it must NOT
+     be named with a leading underscore: Chrome refuses to load an unpacked
+     extension containing one (see riverbench.html).
+
+       ?player=tester   the seat's name
+     Then, from the console:
+       __fire("dance"), __fire("rail"), __fire("clap")
+       __state()        what the avatar and its stunt count look like right now
+       __overlap()      the back-to-back case: two stunts alive at once, then
+                        report whether the avatar came back
+-->
+<!-- The extension's own stylesheet, which the manifest injects on the real
+     site. Without it the stunt hold (img[data-gpe-stunt]) does nothing here and
+     a test of it would pass for the wrong reason. -->
+<link rel="stylesheet" href="overlay.css">
+<style>
+  html,body{margin:0;background:#0e0f12;height:100%;font:12px/1.4 system-ui,sans-serif;color:#c9d1dc}
+  #table{position:absolute;left:40px;top:150px;width:790px;height:396px;background:#1b1d22;border-radius:50%/28%}
+  #gpe-coin-layer{position:fixed;left:0;top:0;width:100%;height:100%;display:block;pointer-events:none;z-index:9}
+  /* A seat, close enough to gpokr's for the selectors content.js uses. */
+  table.iogc-PlayerPanel-x{position:absolute;left:120px;top:560px;border-collapse:collapse}
+  img.iogc-PlayerPanel-avatar{display:block;width:100px;height:100px;border:1px solid #8e99ad;
+      border-radius:6px;object-fit:contain;background-color:#20242c}
+  #log{position:fixed;right:12px;top:12px;width:360px;white-space:pre-wrap}
+</style>
+<div id="table" class="iogc-GameWindow-table"></div>
+<table class="iogc-PlayerPanel-x"><tbody>
+  <tr><td><img class="iogc-PlayerPanel-avatar" alt="avatar"
+       src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiPjxyZWN0IHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiM3ZDg3OTgiLz48Y2lyY2xlIGN4PSI0MCIgY3k9IjM4IiByPSIyMiIgZmlsbD0iI2U4ZDNiZCIvPjxwYXRoIGQ9Ik02IDEwMGMwLTIyIDE1LTMyIDM0LTMyczM0IDEwIDM0IDMyeiIgZmlsbD0iIzNmNWQ4YSIvPjxjaXJjbGUgY3g9IjMxIiBjeT0iMzYiIHI9IjMiIGZpbGw9IiMyYjJiMmIiLz48Y2lyY2xlIGN4PSI0OSIgY3k9IjM2IiByPSIzIiBmaWxsPSIjMmIyYjJiIi8+PHBhdGggZD0iTTMxIDQ4cTkgOCAxOCAwIiBzdHJva2U9IiMyYjJiMmIiIHN0cm9rZS13aWR0aD0iMi41IiBmaWxsPSJub25lIi8+PC9zdmc+"></td></tr>
+  <tr><td><a id="who" href="/profile/4242">tester</a></td></tr>
+</tbody></table>
+<div id="log">loading…</div>
+<script>
+  // ---- stubs, before content.js sees them --------------------------------
+  // Settings are all opt-out or default-off, so an empty object is a valid
+  // "everything at its default" — which has interactions and celebrations ON.
+  (function () {
+    const store = {};
+    window.chrome = {
+      storage: {
+        local: {
+          // ASYNCHRONOUS, like the real one. Calling back synchronously runs
+          // applySettings in the middle of content.js's own evaluation, which
+          // trips temporal-dead-zone errors on every `let` declared below the
+          // point it got to — the file is one IIFE and assumes, correctly, that
+          // chrome.storage never answers before it has finished loading.
+          get(keys, cb) { if (cb) setTimeout(() => cb(store), 0); },
+          set(obj, cb) { Object.assign(store, obj); if (cb) setTimeout(cb, 0); },
+          remove(k, cb) { if (cb) setTimeout(cb, 0); },
+        },
+        onChanged: { addListener() {} },
+      },
+      runtime: { getURL: (p) => "/" + p, id: "seatbench" },
+    };
+    const q = new URLSearchParams(location.search);
+    const who = q.get("player");
+    if (who) document.getElementById("who").textContent = who;
+  })();
+</script>
+<script src="content.js"></script>
+<script>
+  // ---- the harness -------------------------------------------------------
+  (function () {
+    const ID = 4242;                       // matches the profile link above
+    const avatar = () => document.querySelector("img.iogc-PlayerPanel-avatar");
+    const log = (s) => { document.getElementById("log").textContent = s; };
+
+    // The shape bridge/ws-monitor.js forwards. v/type must match content.js's
+    // INTERACT_V and INTERACT_TYPE or the payload is rejected, which is the
+    // point of sending it this way rather than calling something directly.
+    window.__fire = function (item, seed) {
+      const msg = {
+        __gpe: "gpe-ws",
+        ev: {
+          typeName: "InteractionEvent",
+          type: "gpe.throw",
+          fromUserId: ID,
+          toUserId: ID,
+          payload: JSON.stringify({ v: 1, s: seed || 7, q: [[item]] }),
+        },
+      };
+      window.postMessage(msg, location.origin);
+      return item;
+    };
+
+    // Clones are body-level <img class="gpe-dance">; the count in the attribute
+    // is how many stunts are holding the avatar hidden.
+    window.__state = function () {
+      const av = avatar();
+      return {
+        clones: document.querySelectorAll("img.gpe-dance").length,
+        stuntAttr: av.getAttribute("data-gpe-stunt"),
+        inlineVisibility: av.style.visibility || "(unset)",
+        computedVisibility: getComputedStyle(av).visibility,
+      };
+    };
+
+    // The reported bug: two celebrations still animating at the same time, and
+    // the avatar never comes back. runningInteractions frees a sender's slot
+    // when the interaction's promise chain resolves, which is long before the
+    // animation it kicked off has finished — so the second one is accepted while
+    // the first is still running, and both stunts hold the same avatar.
+    window.__overlap = function (a, b, gapMs) {
+      const marks = {};
+      __fire(a || "dance");
+      return new Promise((done) => {
+        setTimeout(() => {
+          marks.afterFirst = __state();
+          __fire(b || "rail", 9);
+          setTimeout(() => {
+            marks.bothRunning = __state();
+            // Long enough for both to finish: the longest stunt is ~4.3s.
+            setTimeout(() => {
+              marks.afterBoth = __state();
+              marks.verdict = marks.afterBoth.computedVisibility === "visible"
+                ? "PASS — avatar came back" : "FAIL — avatar still hidden";
+              log(JSON.stringify(marks, null, 1));
+              done(marks);
+            }, 6000);
+          }, 300);
+        }, gapMs == null ? 900 : gapMs);
+      });
+    };
+
+    log("ready. __fire('dance') | __overlap() | __state()");
+  })();
+</script>

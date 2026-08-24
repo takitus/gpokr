@@ -132,6 +132,8 @@ Nothing is sent anywhere — no servers, no analytics, no permissions beyond `st
 | `cardbacks.test.js` | offline unit tests keeping the card-back style list, assets and picker in agreement — `node cardbacks.test.js` |
 | `popup.html` / `popup.js` | settings UI, bet-button editor, session graph, card store export/import |
 | `overlay.css` | styles for all injected UI |
+| `riverbench.html` | dev harness: holds a river on a stand-in table, or lobs any catalog prop at a stand-in avatar (`?item=float`), with `?manual=1` for a hand-cranked clock |
+| `seatbench.html` | dev harness: fires real `InteractionEvent`s at a fake seat, so the celebrations can be tested without a table — `__fire("dance")`, `__overlap()` |
 | `launch-debug-chrome.sh` | starts a dedicated Chrome with remote debugging on :9222 (separate profile) for live DOM inspection |
 | `tools/deck_hashes.py` | regenerates the four-color deck's `DECK_HASHES` table from the live site — run it if the recoloring stops working |
 | `tools/drop-node.js` | strips named objects out of a model export before `tools/optimize-model.sh` (the life ring's rope loop is the case it exists for) |
