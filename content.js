@@ -3067,10 +3067,14 @@
     // every re-render, so the swap is re-applied on mutation rather than once,
     // and it settles because our own faces are recognised (OUR_FACE_NAME).
     //
-    // The size is pinned before the swap, like the backs: the SVG is authored at
-    // 120x168 and the element is 53x69, and an <img> whose intrinsic size changes
-    // under GWT's layout is how you get a card twice the size of its slot for a
-    // frame.
+    // Nothing about size is touched here, unlike the backs. The card back has to
+    // be pinned because its asset is a fixed 4x; a drawn card can simply be
+    // AUTHORED at the size of the image it replaces, so the swap is invisible to
+    // layout and there is no attribute of gpokr's to overwrite. Writing
+    // width/height here is what made board cards come out the wrong size: the
+    // board and a player's own hand are displayed at very different sizes, and
+    // pinning both to the deck's natural size fought whichever the page had
+    // decided on.
     //
     // Court cards are fetched, so faceUrl() may say "not yet". Nothing waits for
     // it: the card keeps the site's art and GPE_DECK.onReady sweeps again when
@@ -3094,23 +3098,20 @@
             return;
         }
         if (!card || !window.GPE_DECK) { img._gpeFaceMemo = memo; return; }
-        const url = GPE_DECK.faceUrl(card, FOUR_COLOR);
+        // The site's own art decides the intrinsic size, so our card claims to be
+        // exactly as big as the one it stands in for. Falls back to the deck's
+        // known size when the image hasn't decoded yet.
+        const url = GPE_DECK.faceUrl(card, FOUR_COLOR,
+            { w: img.naturalWidth || CARD_W, h: img.naturalHeight || CARD_H });
         // Deliberately NOT memoised: "no url" is usually a court card whose art
         // is still in flight, and memoising it would mean the sweep GPE_DECK
         // triggers when the art lands looks at this image, sees nothing changed,
         // and leaves it on the site's picture for the rest of the session.
         if (!url) return;
         if (url === src) { img._gpeFaceMemo = memo; return; }
-        if (!mine) {
-            // Remember the site's own art once, so turning the option off is
-            // reversible without a reload.
-            img._gpeSiteFace = src;
-            const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-            if (w && h) {
-                img.setAttribute("width", String(w));
-                img.setAttribute("height", String(h));
-            }
-        }
+        // Remember the site's own art once, so turning the option off is
+        // reversible without a reload.
+        if (!mine) img._gpeSiteFace = src;
         img.dataset.gpeFace = "svg";   // overlay.css keeps the filters off ours
         img.setAttribute("src", url);
     }

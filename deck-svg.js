@@ -88,11 +88,17 @@
         four: { C: "#008000", D: "#0000ff", H: "red", S: "black" },
     };
 
-    // Authored at 2x the size the new UI uses (60x84), so the raster is sharp on
-    // a HiDPI display; preserveAspectRatio="none" because the element we stand in
-    // for is 53x69, very slightly narrower than this 3:4 box, and a letterboxed
-    // card would sit wrong in its slot.
-    const OUT_W = 120, OUT_H = 168;
+    // Authored at the size of the image it replaces, which the caller passes in.
+    //
+    // This is layout, not resolution: an SVG's declared width/height decide how
+    // big the element WANTS to be, while the rasterizer always draws at device
+    // resolution — so matching the site's own 53x69 costs nothing in sharpness
+    // and means swapping the src cannot move anything. Authoring bigger (it was
+    // 120x168) changes the intrinsic size under gpokr's layout, and then needs
+    // width/height attributes to compensate, which is two ways to fight the page
+    // at once. preserveAspectRatio="none" for the same reason: 53x69 is slightly
+    // narrower than this 3:4 box and a letterboxed card would sit wrong.
+    const DEF_W = 53, DEF_H = 69;
     const FACE_BASE = "https://web.gpokr.com/card-symbols/faces/";
     const RANKS_COURT = { J: 1, Q: 1, K: 1 };
 
@@ -123,7 +129,7 @@
     }
 
     // Follows the bundle's own Zz / $z / Kz, so the result is the card they draw.
-    function compose(rank, suit, ink) {
+    function compose(rank, suit, ink, outW, outH) {
         const g = GEO, court = isCourt(rank), col = ink[suit];
         const o = [];
         const use = (id, x, y, w, h, extra) =>
@@ -131,7 +137,7 @@
             '" height="' + h + '"' + (extra || "") + "/>";
 
         o.push('<svg xmlns="http://www.w3.org/2000/svg" id="gpe-face-' + rank +
-            suit.toLowerCase() + '" width="' + OUT_W + '" height="' + OUT_H +
+            suit.toLowerCase() + '" width="' + outW + '" height="' + outH +
             '" viewBox="' + g.viewBox.x + " " + g.viewBox.y + " " + g.viewBox.width +
             " " + g.viewBox.height + '" preserveAspectRatio="none">');
         o.push("<defs>");
@@ -199,11 +205,15 @@
     // court card whose art is still on its way, or a card code we don't know.
     // Deliberately NOT base64: the id in the markup is how content.js recognises
     // its own faces, and it has to be readable in the URI to do that.
-    function faceUrl(card, fourColor) {
+    // size is the intrinsic size to author at — pass the natural size of the
+    // image being replaced, so the swap is invisible to layout.
+    function faceUrl(card, fourColor, size) {
         if (typeof card !== "string" || card.length !== 2) return null;
         const rank = card[0].toUpperCase(), suit = card[1].toUpperCase();
         if (!RANK_PATH[rank] || !SUIT_PATH[suit]) return null;
-        const key = rank + suit + (fourColor ? "|4" : "|2");
+        const w = (size && size.w > 0) ? Math.round(size.w) : DEF_W;
+        const h = (size && size.h > 0) ? Math.round(size.h) : DEF_H;
+        const key = rank + suit + (fourColor ? "|4" : "|2") + "|" + w + "x" + h;
         if (urlCache[key]) return urlCache[key];
         if (isCourt(rank)) {
             const art = courtArt[rank + suit];
@@ -211,7 +221,7 @@
             if (!art) return null;
         }
         const url = "data:image/svg+xml;charset=utf-8," +
-            encodeURIComponent(compose(rank, suit, fourColor ? INK.four : INK.two));
+            encodeURIComponent(compose(rank, suit, fourColor ? INK.four : INK.two, w, h));
         urlCache[key] = url;
         return url;
     }
