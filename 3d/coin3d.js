@@ -270,7 +270,16 @@
     // The edge, faked as three flat tones rather than lit: the renderer's lights
     // are aimed at chips, and a card wants its top brighter than its underside
     // whatever they happen to be doing.
-    const CARD_EDGE = { side: 0xd9d4c8, top: 0xf3efe6, bottom: 0xc9c3b4 };
+    // The edge. One tone, not lit: the renderer's lights are aimed at chips, and
+    // the lean means it is almost always the underside you are looking at.
+    const CARD_EDGE = 0xcbc5b6;
+    // The slab's corner radius, in the card's own 1x1 box. TWO numbers because
+    // the group scales x and y independently (a 53x69 card out of a unit
+    // geometry), so a corner that comes out circular on screen has to be
+    // elliptical here. These are the site's own deck geometry — rx 12 on a
+    // 210x280 card — which is exactly what our SVG faces are drawn with, so the
+    // slab's outline turns the same corner as the picture on it.
+    const CARD_RX = 12 / 210, CARD_RY = 12 / 280;
     const CARD_RADIUS = 0.07;    // corner radius, as a fraction of the card's width
 
     // The back. Nothing ships a single-card back — assets/backs/*.png are the
@@ -351,6 +360,44 @@
         return tex;
     }
 
+    // The card's outline, as a shape to extrude. Built in 0..1 rather than centred
+    // because both geometries below take their UVs straight from vertex x/y; the
+    // positions are recentred afterwards, which leaves the UVs alone.
+    function cardOutline(T) {
+        const rx = CARD_RX, ry = CARD_RY;
+        const sh = new T.Shape();
+        sh.moveTo(rx, 0);
+        sh.lineTo(1 - rx, 0);
+        sh.quadraticCurveTo(1, 0, 1, ry);
+        sh.lineTo(1, 1 - ry);
+        sh.quadraticCurveTo(1, 1, 1 - rx, 1);
+        sh.lineTo(rx, 1);
+        sh.quadraticCurveTo(0, 1, 0, 1 - ry);
+        sh.lineTo(0, ry);
+        sh.quadraticCurveTo(0, 0, rx, 0);
+        return sh;
+    }
+
+    // A rounded slab plus two rounded caps, all unit-sized and shared.
+    //
+    // The caps are separate meshes rather than the extrusion's own ends because
+    // an ExtrudeGeometry puts BOTH ends in one material group, and a card needs a
+    // different picture on each. So the extrusion wears paper everywhere and the
+    // textured caps sit a thousandth outside its ends — close enough to be the
+    // same object, far enough not to z-fight.
+    function cardGeometries(T) {
+        if (cardGeo) return cardGeo;
+        const shape = cardOutline(T);
+        const body = new T.ExtrudeGeometry(shape, {
+            depth: 0.995, bevelEnabled: false, curveSegments: 8,
+        });
+        body.translate(-0.5, -0.5, -0.4975);
+        const cap = new T.ShapeGeometry(shape, 8);
+        cap.translate(-0.5, -0.5, 0);
+        cardGeo = { body: body, cap: cap };
+        return cardGeo;
+    }
+
     function cardMesh(T, faceImg, backStyle) {
         let faceTex = null;
         try {
@@ -359,21 +406,18 @@
         const backTex = cardBackTexture(T, backStyle);
         if (!backTex) return null;
 
-        // One unit box for every card ever dealt. Shared and never disposed, like
-        // the chip's cylinder.
-        if (!cardGeo) cardGeo = new T.BoxGeometry(1, 1, 1);
-        const paper = (hex) => new T.MeshBasicMaterial({ color: hex });
+        // Shared and never disposed, like the chip's cylinder.
+        const geo = cardGeometries(T);
         const faceMat = new T.MeshBasicMaterial({ map: faceTex, transparent: true });
         const backMat = new T.MeshBasicMaterial({ map: backTex, transparent: true });
-        // BoxGeometry's material groups run +x, -x, +y, -y, +z, -z. The lean tips
-        // the far edge away, so the BOTTOM is the one the viewer catches.
-        const mesh = new T.Mesh(cardGeo, [
-            paper(CARD_EDGE.side), paper(CARD_EDGE.side),
-            paper(CARD_EDGE.top), paper(CARD_EDGE.bottom),
-            faceMat, backMat,
-        ]);
+        const slab = new T.Mesh(geo.body, new T.MeshBasicMaterial({ color: CARD_EDGE }));
+        const front = new T.Mesh(geo.cap, faceMat);
+        front.position.z = 0.5;
+        const back = new T.Mesh(geo.cap, backMat);
+        back.position.z = -0.5;
+        back.rotation.y = Math.PI;   // faces outward, and mirrors the back's art
         const group = new T.Group();
-        group.add(mesh);
+        group.add(slab, front, back);
         // The face texture is per-card and has to be freed by hand: three's
         // Material.dispose() releases the material, never the textures on it.
         // The back is cached and shared, so it is deliberately left alone.

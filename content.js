@@ -2931,6 +2931,9 @@
             // business standing in front of the site's own image, whatever put it
             // there. This is what keeps a covered card from being stranded for a
             // whole hand if anything above is ever wrong again.
+            // The cached board is right for this: it runs every poll for every
+            // parked card, and a card that has just left the board can wait a
+            // quarter second to be handed back.
             if (logBoardCards().indexOf(img.dataset.gpeCard) < 0) { unparkCard(img); continue; }
             if (rec.handle && rec.handle.isGone && rec.handle.isGone()) { unparkCard(img); continue; }
             const r = liveRect(img);
@@ -2949,13 +2952,31 @@
     // actually knows. Cached briefly because the flop is three images changing in
     // one tick and one parse answers for all of them.
     let dealBoardCache = { at: 0, cards: [] };
-    function logBoardCards() {
+    function logBoardCards(fresh) {
         const now = Date.now();
-        if (now - dealBoardCache.at < 250) return dealBoardCache.cards;
+        if (!fresh && now - dealBoardCache.at < 250) return dealBoardCache.cards;
         let cards = [];
         try { cards = boardFromScope(currentHandScope()); } catch (e) { cards = []; }
         dealBoardCache = { at: now, cards: cards };
         return cards;
+    }
+
+    // Is this card on the board right now?
+    //
+    // Never answers "no" from the cache, and that is the whole point of it being a
+    // function. The cache is refreshed by the 300ms poll, so at the moment a card
+    // is dealt the cached board can be up to 250ms old — which is to say, from
+    // before the log line announcing that very card. The flop got away with it and
+    // the turn and the river did not: they arrived, were judged against a board
+    // that predated them, and were quietly left alone — no animation, no
+    // thickness, and a gap where a parked card sat next to a plain one.
+    //
+    // A miss costs one extra parse of the log, and only for a card that is not
+    // already known to be on the board.
+    function boardHasCard(card) {
+        if (!card) return false;
+        if (logBoardCards().indexOf(card) >= 0) return true;
+        return logBoardCards(true).indexOf(card) >= 0;
     }
 
     // Is this image showing a community card? The log decides, not the DOM.
@@ -2979,7 +3000,7 @@
         if (img.classList.contains("gpe-shared-card")) return false;       // ours
         if (typeof img.closest !== "function") return false;
         if (img.closest(".gpe-log-cards, .gpe-hand-wrap, #gpe-local-hand")) return false;   // ours
-        if (logBoardCards().indexOf(card) < 0) return false;                // not on the board
+        if (!boardHasCard(card)) return false;                              // not on the board
         return !!img.closest(".iogc-GameWindow-container");
     }
 

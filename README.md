@@ -99,6 +99,8 @@ The work is in aiming the filters, not in the recoloring. Hearts are exactly as 
 ### Cards *(faces, backs, four colours, thickness)*
 All of it lives behind **cards → edit** in the tools tab: face, back, four-colour deck, dealing animation and how thick a dealt card is. They were four rows scattered down that tab, which read as four unrelated options when they are really one decision about how a card looks. A floating panel rather than a dimming modal, so the cards stay visible while the thickness slider moves.
 
+The card is a **rounded slab**, not a box: its outline is the site's own card geometry (`rx 12` on a `210×280` card, the same numbers our SVG faces are drawn with) extruded, with the face and back laid on its ends as rounded caps. A box was the first attempt and read as two objects — a square-cornered block with a rounded picture resting on it.
+
 **Thickness** is a slider, 0 to 24px. A card lying flat under coin3d's orthographic camera shows *no* edge at all — its depth runs straight down the view axis — so a thick card is leaned toward you, and the lean grows with the thickness because the two are the same question: how much of the card's footprint is edge rather than face. The face is sized so the whole slab fills its slot including the edge, so fattening a card eats into its face instead of growing it out of its box. It rides on the group's Z scale, which is why the slider moves cards already on the table without rebuilding anything. It applies to cards *as they are dealt* — a card the site drew is a flat image with no edge to give it.
 
 ### Card faces *(vector deck)*
