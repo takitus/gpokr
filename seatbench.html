@@ -68,6 +68,11 @@
        src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiPjxyZWN0IHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiM3ZDg3OTgiLz48Y2lyY2xlIGN4PSI0MCIgY3k9IjM4IiByPSIyMiIgZmlsbD0iI2U4ZDNiZCIvPjxwYXRoIGQ9Ik02IDEwMGMwLTIyIDE1LTMyIDM0LTMyczM0IDEwIDM0IDMyeiIgZmlsbD0iIzNmNWQ4YSIvPjxjaXJjbGUgY3g9IjMxIiBjeT0iMzYiIHI9IjMiIGZpbGw9IiMyYjJiMmIiLz48Y2lyY2xlIGN4PSI0OSIgY3k9IjM2IiByPSIzIiBmaWxsPSIjMmIyYjJiIi8+PHBhdGggZD0iTTMxIDQ4cTkgOCAxOCAwIiBzdHJva2U9IiMyYjJiMmIiIHN0cm9rZS13aWR0aD0iMi41IiBmaWxsPSJub25lIi8+PC9zdmc+"></td></tr>
   <tr><td><a id="who" href="/profile/4242">tester</a></td></tr>
 </tbody></table>
+<!-- The game log content.js reads (logLines() looks for exactly this). The
+     dealing animation asks it which cards are on the board, so without it
+     nothing animates — which is the correct failure, and worth being able to
+     test both ways. -->
+<div class="iogc-MessagePanel-messages" id="log-panel" style="position:absolute;left:12px;bottom:12px;width:320px;font:11px/1.4 monospace;color:#7f8b9c"></div>
 <div id="log">loading…</div>
 <script>
   // ---- hand-cranked clock (?manual=1) ------------------------------------
@@ -206,6 +211,43 @@
     window.__turn = () => deal(1, 3);
     window.__river = () => deal(1, 4);
     window.__undeal = () => { slots().forEach((el) => el.removeAttribute("src")); };
+
+    // The log, as GWT writes it. The board check reads these rows live.
+    window.__log = (line) => {
+        const d = document.createElement("div");
+        d.className = "gwt-HTML";
+        d.textContent = line;
+        document.getElementById("log-panel").appendChild(d);
+        return line;
+    };
+    window.__newHand = () => {
+        document.getElementById("log-panel").textContent = "";
+        window.__log("Starting Hand #" + Math.floor(performance.now()));
+    };
+    // Deal the way the site does: the log line, then the images.
+    window.__logFlop = () => window.__log("Dealing flop: [" + DECK.slice(0, 3).join(", ") + "]");
+    window.__logTurn = () => window.__log("Dealing turn: [" + DECK[3] + "]");
+    window.__logRiver = () => window.__log("Dealing river: [" + DECK[4] + "]");
+
+    // A card in the game window, in no seat panel, that the log never mentions —
+    // the local player's own hole cards, which is what the DOM-only detector got
+    // wrong. It must not be touched.
+    window.__holeCard = (card) => {
+        let el = document.getElementById("hole");
+        if (!el) {
+            el = document.createElement("img");
+            el.id = "hole";
+            el.style.cssText = "position:absolute;left:640px;top:420px;width:53px;height:69px";
+            document.querySelector(".iogc-GameWindow-container").appendChild(el);
+        }
+        el.src = "/GPokr/cards/" + card + ".png";
+        return el;
+    };
+    window.__holeState = () => {
+        const el = document.getElementById("hole");
+        return el ? { card: el.dataset.gpeCard || null, covered: el.getAttribute("data-gpe-covered"),
+            visibility: getComputedStyle(el).visibility } : null;
+    };
 
     window.__board = () => slots().map((el, i) => ({
         slot: i,

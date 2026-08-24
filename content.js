@@ -2846,6 +2846,12 @@
         for (const img of Array.from(dealtCards.keys())) {
             const rec = dealtCards.get(img);
             if (!img.isConnected || !img.dataset.gpeCard) { unparkCard(img); continue; }
+            // The log is still the authority after the fact, not just at the
+            // moment of dealing: a card it no longer lists on the board has no
+            // business standing in front of the site's own image, whatever put it
+            // there. This is what keeps a covered card from being stranded for a
+            // whole hand if anything above is ever wrong again.
+            if (logBoardCards().indexOf(img.dataset.gpeCard) < 0) { unparkCard(img); continue; }
             if (rec.handle && rec.handle.isGone && rec.handle.isGone()) { unparkCard(img); continue; }
             const r = liveRect(img);
             if (!r) { unparkCard(img); continue; }
@@ -2858,11 +2864,41 @@
         }
     }
 
-    function isCommunityCard(img) {
+    // What is on the board, from the game log, which is the only thing that
+    // actually knows. Cached briefly because the flop is three images changing in
+    // one tick and one parse answers for all of them.
+    let dealBoardCache = { at: 0, cards: [] };
+    function logBoardCards() {
+        const now = Date.now();
+        if (now - dealBoardCache.at < 250) return dealBoardCache.cards;
+        let cards = [];
+        try { cards = boardFromScope(currentHandScope()); } catch (e) { cards = []; }
+        dealBoardCache = { at: now, cards: cards };
+        return cards;
+    }
+
+    // Is this image showing a community card? The log decides, not the DOM.
+    //
+    // This began as elimination — a card image in the game window, in no seat
+    // panel, not one of ours — and that was wrong on the one case it could not
+    // see: the local player's OWN hole cards, which are not in a seat panel
+    // either. They got dealt in, landed in the wrong order, and because cards
+    // park rather than hand back, the real ones stayed covered until a reload.
+    //
+    // The log is exact instead of clever. A card is unique, so a card the log
+    // lists on the board cannot also be in anybody's hand, and no knowledge of
+    // gpokr's markup is needed at all. If the log cannot be read the board comes
+    // back empty and nothing animates, which is the right way to fail.
+    //
+    // The DOM tests that remain are only to keep our OWN card images out of it:
+    // the hand-summary panel draws the real board, so those images match the log
+    // exactly and would otherwise be dealt in too.
+    function isCommunityCard(img, card) {
         if (!img.isConnected) return false;
-        if (img.classList.contains("gpe-shared-card")) return false;   // ours
+        if (img.classList.contains("gpe-shared-card")) return false;       // ours
         if (typeof img.closest !== "function") return false;
-        if (img.closest('table[class*="iogc-PlayerPanel"]')) return false;  // a seat's hole cards
+        if (img.closest(".gpe-log-cards, .gpe-hand-wrap, #gpe-local-hand")) return false;   // ours
+        if (logBoardCards().indexOf(card) < 0) return false;                // not on the board
         return !!img.closest(".iogc-GameWindow-container");
     }
 
@@ -2877,7 +2913,7 @@
     function onCardShown(img, card) {
         if (!DEAL_ANIM || !dealArmed) return;
         if (!window.GPE_COIN || typeof GPE_COIN.dealCard !== "function") return;
-        if (!isCommunityCard(img)) return;
+        if (!isCommunityCard(img, card)) return;
         dealCardIn(img);
     }
 
