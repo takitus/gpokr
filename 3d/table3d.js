@@ -1385,6 +1385,102 @@
         };
     }
 
+    // ---------- card shadow casters ----------
+    // Invisible stand-ins for the cards, so the felt they lie on can show a real
+    // shadow of them.
+    //
+    // The cards themselves are drawn by coin3d, on its own canvas over the page,
+    // and a shadow cannot cross two WebGL contexts. But nothing says the CASTER
+    // has to be the thing you see: a card-shaped box in this scene, lit by this
+    // scene's key light, drops a real shadow on a felt that already has
+    // receiveShadow — as do the rail, the floor and the seats.
+    //
+    // The obvious way to hide it does NOT work, and that is worth writing down
+    // because it invites being tidied up. three's shadow pass reads:
+    //
+    //     if (object.visible === false) return;
+    //     const visible = object.layers.test(camera.layers);
+    //     if (visible && object.isMesh) { if (object.castShadow) ... }
+    //
+    // and that camera is the MAIN camera. An object parked on a layer the camera
+    // never draws does not cast either, and an invisible one is skipped outright.
+    // So a caster stays on the default layer, stays visible, and draws nothing
+    // instead: colorWrite off, depthWrite off. The shadow pass builds its own
+    // depth material and consults neither.
+
+    // A whole-set call rather than add/update/remove: content.js already re-states
+    // what is on the table every poll, and a set call needs no reconciliation to
+    // survive this renderer being torn down and rebuilt on every GWT re-render.
+    //
+    // Each entry is a card's viewport rect in CSS px plus its thickness:
+    //   { left, top, width, height, thick }
+    function setCardCasters(list) {
+        const s = session;
+        if (!s || !s.cardCasters) return false;
+        const T = window.THREE;
+        const el = tableEl();
+        const r = el && el.getBoundingClientRect();
+        // Only cards that are ON the felt. A player's own two cards sit at their
+        // seat, well outside it, and their screen position maps to a point beyond
+        // the rail — where a caster would plant a card-shaped smudge on the
+        // leather, or on the floor ten units below, since both receive shadows.
+        // Those keep coin3d's own shadow instead.
+        const items = (r && r.width >= 40) ? (list || []).filter((c) => {
+            if (!s.feltA || !s.feltB) return true;
+            const wpp0 = VIEW_W / r.width, scale0 = r.width / ART_W;
+            const X = (c.left + c.width / 2 - r.left - FELT_CX_PX * scale0) * wpp0;
+            const Z = (c.top + c.height / 2 - r.top - (FELT_CY_PX + FELT_Y_NUDGE) * scale0) * wpp0 / s.sinE;
+            // The felt is a stadium; an ellipse through the same half-extents is
+            // close enough to decide whether a card is on the cloth at all.
+            const ex = X / (s.feltA * 0.98), ez = Z / (s.feltB * 0.98);
+            return ex * ex + ez * ez <= 1;
+        }) : [];
+        const kids = s.cardCasters.children;
+
+        while (kids.length > items.length) s.cardCasters.remove(kids[kids.length - 1]);
+        while (kids.length < items.length) {
+            const m = new T.Mesh(s.casterGeo, s.casterMat);
+            m.castShadow = true;
+            s.cardCasters.add(m);
+        }
+
+        const wpp = r ? VIEW_W / r.width : 0;              // world units per css px
+        const scale = r ? r.width / ART_W : 0;
+        let changed = kids.length !== s.casterCount;
+        s.casterCount = kids.length;
+        items.forEach((c, i) => {
+            const m = kids[i];
+            if (!m || !r) return;
+            // The same conversion projectAbove uses, in the same direction: a page
+            // point onto the felt plane. Z carries the 1/sinE stretch, because a
+            // plane seen at an angle covers more world per screen pixel.
+            const cxPage = c.left + c.width / 2, cyPage = c.top + c.height / 2;
+            const X = (cxPage - r.left - FELT_CX_PX * scale) * wpp;
+            const Z = (cyPage - r.top - (FELT_CY_PX + FELT_Y_NUDGE) * scale) * wpp / s.sinE;
+            const h = Math.max(0.02, (c.thick || 2) * wpp);
+            // Sitting ON the felt rather than above it: the underside is the felt
+            // top, so what it drops is a contact shadow, not a hovering one.
+            const sx = Math.max(0.01, c.width * wpp);
+            const sz = Math.max(0.01, c.height * wpp / s.sinE);
+            const y = -FELT_DROP + h / 2;
+            // Only mark the scene dirty when something actually MOVED. This is
+            // called on the 300ms poll for as long as a board is out, and a
+            // static board must cost nothing: an unconditional bump re-renders
+            // the felt, rail, floor, nine stools and a 2048 shadow map several
+            // times a second forever, where today an unchanged table renders zero
+            // times (see the needsRender counter in loop()).
+            if (Math.abs(m.position.x - X) > 0.002 || Math.abs(m.position.z - Z) > 0.002 ||
+                Math.abs(m.position.y - y) > 0.002 || Math.abs(m.scale.x - sx) > 0.002 ||
+                Math.abs(m.scale.y - h) > 0.002 || Math.abs(m.scale.z - sz) > 0.002) {
+                changed = true;
+            }
+            m.position.set(X, y, Z);
+            m.scale.set(sx, h, sz);
+        });
+        if (changed) s.needsRender = Math.max(s.needsRender, 2);
+        return true;
+    }
+
     function projectAbove(pageX, pageY, hCss) {
         const s = session;
         if (!s || !s.camera || !s.placed) return null;
@@ -1447,7 +1543,15 @@
         const A = FELT_HALF_W_PX * (VIEW_W / ART_W);           // felt half-width, world
         const B = FELT_HALF_D_PX * (VIEW_W / ART_W) / s.sinE;  // felt half-depth (un-foreshortened)
         s.feltA = A; s.feltB = B;
-        s.feltAspect = A / B;                                   // for ~square texture tiles
+        s.feltAspect = A / B;
+
+        // Holder for the card shadow casters (see setCardCasters). Empty until
+        // content.js says what is on the table, and built with the scene, which is
+        // what carries it through the disable/enable churn of a table re-render.
+        s.casterGeo = new T.BoxGeometry(1, 1, 1);
+        s.casterMat = new T.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+        s.cardCasters = new T.Group();
+        s.scene.add(s.cardCasters);                                   // for ~square texture tiles
 
         // ---- felt surface ----
         s.feltNormal = feltNormalTexture(T);
@@ -1599,11 +1703,12 @@
         if (s.raf) cancelAnimationFrame(s.raf);
         s.enabled = false;
         [s.feltGeo, s.railGeo, s.wallGeo, s.logoGeo, s.floorGeo,
-            s.stoolSeatGeo, s.stoolLegGeo, s.stoolStretchGeo]
+            s.stoolSeatGeo, s.stoolLegGeo, s.stoolStretchGeo, s.casterGeo]
             .concat(s.chairGeos || []).forEach((g) => g && g.dispose());
         [s.feltMat, s.railMat, s.wallMat, s.logoMat, s.floorMat,
             s.stoolSeatMat, s.stoolWoodMat,
-            s.chairPadMat, s.chairPrintMat, s.chairTubeMat].forEach((m) => m && m.dispose());
+            s.chairPadMat, s.chairPrintMat, s.chairTubeMat,
+            s.casterMat].forEach((m) => m && m.dispose());
         if (s.floorMat && s.floorMat.map) s.floorMat.map.dispose();
         if (s.chairWeave) s.chairWeave.dispose();
         if (s.chairPrint) s.chairPrint.dispose();
@@ -1623,5 +1728,5 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, isOn: () => !!session, _session: () => session };
+    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setCardCasters, isOn: () => !!session, _session: () => session };
 })();

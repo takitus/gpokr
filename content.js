@@ -2863,6 +2863,7 @@
         if (rec.timer) clearTimeout(rec.timer);
         if (rec.handle) { try { rec.handle.remove(); } catch (e) {} }
         coverRelease(img);
+        syncCardCasters();   // ...and take its shadow with it
     }
 
     function unparkAllCards() {
@@ -2948,6 +2949,34 @@
         });
     }
 
+    // Tell the 3D table which cards are lying on it, so its felt can show their
+    // shadows — real ones, from the same lamp that lights the rail and the seats,
+    // rather than the stand-in surface coin3d has to invent (its cardCatcher).
+    //
+    // Only PARKED cards. A card still in the air is above the table and a shadow
+    // tracking it would be a distraction — and leaving flight out means this never
+    // has to run per frame, only when the set on the table changes.
+    //
+    // Whichever system is carrying the shadows, only one of them is: handing the
+    // job to the felt switches coin3d's catcher off, and taking it back switches
+    // it on. Two shadows under one card is worse than either.
+    function syncCardCasters() {
+        const t3d = window.GPE_TABLE3D;
+        const on = !!(t3d && typeof t3d.setCardCasters === "function" && t3d.isOn());
+        if (window.GPE_COIN && GPE_COIN.setShadowCatcher) GPE_COIN.setShadowCatcher(!on);
+        if (!on) return;
+        const list = [];
+        for (const img of dealtCards.keys()) {
+            const rec = dealtCards.get(img);
+            if (!rec || !rec.handle || !rec.handle.isParked || !rec.handle.isParked()) continue;
+            const r = rec.at;
+            if (!r) continue;
+            list.push({ left: r.left, top: r.top, width: r.width, height: r.height,
+                thick: CARD_THICK });
+        }
+        t3d.setCardCasters(list);
+    }
+
     // Parked cards ARE the board, so they have to be kept honest: followed when
     // the layout moves under them, and dropped when the slot they stand for goes
     // away without its src changing (a re-render, the table being rebuilt).
@@ -3001,6 +3030,7 @@
         // Once, after the sweep: a pair has to be arranged together, and both of
         // its slots moving is still one re-arrangement.
         if (handMoved) layoutHandCards();
+        syncCardCasters();
     }
 
     // What is on the board, from the game log, which is the only thing that
@@ -3145,6 +3175,7 @@
                 thickness: CARD_THICK,
                 onFaceUp: () => {
                     if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; }
+                    syncCardCasters();   // it is on the table now; give it a shadow
                 },
             });
             if (!rec.handle) unparkCard(img);          // nothing to show: give the real one back
@@ -6588,6 +6619,7 @@
                 for (const rec of dealtCards.values()) {
                     if (rec.handle && rec.handle.setThickness) rec.handle.setThickness(n);
                 }
+                syncCardCasters();                   // a thicker card, a bigger shadow
             });
             sl.addEventListener("change", () => saveSetting("cardThickness", clampThick(sl.value)));
             refreshers.push(() => {

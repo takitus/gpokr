@@ -150,6 +150,7 @@
         s.scene.add(catcher);
         s.cardCatcher = catcher;
         s.cards = new Set();
+        s.catcherOn = true;      // until something better offers to catch them
     }
 
     // Aim the shadow camera at the cards actually on screen, and lay the catcher
@@ -170,6 +171,10 @@
         const T = window.THREE;
         const catcher = s.cardCatcher, key = s.cardKey;
         if (!catcher || !key) return;
+        // Switched off while the 3D table is carrying the shadows: its felt is
+        // real geometry that already receives them, and two systems under one card
+        // is two shadows. See GPE_TABLE3D.setCardCasters.
+        if (!s.catcherOn) { catcher.visible = false; return; }
         if (!s.cards || !s.cards.size) { catcher.visible = false; return; }
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, zLow = Infinity;
         for (const g of s.cards) {
@@ -1349,6 +1354,18 @@
         // loop is allowed to stop rendering — a resize clears it, and nothing
         // else would put them back.
         redraw: () => { const s = session; if (s) { s.dirty = true; kick(s); } },
+        // Hand the shadows over to something with real geometry, or take them
+        // back. The catcher is a stand-in for a surface this scene does not have;
+        // when the 3D table is on, the felt IS that surface.
+        setShadowCatcher: (on) => {
+            const s = session;
+            if (!s) return;
+            const want = !!on;
+            if (s.catcherOn === want) return;
+            s.catcherOn = want;
+            s.dirty = true;
+            kick(s);
+        },
         hasCanvas: () => !!(session && session.canvas && session.canvas.isConnected),
         isRunning: () => !!(session && (session.coins.length || session.actors.length)),
         _session: () => session,
