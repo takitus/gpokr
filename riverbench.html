@@ -14,12 +14,12 @@
   #gpe-coin-layer{position:fixed;left:0;top:0;width:100%;height:100%;display:block;pointer-events:none;z-index:9}
   /* Stand-in avatars, at the size and z-index gpokr's own sit at: under the
      props layer, so what draws over a seat here draws over it there too. */
-  .av{position:absolute;width:64px;height:64px;z-index:8;box-sizing:border-box;
-      background:url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBmaWxsPSIjN2Q4Nzk4Ii8+PGNpcmNsZSBjeD0iMzIiIGN5PSIyNSIgcj0iMTQiIGZpbGw9IiNlOGQzYmQiLz48cGF0aCBkPSJNOCA2NGMwLTE0IDExLTIxIDI0LTIxczI0IDcgMjQgMjF6IiBmaWxsPSIjM2Y1ZDhhIi8+PGNpcmNsZSBjeD0iMjYiIGN5PSIyNCIgcj0iMiIgZmlsbD0iIzJiMmIyYiIvPjxjaXJjbGUgY3g9IjM4IiBjeT0iMjQiIHI9IjIiIGZpbGw9IiMyYjJiMmIiLz48cGF0aCBkPSJNMjYgMzJxNiA1IDEyIDAiIHN0cm9rZT0iIzJiMmIyYiIgc3Ryb2tlLXdpZHRoPSIxLjUiIGZpbGw9Im5vbmUiLz48L3N2Zz4=') center/cover no-repeat}
+  .av{position:absolute;width:100px;height:100px;z-index:8;box-sizing:border-box;
+      border:1px solid #8e99ad;border-radius:6px;object-fit:contain;background-color:#20242c;}
 </style>
 <div id="table" class="iogc-GameWindow-table"></div>
-<div class="av" id="from" style="left:120px;top:392px"></div>
-<div class="av" id="to" style="left:700px;top:60px"></div>
+<img class="av" id="from" style="left:120px;top:372px" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiPjxyZWN0IHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiM3ZDg3OTgiLz48Y2lyY2xlIGN4PSI0MCIgY3k9IjM4IiByPSIyMiIgZmlsbD0iI2U4ZDNiZCIvPjxwYXRoIGQ9Ik02IDEwMGMwLTIyIDE1LTMyIDM0LTMyczM0IDEwIDM0IDMyeiIgZmlsbD0iIzNmNWQ4YSIvPjxjaXJjbGUgY3g9IjMxIiBjeT0iMzYiIHI9IjMiIGZpbGw9IiMyYjJiMmIiLz48Y2lyY2xlIGN4PSI0OSIgY3k9IjM2IiByPSIzIiBmaWxsPSIjMmIyYjJiIi8+PHBhdGggZD0iTTMxIDQ4cTkgOCAxOCAwIiBzdHJva2U9IiMyYjJiMmIiIHN0cm9rZS13aWR0aD0iMi41IiBmaWxsPSJub25lIi8+PC9zdmc+">
+<img class="av" id="to" style="left:700px;top:60px" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiPjxyZWN0IHdpZHRoPSI4MCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiM3ZDg3OTgiLz48Y2lyY2xlIGN4PSI0MCIgY3k9IjM4IiByPSIyMiIgZmlsbD0iI2U4ZDNiZCIvPjxwYXRoIGQ9Ik02IDEwMGMwLTIyIDE1LTMyIDM0LTMyczM0IDEwIDM0IDMyeiIgZmlsbD0iIzNmNWQ4YSIvPjxjaXJjbGUgY3g9IjMxIiBjeT0iMzYiIHI9IjMiIGZpbGw9IiMyYjJiMmIiLz48Y2lyY2xlIGN4PSI0OSIgY3k9IjM2IiByPSIzIiBmaWxsPSIjMmIyYjJiIi8+PHBhdGggZD0iTTMxIDQ4cTkgOCAxOCAwIiBzdHJva2U9IiMyYjJiMmIiIHN0cm9rZS13aWR0aD0iMi41IiBmaWxsPSJub25lIi8+PC9zdmc+">
 <script>
   // Pretend to be the zoom under test: coin3d reads devicePixelRatio once per
   // viewport sync, which is the only thing browser zoom changes for the render.
@@ -114,7 +114,10 @@
         window.__tossed = window.GPE_PROPS.toss(item,
           rectOf(document.getElementById("from")),
           rectOf(document.getElementById("to")),
-          rectOf(document.getElementById("table")));
+          rectOf(document.getElementById("table")),
+          // Same opt content.js passes: props that occlude against the player
+          // (the life ring) clone this element over the canvas.
+          { avatar: document.getElementById("to") });
         return window.__tossed;
       };
       window.GPE_PROPS.ready(item).then(function (ok) {

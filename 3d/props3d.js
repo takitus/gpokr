@@ -165,6 +165,79 @@
         });
     }
 
+    // ---------- occluding a prop with an avatar ----------
+    // A copy of a seat's portrait, laid exactly over the real one but ABOVE the
+    // props canvas, so a prop can be made to pass BEHIND the player: everything
+    // above a given waterline is kept, so the life ring's far half vanishes
+    // behind the portrait while its near half stays in front of it.
+    //
+    // A copy of the element, rather than a description of its shape, because
+    // gpokr's portraits cannot be described from the outside. Measured across one
+    // table: they run from about 56px to about 100px across depending on the
+    // window, the page decides how round the corners are, the art inside is
+    // letterboxed rather than stretched — so the visible edge is not the
+    // element's edge, and where it falls depends on that player's own image —
+    // and some of what reads as a frame is a border rather than part of the
+    // picture. Clipping planes at the element's bounding box got all of that
+    // wrong in a way that showed: a felt-coloured gap down one side of the ring
+    // and the band lying over the frame on the other.
+    //
+    // Cloning sidesteps every one of those unknowns — same image, same box, same
+    // radius, same letterboxing — and is right on a seat this code has never
+    // measured. The cost is that it covers the top of that seat for as long as it
+    // lives, so another prop arriving there is hidden behind it. That is the same
+    // trade .gpe-dance makes with gpe-under-props, and it lasts the seven seconds
+    // the ring is on screen.
+    function avatarOccluder(el) {
+        if (!el || typeof el.getBoundingClientRect !== "function" || !document.body) return null;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) return null;
+        let clone = null;
+        try { clone = el.cloneNode(false); } catch (e) { return null; }
+        if (!clone || !clone.style) return null;
+        // The clone must not inherit page styling: the site's rules for this
+        // element are written for one sitting inside a seat's table, and so are
+        // ours. Strip the hooks and pin the computed values instead, so what gets
+        // copied is what the original actually PAINTS rather than whatever its
+        // selectors would do somewhere else in the document.
+        clone.removeAttribute("class");
+        clone.removeAttribute("id");
+        const cs = window.getComputedStyle(el);
+        // Positioned by the element's own layout size about the centre of its
+        // bounding box, not by the bounding box itself: a transformed element
+        // reports an axis-aligned box LARGER than what it paints, and re-applying
+        // the transform to that would compound the error rather than reproduce
+        // it. Untransformed — the ordinary case — the two are identical.
+        const w = el.offsetWidth || r.width, h = el.offsetHeight || r.height;
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        const top = cy - h / 2;
+        clone.style.cssText = "position:fixed;pointer-events:none;margin:0;" +
+            "left:" + (cx - w / 2) + "px;top:" + top + "px;" +
+            "width:" + w + "px;height:" + h + "px;box-sizing:border-box;" +
+            // The canvas's own layer, and later in the document than it, so it
+            // paints over it. Deliberately not a large z-index: this has to stay
+            // under gpokr's own dialogs, which sit at 10.
+            "z-index:9;";
+        for (const prop of ["border", "borderRadius", "padding", "background",
+            "objectFit", "objectPosition", "transform", "transformOrigin", "opacity"]) {
+            try { clone.style[prop] = cs[prop]; } catch (e) { /* not every property everywhere */ }
+        }
+        document.body.appendChild(clone);
+        let inset = -1;
+        return {
+            // Keep what is above `y`, a screen coordinate. inset() measures from
+            // the element's own edges, hence the subtraction — and it is skipped
+            // when nothing moved, since this runs every frame.
+            waterline(y) {
+                const next = clamp(h - (y - top), 0, h);
+                if (Math.abs(next - inset) < 0.5) return;
+                inset = next;
+                clone.style.clipPath = "inset(0 0 " + next.toFixed(1) + "px 0)";
+            },
+            remove() { if (clone.parentNode) clone.parentNode.removeChild(clone); },
+        };
+    }
+
     const warned = Object.create(null);
     function warnOnce(key, why) {
         if (warned[key]) return false;
@@ -1888,24 +1961,22 @@
         // flat layer over the page at z 9 with the avatars as DOM underneath, so
         // a prop is either wholly in front of a seat or wholly behind it: no
         // amount of z-ordering puts the ring's far band behind a head and its
-        // near band in front of the same chest. What does is CUTTING the ring —
-        // the far half of it is clipped away exactly where the portrait covers
-        // it, and the canvas being transparent there means the real avatar shows
-        // through the hole it leaves. Outside the portrait the far band carries
-        // on, so it reads as passing behind them and coming out the other side.
+        // near band in front of the same chest. What does is putting a COPY of
+        // the portrait back on top of the canvas and keeping only the part of it
+        // above the ring's own centre line — see avatarOccluder. The far half
+        // then has a portrait in front of it and the near half does not, which is
+        // exactly the sorting a flat layer cannot express. Outside the portrait
+        // the far band carries on, so it reads as passing behind them and coming
+        // out the other side.
         //
-        // The region to remove is (behind the ring's own centre plane) AND
-        // (inside the portrait) — an intersection of five half-spaces, and
-        // clipping planes remove a union, not an intersection. So the five are
-        // flipped to name what is KEPT: in front of centre, or left of the
-        // portrait, or right of it, or above it, or below it. clipIntersection
-        // then keeps anything satisfying at least one of them, which is the
-        // complement of the intersection — the cut wanted, exactly.
-        //
-        // The planes live on this ring's own cloned materials, so nothing else on
-        // the layer is touched. That is the reason for doing it this way rather
-        // than with an invisible depth-writing proxy at the seat, which is fewer
-        // lines and would quietly swallow any other prop that passed behind it.
+        // This began as five clipping planes describing the portrait's box on the
+        // ring's own materials, which was tidier — it touched nothing else on the
+        // layer. It was also wrong on the real table, because a portrait's box is
+        // not its shape: the element's bounding rect is not where the picture's
+        // edge falls (the art is letterboxed inside it, differently per player),
+        // so the cut landed beside the frame instead of on it — felt showing
+        // through on one side, band lying over the frame on the other. Copying
+        // the element cannot be wrong about a shape it never has to measure.
         //
         // TILT comes from the river's LEAN rather than being eyeballed: LEAN is
         // cos(E) for the table's elevation E, a circle lying flat projects to an
@@ -1945,6 +2016,18 @@
             // the face; a sixth of a height down wears it on the shoulders and
             // leaves the face clear inside the top of the ring.
             SIT: 0.16,
+            // The ring has to be WIDER than the portrait or there is no wrap to
+            // see: a portrait runs anywhere from ~56px to ~100px across depending
+            // on the window, and at 100px a 96px ring sits entirely inside it —
+            // the occluder would then cover the whole far half and most of the
+            // sides, leaving what looks like a broken arc rather than a ring
+            // around someone. So the size has a floor relative to the portrait,
+            // applied as a multiplier on the catalog height.
+            //
+            // It is a floor and not a ratio on purpose: at the small end 96px is
+            // already 1.7x the portrait and looks right, and rescaling it there
+            // would only make it smaller for no reason.
+            OVER_AV: 1.35,      // minimum ring width, in portrait widths
             Z: 10,              // over everything else at a seat, including the gloves
             build(T, ctx, spec, opts) {
                 const M = MOTIONS.ring;
@@ -1965,36 +2048,19 @@
                 const avH = (ctx.toSize && ctx.toSize.h) || 64;
                 const avW = (ctx.toSize && ctx.toSize.w) || 64;
                 const rest = { x: ctx.to.x, y: ctx.to.y + avH * M.SIT };
+                // Never smaller than the catalog size, only bigger when the
+                // portrait demands it. See OVER_AV.
+                const grow = Math.max(1, avW * M.OVER_AV / (spec.height || 96));
+                // The portrait copy that does the occluding. Built when the drop
+                // starts rather than at launch: nothing needs hiding while the
+                // ring is still on its way over, and a clone parked on a seat for
+                // the whole flight would hide anything else arriving there.
+                let occ = null;
+                const armOccluder = () => {
+                    if (occ || !opts.avatar) return;
+                    occ = avatarOccluder(opts.avatar);
+                };
 
-                // The cut, as five planes over the portrait's own box. World y is
-                // negative screen y here, hence the sign flips on the last two.
-                // A three plane keeps normal·p + constant > 0.
-                //
-                // The near/far split is the ring's CENTRE plane, z = M.Z: the rig
-                // only ever rotates about its own centre and bobs in y, so the
-                // split never moves, and the whole far band stays behind it —
-                // the tube is 15px deep either side of the ring's line at this
-                // size, against the 29px the band itself stands off centre.
-                //
-                // Parked at 1e6 until the drop starts, which keeps everything: an
-                // unclipped flight costs no shader recompile later, since only
-                // these constants change and they are plain uniforms.
-                const V = (x, y, z) => new T.Vector3(x, y, z);
-                const nearPlane = new T.Plane(V(0, 0, 1), 1e6);
-                const cut = [
-                    nearPlane,                                           // in front of centre
-                    new T.Plane(V(-1, 0, 0), ctx.to.x - avW / 2),        // ...or left of the portrait
-                    new T.Plane(V(1, 0, 0), -(ctx.to.x + avW / 2)),      // ...or right of it
-                    new T.Plane(V(0, 1, 0), ctx.to.y - avH / 2),         // ...or above it
-                    new T.Plane(V(0, -1, 0), -(ctx.to.y + avH / 2)),     // ...or below it
-                ];
-                mesh.traverse((n) => {
-                    const mats = n.material ? (Array.isArray(n.material) ? n.material : [n.material]) : [];
-                    for (const m of mats) {
-                        m.clippingPlanes = cut;
-                        m.clipIntersection = true;   // keep the union, i.e. cut the intersection
-                    }
-                });
                 const hover = { x: rest.x, y: rest.y - M.DROP_H };
                 // Thrown from the sender's seat when we know it, otherwise lobbed
                 // in off the near rail — the same fallback the slide uses, and the
@@ -2015,7 +2081,11 @@
                     rig.rotation.z = roll;
                     lean.rotation.x = TILT + rock;
                     spinner.rotation.y = spin;
-                    rig.scale.setScalar(scale);
+                    rig.scale.setScalar(scale * grow);
+                    // The ring's centre IS the near/far boundary — every point
+                    // below it on screen is the half nearer the viewer — so the
+                    // portrait copy is kept exactly down to here.
+                    if (occ) occ.waterline(y);
                 };
 
                 const actor = {
@@ -2035,10 +2105,12 @@
                             return true;
                         }
                         if (t < M.FLY + M.DROP) {
-                            // Arm the cut for the descent: the far band is still
-                            // clear of the portrait up here, so it comes in as the
-                            // ring sinks over the head instead of switching on.
-                            nearPlane.constant = -M.Z;
+                            // Arm the occluder for the descent. The waterline is
+                            // still above the portrait up here, so it hides
+                            // nothing yet and the portrait creeps up over the far
+                            // band as the ring sinks over the head, rather than
+                            // the wrap switching on all at once.
+                            armOccluder();
                             const p = easeInQuad((t - M.FLY) / M.DROP);   // it falls
                             put(hover.x, lerp(hover.y, rest.y, p), 0, 0, lerp(M.GROW, 1, p));
                             return true;
@@ -2077,6 +2149,10 @@
                         setAlpha(rig, alpha);
                         return true;
                     },
+                    // Runs on the way out however that happens — the ring fading
+                    // out, or capLive retiring an older one, which replaces step()
+                    // and so would never reach any cleanup inside it.
+                    dispose() { if (occ) { occ.remove(); occ = null; } },
                 };
                 put(start.x, start.y, M.SETTLE_ROCK, M.SETTLE_ROLL * 0.6, 1);
                 return actor;

@@ -586,13 +586,6 @@
                 canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
             });
             s.renderer.setClearColor(0x000000, 0);
-            // Per-material clipping planes, for props that have to be cut by
-            // something outside the scene — the life ring is clipped where the
-            // avatar's portrait covers it, so it reads as worn rather than as
-            // drawn on top (see MOTIONS.ring). Off by default in three, and a
-            // material that sets no clippingPlanes compiles exactly as before,
-            // so this costs nothing for everything else on the layer.
-            s.renderer.localClippingEnabled = true;
             s.renderer.outputColorSpace = T.SRGBColorSpace;
             s.camera = new T.OrthographicCamera(0, 1, 0, -1, -2000, 2000);
             s.camera.position.set(0, 0, 500);

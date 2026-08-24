@@ -890,6 +890,13 @@
                 denom: denom,
                 onHit: landed,
                 onArrive: landed,
+                // The avatar ELEMENT, not just its rect: the life ring passes
+                // behind the player, which it does by copying their portrait over
+                // the props canvas (props3d's avatarOccluder). A rect cannot
+                // stand in for it — gpokr's portraits are letterboxed inside
+                // boxes that differ seat to seat, so the visible edge is not the
+                // element's edge. Every other item ignores it.
+                avatar: target,
             });
         });
     }
