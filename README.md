@@ -29,6 +29,7 @@ Hover the button on another player's avatar to open a small menu of things to se
 
 - **🪙 chip** — a real 3D chip arcs from your seat, bounces off their avatar and settles on the felt.
 - **🍺 beer** — slides across the table, stays upright, and sits on the rail in front of them for ten seconds.
+- **🛟 life ring** — lobbed over a player who's going down with the ship: it drops over their avatar, settles, and bobs there for five seconds as if they were treading water.
 
 Unlike the older local-only chip toss, these **propagate**: everyone at the table running the extension sees the same throw, at the same time, because the animation plays from the event the server broadcasts back rather than from your click. A send the server refuses (you're watching, you're muted, or you're inside the cooldown) shows as nothing happening, which is the truth.
 
@@ -133,6 +134,7 @@ Nothing is sent anywhere — no servers, no analytics, no permissions beyond `st
 | `overlay.css` | styles for all injected UI |
 | `launch-debug-chrome.sh` | starts a dedicated Chrome with remote debugging on :9222 (separate profile) for live DOM inspection |
 | `tools/deck_hashes.py` | regenerates the four-color deck's `DECK_HASHES` table from the live site — run it if the recoloring stops working |
+| `tools/drop-node.js` | strips named objects out of a model export before `tools/optimize-model.sh` (the life ring's rope loop is the case it exists for) |
 | `tools/make_cardbacks.py` | draws `assets/backs/*.png`; `--preview` writes a magnified sheet to `assets-src/` (not shipped) |
 
 After editing, reload the extension at `chrome://extensions` and refresh the gpokr tab. Content-script crashes don't appear in the page console — check **Errors** on the extension's card at `chrome://extensions`.

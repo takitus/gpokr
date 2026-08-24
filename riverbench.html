@@ -12,8 +12,14 @@
   html,body{margin:0;background:#0e0f12;height:100%}
   #table{position:absolute;left:40px;top:40px;width:790px;height:396px;background:#1b1d22}
   #gpe-coin-layer{position:fixed;left:0;top:0;width:100%;height:100%;display:block;pointer-events:none;z-index:9}
+  /* Stand-in avatars, at the size and z-index gpokr's own sit at: under the
+     props layer, so what draws over a seat here draws over it there too. */
+  .av{position:absolute;width:64px;height:64px;z-index:8;box-sizing:border-box;
+      background:url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBmaWxsPSIjN2Q4Nzk4Ii8+PGNpcmNsZSBjeD0iMzIiIGN5PSIyNSIgcj0iMTQiIGZpbGw9IiNlOGQzYmQiLz48cGF0aCBkPSJNOCA2NGMwLTE0IDExLTIxIDI0LTIxczI0IDcgMjQgMjF6IiBmaWxsPSIjM2Y1ZDhhIi8+PGNpcmNsZSBjeD0iMjYiIGN5PSIyNCIgcj0iMiIgZmlsbD0iIzJiMmIyYiIvPjxjaXJjbGUgY3g9IjM4IiBjeT0iMjQiIHI9IjIiIGZpbGw9IiMyYjJiMmIiLz48cGF0aCBkPSJNMjYgMzJxNiA1IDEyIDAiIHN0cm9rZT0iIzJiMmIyYiIgc3Ryb2tlLXdpZHRoPSIxLjUiIGZpbGw9Im5vbmUiLz48L3N2Zz4=') center/cover no-repeat}
 </style>
 <div id="table" class="iogc-GameWindow-table"></div>
+<div class="av" id="from" style="left:120px;top:392px"></div>
+<div class="av" id="to" style="left:700px;top:60px"></div>
 <script>
   // Pretend to be the zoom under test: coin3d reads devicePixelRatio once per
   // viewport sync, which is the only thing browser zoom changes for the render.
@@ -21,6 +27,28 @@
     var q = new URLSearchParams(location.search);
     var dpr = parseFloat(q.get("dpr"));
     if (dpr > 0) Object.defineProperty(window, "devicePixelRatio", { get: function () { return dpr; } });
+  })();
+  // Hand-cranked clock, for anything shorter than a screenshot round-trip.
+  // ?manual=1 parks the render loop and __step(ms) walks it forward — coin3d
+  // takes its dt straight off the rAF timestamp (see frame()), so feeding it a
+  // clock we control makes a 0.5s flight inspectable frame by frame instead of
+  // being over before the screenshot lands. dt there is clamped to 50ms, so the
+  // slice has to stay under that or time is silently lost.
+  (function () {
+    if (new URLSearchParams(location.search).get("manual") !== "1") return;
+    var pending = [], clock = 0;
+    window.requestAnimationFrame = function (cb) { pending.push(cb); return pending.length; };
+    window.cancelAnimationFrame = function () {};
+    window.__step = function (ms, sliceMs) {
+      var slice = Math.min(sliceMs || 16, 40);
+      var n = Math.max(1, Math.round(ms / slice));
+      for (var i = 0; i < n; i++) {
+        clock += slice;
+        var due = pending; pending = [];
+        for (var j = 0; j < due.length; j++) { try { due[j](clock); } catch (e) {} }
+      }
+      return clock;
+    };
   })();
 </script>
 <script src="vendor/three.iife.js"></script>
@@ -72,6 +100,29 @@
       window.__held = window.GPE_PROPS.holdRiver(0.6, window.__rect);
     };
     window.__build = build;
+    // ?item=<catalog key> lobs one prop at the "to" avatar instead of holding a
+    // river: the ordinary toss() path, so what shows up here is what a player
+    // gets. Everything else on the page stays as it was.
+    var item = q.get("item");
+    if (item) {
+      var rectOf = function (el) {
+        var b = el.getBoundingClientRect();
+        return { left: b.left, top: b.top, right: b.right, bottom: b.bottom,
+          width: b.width, height: b.height };
+      };
+      window.__throw = function () {
+        window.__tossed = window.GPE_PROPS.toss(item,
+          rectOf(document.getElementById("from")),
+          rectOf(document.getElementById("to")),
+          rectOf(document.getElementById("table")));
+        return window.__tossed;
+      };
+      window.GPE_PROPS.ready(item).then(function (ok) {
+        window.__ready = ok;
+        if (ok) window.__throw();
+      });
+      return;
+    }
     window.GPE_PROPS.ready("river").then(build);
     // A zoom change resizes the window, so this rebuilds the river at the new
     // devicePixelRatio and reprints the diag — one pair of lines per zoom step.

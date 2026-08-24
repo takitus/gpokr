@@ -102,8 +102,35 @@
             settleFlat: { face: [0, 1, 0], long: [1, 0, 0] },
         },
         bone:   { model: "bone.glb",   height: 58, motion: "throw", maxLive: 8, glyph: "🦴", label: "bone",   cooldownMs: 2000, sound: "check", launchSound: "fold" },
+        // A life ring, lobbed over a player who is going down with the ship. No
+        // pose keys on purpose: MOTIONS.ring builds its own three-group rig so it
+        // can drive the lean, the roll and the spin about the ring's own axis
+        // separately, and a pose baked in here would be one more rotation for
+        // those to fight over. Unposed the model measures 252 across by 52 thick,
+        // so `height` scales its OUTER WIDTH (normalize's non-sphere branch takes
+        // max(x, y) of the projected box): 96px around a 64px avatar leaves a
+        // ~57px hole for the face and ~16px of ring standing out either side of
+        // the portrait, which is what makes it read as worn rather than dropped
+        // on. Measured at 95 x 81.5 on screen once it settles.
+        //
+        // The shipped model is the ring ALONE. The export also has a rope loop
+        // (Rectangle_sweep) out at radius 142 against the ring's 126, which drew
+        // as a thin square outline around it and, being the widest thing in the
+        // file, took 12% off the ring body for any given `height`. It is dropped
+        // on the way in — see tools/drop-node.js, which records the two commands
+        // — and the raw export in assets-src/ still has it, so it can come back.
+        float: {
+            model: "float.glb", height: 96,
+            motion: "ring", maxLive: 3,
+            // 🛟 is Emoji 14 (2021) — the newest glyph in the menu by a decade.
+            // It is the only one that IS a life ring, so it is worth the vintage,
+            // but anyone still on Windows 10 gets tofu where the rest get a
+            // picture. ⛑ (Emoji 1.0) is the fallback if that ever matters.
+            glyph: "🛟", label: "life ring", cooldownMs: 6000,
+            sound: "check", launchSound: "fold",
+        },
     };
-    const ORDER = ["beer", "flower", "glove", "acorn", "peanut", "cashew", "bone"];
+    const ORDER = ["beer", "flower", "glove", "acorn", "peanut", "cashew", "bone", "float"];
 
     const MODEL_DIR = "assets/models/";
     const LOAD_TIMEOUT_MS = 8000;
@@ -1846,6 +1873,162 @@
             },
         },
 
+        // A life ring, lobbed over someone and left floating around them — the
+        // gesture you make at a player who is drowning. Three things have to be
+        // true or the joke doesn't land: it has to arrive as a RING and not a
+        // disc, it has to end up AROUND the avatar rather than lying on top of
+        // it, and it has to keep moving afterwards, because a life preserver
+        // sitting perfectly still is just a doughnut.
+        //
+        // The first two are one trick, and the camera does the work. gpokr's
+        // table is drawn from a near-top-down elevation, and from up there a ring
+        // lying flat around a swimmer reads as a full ellipse with the swimmer
+        // inside it — no part of it needs to pass BEHIND them. That matters more
+        // than it looks: the props canvas is one flat layer over the page at z 9
+        // and the avatar is DOM underneath it, so a prop is either wholly in front
+        // of a seat or wholly behind it. Nothing here can thread through an
+        // avatar, and at this elevation nothing has to.
+        //
+        // So the ring is posed to lie in the table's own plane and drawn over the
+        // seat, and the avatar shows through the hole. TILT comes from the river's
+        // LEAN rather than being eyeballed: LEAN is cos(E) for the table's
+        // elevation E, a circle lying flat projects to an ellipse squashed to
+        // sin(E), and rotation.x = acos(LEAN) is the angle that gives both at once
+        // — so the ring agrees with the river about which way the table is tipped.
+        //
+        // The rig is three nested groups, one rotation each, because they are
+        // three different axes and one Euler triple would make their order matter:
+        // roll is in the screen plane (outermost), lean is about screen x, and the
+        // spin is about the ring's OWN axis, which only exists inside the lean.
+        // Same reason normalize() wraps each catalog pose in its own group.
+        ring: {
+            FLY: 0.52,          // s, the thrower's rail to a hover over the target
+            ARC: 92,            // px the lob rises above the straight line
+            DROP: 0.34,         // s, dropping over them
+            DROP_H: 54,         // px up-screen of its resting spot that the drop starts
+            SETTLE: 0.6,        // s of damped rocking once it is over them
+            SETTLE_ROCK: 0.26,  // rad of lean wobble at the moment it lands
+            SETTLE_ROLL: 0.2,   // ...and of in-plane roll, a quarter-period behind it
+            SETTLE_HOP: 6,      // px it rebounds after landing
+            REST_MS: 5200,      // how long it floats there before going
+            FADE_MS: 900,
+            // The idle. Three periods, none of them multiples of each other, so it
+            // reads as water rather than as a loop: a ring bobbing on a 2.6s cycle
+            // while rocking on a 3.6s one never repeats inside its own lifetime.
+            BOB: 3.6, BOB_PERIOD: 2.6,
+            IDLE_ROCK: 0.05, IDLE_ROCK_PERIOD: 3.6,
+            IDLE_ROLL: 0.07, IDLE_ROLL_PERIOD: 2.1,
+            SPIN: 7.4,          // rad/s about its own axis at launch
+            SPIN_DECAY: 2.6,    // e-folds per second; it is still turning as it lands
+            GROW: 1.06,         // scale on the way down, easing back to 1 as it settles
+            // Resting centre, in avatar heights BELOW the middle of the portrait.
+            // The avatars are head-and-shoulders, so dead centre puts the hole over
+            // the face; a sixth of a height down wears it on the shoulders and
+            // leaves the face clear inside the top of the ring.
+            SIT: 0.16,
+            Z: 10,              // over everything else at a seat, including the gloves
+            build(T, ctx, spec, opts) {
+                const M = MOTIONS.ring;
+                const mesh = instance(T, ctx.key);
+                if (!mesh) return null;
+
+                // See the note above: acos(LEAN) leans the ring's axis out of the
+                // screen exactly as far as the table's own up vector is leaned.
+                const TILT = Math.acos(MOTIONS.river.LEAN);
+
+                const spinner = new T.Group();   // about the ring's own axis
+                spinner.add(mesh);
+                const lean = new T.Group();      // about screen x: how flat it lies
+                lean.add(spinner);
+                const rig = new T.Group();       // in the screen plane, and positioned
+                rig.add(lean);
+
+                const avH = (ctx.toSize && ctx.toSize.h) || 64;
+                const rest = { x: ctx.to.x, y: ctx.to.y + avH * M.SIT };
+                const hover = { x: rest.x, y: rest.y - M.DROP_H };
+                // Thrown from the sender's seat when we know it, otherwise lobbed
+                // in off the near rail — the same fallback the slide uses, and the
+                // arc reads the same either way.
+                const start = ctx.from
+                    ? { x: ctx.from.x, y: ctx.from.y }
+                    : (ctx.felt ? { x: ctx.felt.cx, y: ctx.felt.cy }
+                        : { x: rest.x, y: rest.y + 220 });
+
+                // Every ring gets its own phases, so two of them floating at
+                // neighbouring seats don't bob in lockstep.
+                const ph = [rand(0, Math.PI * 2), rand(0, Math.PI * 2), rand(0, Math.PI * 2)];
+                const spinDir = Math.random() < 0.5 ? -1 : 1;
+                let t = 0, spin = 0, resting = 0, landed = false;
+
+                const put = (x, y, rock, roll, scale) => {
+                    rig.position.set(x, -y, M.Z);
+                    rig.rotation.z = roll;
+                    lean.rotation.x = TILT + rock;
+                    spinner.rotation.y = spin;
+                    rig.scale.setScalar(scale);
+                };
+
+                const actor = {
+                    object3D: rig,
+                    step(dt) {
+                        t += dt;
+                        // Still turning when it arrives, which is what makes the
+                        // drop read as a catch rather than as a placement.
+                        spin += spinDir * M.SPIN * Math.exp(-M.SPIN_DECAY * t) * dt;
+
+                        if (t < M.FLY) {
+                            const p = t / M.FLY;
+                            put(lerp(start.x, hover.x, p),
+                                lerp(start.y, hover.y, p) - M.ARC * Math.sin(Math.PI * p),
+                                // Comes in banked and levels off as it arrives.
+                                M.SETTLE_ROCK * (1 - p), M.SETTLE_ROLL * (1 - p) * 0.6, 1);
+                            return true;
+                        }
+                        if (t < M.FLY + M.DROP) {
+                            const p = easeInQuad((t - M.FLY) / M.DROP);   // it falls
+                            put(hover.x, lerp(hover.y, rest.y, p), 0, 0, lerp(M.GROW, 1, p));
+                            return true;
+                        }
+                        if (!landed) {
+                            landed = true;
+                            if (opts.onHit) { try { opts.onHit(); } catch (e) {} }
+                            else if (opts.onArrive) { try { opts.onArrive(); } catch (e) {} }
+                        }
+                        if (t < M.FLY + M.DROP + M.SETTLE) {
+                            // Damped: about a turn and a half of rocking, squared
+                            // falloff, with the roll a quarter period behind the
+                            // lean so it wallows instead of pumping.
+                            const k = (t - M.FLY - M.DROP) / M.SETTLE;
+                            const d = (1 - k) * (1 - k);
+                            const w = k * Math.PI * 3;
+                            put(rest.x, rest.y - M.SETTLE_HOP * d * Math.abs(Math.sin(w)),
+                                M.SETTLE_ROCK * d * Math.cos(w),
+                                M.SETTLE_ROLL * d * Math.sin(w), 1);
+                            return true;
+                        }
+
+                        // Afloat. Kept up while it fades, so it goes on bobbing on
+                        // the way out rather than freezing and then vanishing.
+                        const f = t - M.FLY - M.DROP - M.SETTLE;
+                        const wave = (amp, period, phase) =>
+                            amp * Math.sin(f / period * 2 * Math.PI + phase);
+                        put(rest.x, rest.y + wave(M.BOB, M.BOB_PERIOD, ph[0]),
+                            wave(M.IDLE_ROCK, M.IDLE_ROCK_PERIOD, ph[1]),
+                            wave(M.IDLE_ROLL, M.IDLE_ROLL_PERIOD, ph[2]), 1);
+
+                        resting += dt * 1000;
+                        if (resting <= M.REST_MS) return true;
+                        const alpha = 1 - (resting - M.REST_MS) / M.FADE_MS;
+                        if (alpha <= 0) return false;
+                        setAlpha(rig, alpha);
+                        return true;
+                    },
+                };
+                put(start.x, start.y, M.SETTLE_ROCK, M.SETTLE_ROLL * 0.6, 1);
+                return actor;
+            },
+        },
+
         // A PAIR of gloves applauding in front of a standing avatar. Both hands
         // are one actor: they can never drift apart, and one object3D means
         // coin3d's removeActor frees both sets of materials.
@@ -2054,7 +2237,11 @@
             dir = { x: dx / len, y: dy / len };
         }
 
-        const actor = motion.build(T, { key: key, to: to, from: from, felt: felt, dir: dir }, spec, o);
+        // toSize rides along because one motion needs the target's SIZE and not
+        // just its centre: the life ring sits a fraction of an avatar height low,
+        // so it wears on the shoulders at any table scale rather than at one.
+        const toSize = { w: toRect.width, h: toRect.height };
+        const actor = motion.build(T, { key: key, to: to, from: from, felt: felt, dir: dir, toSize: toSize }, spec, o);
         if (!actor) return false;
         if (!GPE_COIN.addActor(actor)) return false;
         capLive(key, spec, actor);
