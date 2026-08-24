@@ -125,37 +125,79 @@
         const key = new T.DirectionalLight(0xfff8ec, CARD_KEY);
         key.position.set(CARD_KEY_DIR[0], CARD_KEY_DIR[1], CARD_KEY_DIR[2]);
         key.layers.set(CARD_LAYER);
-        s.scene.add(amb, key);
+        key.castShadow = true;
+        key.shadow.mapSize.set(2048, 2048);
+        // Our units are CSS pixels, so these read directly: half a pixel of slope
+        // bias and a pixel along the normal, which is enough to keep a card's own
+        // face out of its own shadow without the shadow crawling away from the
+        // edge that casts it.
+        key.shadow.bias = -0.0004;
+        key.shadow.normalBias = 1;
+        s.scene.add(amb, key, key.target);
+        s.cardKey = key;
+
+        // The shadow catcher. Nothing in this scene can receive a shadow — the
+        // felt is the PAGE, underneath the canvas — and this is the piece that
+        // makes real shadows possible anyway: ShadowMaterial draws only what is
+        // shadowed and stays transparent everywhere else, so the plane is
+        // invisible and its shadows composite straight over whatever the site has
+        // drawn down there.
+        const catcher = new T.Mesh(new T.PlaneGeometry(1, 1),
+            new T.ShadowMaterial({ opacity: CARD_SHADOW_OPACITY, transparent: true }));
+        catcher.receiveShadow = true;
+        catcher.layers.set(CARD_LAYER);
+        catcher.visible = false;                 // ...until there is a card to shade
+        s.scene.add(catcher);
+        s.cardCatcher = catcher;
+        s.cards = new Set();
     }
 
-    // The shadow a card drops. Card-shaped rather than the coin's radial blob: a
-    // rectangle's shadow has corners.
+    // Aim the shadow camera at the cards actually on screen, and lay the catcher
+    // under them.
     //
-    // And TIGHT. A card resting on felt has a contact shadow — a hard, close,
-    // dark line under its edge — not a soft halo. The first version was blurred
-    // 9px and offset up to 11px, which is the shadow of a card held an inch above
-    // the table, and it read exactly like that: floating. 4px of blur and about a
-    // pixel of offset is a card lying on something.
-    function cardShadowTexture(T) {
-        const S = 128, PAD = 8, R = 10;
-        const cv = document.createElement("canvas");
-        cv.width = cv.height = S;
-        const g = cv.getContext("2d");
-        if (!g) return null;
-        try { g.filter = "blur(4px)"; } catch (e) { /* drawn hard, still passable */ }
-        g.fillStyle = "rgba(0,0,0,0.72)";
-        const w = S - PAD * 2, h = S - PAD * 2;
-        g.beginPath();
-        g.moveTo(PAD + R, PAD);
-        g.arcTo(PAD + w, PAD, PAD + w, PAD + h, R);
-        g.arcTo(PAD + w, PAD + h, PAD, PAD + h, R);
-        g.arcTo(PAD, PAD + h, PAD, PAD, R);
-        g.arcTo(PAD, PAD, PAD + w, PAD, R);
-        g.closePath();
-        g.fill();
-        const tex = new T.CanvasTexture(cv);
-        tex.colorSpace = T.SRGBColorSpace;
-        return tex;
+    // Both have to follow the cards rather than cover the viewport: a directional
+    // light's shadow map is an orthographic box, and one stretched over 1700px of
+    // page spends its 2048 texels at barely one per pixel, which turns a card's
+    // edge into a soft grey smear. Fitted to the cards it is three or four texels
+    // per pixel and the edge is an edge.
+    //
+    // The catcher sits at the UNDERSIDE of the lowest card, not below it. That is
+    // the whole difference between a contact shadow and a floating one: the
+    // further the receiving surface is from the caster, the further the light
+    // throws the shadow sideways. At the card's own underside the offset is
+    // nothing, which is what a card lying on a table looks like.
+    function fitCardShadows(s) {
+        const T = window.THREE;
+        const catcher = s.cardCatcher, key = s.cardKey;
+        if (!catcher || !key) return;
+        if (!s.cards || !s.cards.size) { catcher.visible = false; return; }
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, zLow = Infinity;
+        for (const g of s.cards) {
+            const hw = Math.abs(g.scale.x) / 2, hh = Math.abs(g.scale.y) / 2;
+            x0 = Math.min(x0, g.position.x - hw); x1 = Math.max(x1, g.position.x + hw);
+            y0 = Math.min(y0, g.position.y - hh); y1 = Math.max(y1, g.position.y + hh);
+            zLow = Math.min(zLow, g.position.z - Math.abs(g.scale.z) / 2);
+        }
+        if (!isFinite(x0)) { catcher.visible = false; return; }
+        const pad = 40;
+        x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+        const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+        catcher.visible = true;
+        catcher.position.set(cx, cy, zLow);
+        catcher.scale.set(x1 - x0, y1 - y0, 1);
+
+        // A directional light lights by DIRECTION, but its shadow camera sits at
+        // its position and looks at its target — so the light has to be moved to
+        // hang over the cards, keeping the same direction.
+        const d = new T.Vector3(CARD_KEY_DIR[0], CARD_KEY_DIR[1], CARD_KEY_DIR[2]).normalize();
+        const dist = Math.max(x1 - x0, y1 - y0) + 400;
+        key.target.position.set(cx, cy, zLow);
+        key.position.set(cx + d.x * dist, cy + d.y * dist, zLow + d.z * dist);
+        const half = Math.max(x1 - x0, y1 - y0) * 0.75;
+        const cam = key.shadow.camera;
+        cam.left = -half; cam.right = half; cam.top = half; cam.bottom = -half;
+        cam.near = 1; cam.far = dist * 2.2;
+        cam.updateProjectionMatrix();
     }
 
     // ---------- layer ----------
@@ -214,7 +256,6 @@
         s.scene.add(rim);
 
         s.shadowTex = shadowTexture(T);
-        s.cardShadowTex = cardShadowTexture(T);
         cardLights(T, s);
 
         // Same proportions as the chips the portal drops, scaled to CSS px.
@@ -338,6 +379,7 @@
     // viewer. Intensities are solved rather than picked — see cardLights().
     const CARD_KEY_DIR = [-6, 15, 11];
     const CARD_AMBIENT = 0.66, CARD_KEY = 0.6;
+    const CARD_SHADOW_OPACITY = 0.34;
     // The slab's corner radius, in the card's own 1x1 box. TWO numbers because
     // the group scales x and y independently (a 53x69 card out of a unit
     // geometry), so a corner that comes out circular on screen has to be
@@ -490,22 +532,18 @@
         back.position.z = -0.5;
         back.rotation.y = Math.PI;   // faces outward, and mirrors the back's art
 
-        // The shadow, as a child so it is carried along and scaled by the card's
-        // own transform: local x and y are the card's box, so a quad of 1.1 is
-        // 10% wider than the card whatever size the card is. Unlit and on the
-        // card layer, behind everything else in z.
-        const shTex = ensureSession() && session.cardShadowTex;
-        const shadow = shTex ? new T.Mesh(geo.quad, new T.MeshBasicMaterial({
-            map: shTex, transparent: true, depthWrite: false, opacity: 0.9,
-        })) : null;
+        // The slab casts; the face receives. Which is what gets a card shadowed by
+        // the card lying on top of it — the seam a stacked pair needs — for
+        // nothing, because it is the same shadow map.
+        slab.castShadow = true;
+        slab.receiveShadow = true;
+        front.receiveShadow = true;
 
         const group = new T.Group();
         group.add(slab, front, back);
-        if (shadow) group.add(shadow);
         // Layers are per-object and NOT inherited from the group, so every mesh
         // has to be moved onto the cards' layer by hand.
         for (const m of group.children) m.layers.set(CARD_LAYER);
-        group.userData.gpeShadow = shadow;
         // The face texture is per-card and has to be freed by hand: three's
         // Material.dispose() releases the material, never the textures on it.
         // The back is cached and shared, so it is deliberately left alone.
@@ -577,6 +615,7 @@
         const group = cardMesh(T, faceImg, o.backStyle);
         if (!group) return null;
         s.scene.add(group);
+        s.cards.add(group);
 
         const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
         // Scaling the unit planes is what sizes the card, so it lands exactly the
@@ -626,25 +665,6 @@
             const faceH = Math.max(1, atH * scale - edge) / Math.cos(lean);
             group.scale.set(atW * scale, faceH, thick);
 
-            const sh = group.userData.gpeShadow;
-            if (sh) {
-                // Positioned in LOCAL units, so it is a fraction of the card
-                // whatever size the card is, and it grows and slides further out
-                // as the card thickens — a card standing higher off the felt
-                // throws its shadow further. Down and to the right, because the
-                // light is up and to the left (CARD_KEY_DIR).
-                // About a pixel on a 75px card, creeping out as it thickens: a
-                // card standing higher off the felt does throw its shadow
-                // further, just nowhere near as far as the first version did.
-                const drop = 0.012 + thick * 0.0015;
-                sh.position.set(drop * 0.6, -drop, -0.55);
-                // 1.143, because the blur is padding INSIDE the texture: 8px of
-                // 128 at each edge leaves the solid part 87.5% of it, so the quad
-                // has to be 1/0.875 for that part to cover the card.
-                const spread = 1.143 + thick * 0.002;
-                sh.scale.set(spread, spread, 1);
-                sh.material.opacity = Math.min(0.9, 0.5 + thick * 0.012);
-            }
         };
         if (o.instant) {
             // Placed now rather than on the first step, so there is no frame with
@@ -714,6 +734,7 @@
                 if (gone) return;
                 gone = true;
                 actor.step = () => false;           // stop it if still animating
+                s.cards.delete(group);
                 s.scene.remove(group);
                 // Ours to free: the per-card materials and the face texture.
                 // (three's Material.dispose() never frees the textures on it, and
@@ -1092,6 +1113,7 @@
             if (s.dirty) {
                 s.dirty = false;
                 syncViewport(s);
+                fitCardShadows(s);
                 s.renderer.render(s.scene, s.camera);
             }
             s.idle += dt;
@@ -1123,6 +1145,7 @@
         }
         for (const c of s.coins.slice()) if (c.phase === "fade" && c.alpha <= 0) removeCoin(s, c);
         place(s);
+        fitCardShadows(s);
         s.renderer.render(s.scene, s.camera);
     }
 
@@ -1150,6 +1173,11 @@
                 canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
             });
             s.renderer.setClearColor(0x000000, 0);
+            // For the cards. Nothing else in here casts: the chips carry a painted
+            // shadow sprite of their own, which is right for a disc bouncing
+            // across a felt nobody has modelled.
+            s.renderer.shadowMap.enabled = true;
+            s.renderer.shadowMap.type = T.PCFSoftShadowMap;
             s.renderer.outputColorSpace = T.SRGBColorSpace;
             s.camera = new T.OrthographicCamera(0, 1, 0, -1, -2000, 2000);
             s.camera.position.set(0, 0, 500);
