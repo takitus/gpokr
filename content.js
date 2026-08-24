@@ -2819,6 +2819,20 @@
     // Between the flop's three. With the 0.55s animation this puts the last of
     // them face-up 0.77s after the deal, which is the real cost of the feature.
     const DEAL_STAGGER_MS = 110;
+    // How much bigger than the card's on-screen box to rasterise its texture.
+    //
+    // The DOM card is a vector and stays sharp at any size, but the 3D card is a
+    // TEXTURE, and a texture is only as sharp as the image it was uploaded from.
+    // Our faces are authored at the size of the image they replace — which is
+    // what keeps gpokr's layout still — so uploading that same element gives a
+    // 53x69 texture stretched over a card the site may be drawing at 75x103.
+    // That is exactly the blur, and it clears on a refresh because then no
+    // animation runs and what you see is the DOM card again.
+    //
+    // The markup is the same whatever size it declares, so a bigger one costs
+    // nothing but the decode. Twice the device pixels, and never more than 4x,
+    // which covers the animation's own scale-up on landing.
+    const DEAL_TEX_SCALE = Math.min(4, Math.max(2, (window.devicePixelRatio || 1) * 2));
     const DEAL_BATCH_MS = 400;     // cards this close together are one deal
     const DEAL_DECODE_MS = 200;    // longest we'll wait on an image to decode
     const DEAL_WATCHDOG_MS = 1500; // ...and the outside limit on the whole thing
@@ -2958,7 +2972,7 @@
 
         const fly = () => {
             if (dealtCards.get(img) !== rec) return;   // superseded, or already undone
-            rec.handle = GPE_COIN.dealCard(rect, img, {
+            rec.handle = GPE_COIN.dealCard(rect, rec.tex || img, {
                 delay: delay,
                 backStyle: CARD_BACK,
                 onFaceUp: () => {
@@ -2971,9 +2985,28 @@
         // A texture from an image that has not decoded uploads nothing. These are
         // data: URIs out of GWT's own bundle so they are usually ready at once,
         // but "usually" would show as a blank card.
-        if (img.complete && img.naturalWidth) { fly(); return; }
         let waited = false;
         const once = () => { if (waited) return; waited = true; fly(); };
+
+        // If this card is one of ours, draw a bigger copy of it purely to be the
+        // texture. Nothing shows it: it is never added to the document, and the
+        // card on the page is untouched. Falls straight through to the element
+        // itself if the deck can't produce one.
+        const card = img.dataset.gpeCard;
+        const hi = (CARD_FACE && card && window.GPE_DECK)
+            ? GPE_DECK.faceUrl(card, FOUR_COLOR,
+                { w: rect.width * DEAL_TEX_SCALE, h: rect.height * DEAL_TEX_SCALE })
+            : null;
+        if (hi) {
+            const tex = new Image();
+            tex.addEventListener("load", () => { rec.tex = tex; once(); }, { once: true });
+            tex.addEventListener("error", once, { once: true });   // fly with the element
+            tex.src = hi;
+            setTimeout(once, DEAL_DECODE_MS);
+            return;
+        }
+
+        if (img.complete && img.naturalWidth) { fly(); return; }
         img.addEventListener("load", once, { once: true });
         img.addEventListener("error", () => { waited = true; unparkCard(img); }, { once: true });
         setTimeout(once, DEAL_DECODE_MS);
