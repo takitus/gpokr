@@ -2919,88 +2919,32 @@
     //
     // The bottom card keeps its index corner showing, which is all a held card
     // ever shows and all it needs to.
-    // A MINIMUM gap between the pair's centres, in card widths — not a fixed one.
-    // Where gpokr already lays the two cards out readably its spacing is kept:
-    // rearranging a hand that was fine is its own kind of wrong. This only opens
-    // them when the site has stacked them so tightly that one is lost, and 0.34
-    // leaves a third of the bottom card showing, index corner and all.
-    const HAND_MIN_SPREAD = 0.34;
-
-    // Does this rect run under a seat's panel? Only asked about two cards, and
-    // only when one of them has moved.
-    function overlapsSeatPanel(r) {
-        const panels = document.querySelectorAll('table[class*="iogc-PlayerPanel"]');
-        for (const p of panels) {
-            const b = p.getBoundingClientRect();
-            if (!b.width || !b.height) continue;
-            if (r.left < b.right && r.right > b.left && r.top < b.bottom && r.bottom > b.top) return true;
-        }
-        return false;
-    }
-
+    // Your two cards, stacked.
+    //
+    // They stay exactly where gpokr puts them — an earlier version spread the
+    // pair and pushed it onto the felt to get clear of a seat panel, which fixed
+    // the occlusion and moved the cards a long way from where they belong. Not
+    // worth it: a hand belongs at its seat.
+    //
+    // What was actually wrong is depth. Every card sits at the same DEAL.Z, and
+    // two slabs at equal depth sort arbitrarily and interpenetrate where they
+    // overlap — the pair read as one card with a strip beside it, or as two cards
+    // inside each other. So each card to the right is lifted by exactly one
+    // thickness, which stacks them the way two real cards stack: the lower card's
+    // top face is where the upper card's underside begins.
     function layoutHandCards() {
         const hands = [];
         for (const img of dealtCards.keys()) {
             const rec = dealtCards.get(img);
             if (!rec || rec.role !== "hand" || !rec.handle) continue;
             const r = liveRect(img);
-            if (r) hands.push({ img: img, rec: rec, r: r });
+            if (r) hands.push({ rec: rec, r: r });
         }
         if (!hands.length) return;
         hands.sort((a, b) => a.r.left - b.r.left);
-        const w = hands[0].r.width, h = hands[0].r.height;
-        let cx = 0, cy = 0;
-        for (const c of hands) { cx += c.r.left + c.r.width / 2; cy += c.r.top + c.r.height / 2; }
-        cx /= hands.length; cy /= hands.length;
-
-        // Keep the site's own spacing unless it is too tight to read.
-        let step = w * HAND_MIN_SPREAD;
-        if (hands.length > 1) {
-            const seen = (hands[hands.length - 1].r.left - hands[0].r.left) / (hands.length - 1);
-            if (seen > step) step = seen;
-        }
-        const first = -step * (hands.length - 1) / 2;
-        const rectsAt = (px, py) => hands.map((c, i) => {
-            const x = px + first + step * i, y = py;
-            return { left: x - w / 2, top: y - h / 2, width: w, height: h,
-                right: x + w / 2, bottom: y + h / 2 };
-        });
-
-        // Then, if the pair lands under a seat panel, push it out until it does
-        // not. That case is what loses a card: our canvas sits at z-index 9,
-        // beneath GWT's panels, so a slab drawn under one is simply gone where the
-        // site's own <img> was on top of it.
-        //
-        // PUSHED until clear, rather than by a fixed amount, because how far it
-        // has to go depends on how deep under the panel it started — a fixed
-        // nudge moved the pair and left it still covered. Toward the middle of the
-        // felt is the one direction certain to be clear of the rail's furniture,
-        // and a pair already in the open never moves at all.
-        let px = cx, py = cy;
-        if (rectsAt(cx, cy).some(overlapsSeatPanel)) {
-            const table = liveRect(document.querySelector(".iogc-GameWindow-table"));
-            const felt = (table && window.GPE_COIN && GPE_COIN.feltBounds) ? GPE_COIN.feltBounds(table) : null;
-            if (felt) {
-                const dx = felt.cx - cx, dy = felt.cy - cy;
-                const len = Math.hypot(dx, dy) || 1;
-                const ux = dx / len, uy = dy / len;
-                const STEP = h * 0.12, MAX = h * 2.2;
-                for (let d = STEP; d <= MAX; d += STEP) {
-                    const tx = cx + ux * d, ty = cy + uy * d;
-                    if (!rectsAt(tx, ty).some(overlapsSeatPanel)) { px = tx; py = ty; break; }
-                    // Nothing clear within reach: take the furthest anyway, which
-                    // is at least less covered than where it started.
-                    px = tx; py = ty;
-                }
-            }
-        }
-        rectsAt(px, py).forEach((rect, i) => {
-            hands[i].rec.handAt = rect;
-            hands[i].rec.handle.move(rect);
-            // Left to right, each card in front of the one before it, which is how
-            // a hand is held and the only way the overlap reads as a stack rather
-            // than as one card with a strip beside it.
-            if (hands[i].rec.handle.setDepth) hands[i].rec.handle.setDepth(i * 0.5);
+        hands.forEach((c, i) => {
+            c.rec.handle.move(c.r);                     // its own slot, untouched
+            if (c.rec.handle.setDepth) c.rec.handle.setDepth(i * Math.max(0.2, CARD_THICK));
         });
     }
 
@@ -3024,9 +2968,10 @@
             sharpenCard(img, rec);
             // Follows the thickness slider without a re-deal.
             if (rec.handle && rec.handle.setThickness) rec.handle.setThickness(CARD_THICK);
-            // A hand card that has never been arranged (it just parked) needs the
-            // pair laid out; one card cannot be arranged into a hand on its own.
-            if (rec.role === "hand" && !rec.handAt) handMoved = true;
+            // Restack every poll: setDepth is a no-op when nothing changed, and
+            // this is what follows the thickness slider, since the lift between
+            // the two cards IS the thickness.
+            if (rec.role === "hand") handMoved = true;
             if (!img.isConnected || !img.dataset.gpeCard) { unparkCard(img); continue; }
             // The log is still the authority after the fact, not just at the
             // moment of dealing: a card it no longer lists on the board has no
@@ -3049,10 +2994,8 @@
                 Math.abs(at.width - r.width) > 0.5 || Math.abs(at.height - r.height) > 0.5;
             if (!moved) continue;
             rec.at = { left: r.left, top: r.top, width: r.width, height: r.height };
-            // A board card sits on its slot. A hand card is arranged by us, so the
-            // slot moving means re-arranging the pair, not snapping back onto it.
-            if (rec.role === "hand") handMoved = true;
-            else if (rec.handle) rec.handle.move(r);
+            if (rec.handle) rec.handle.move(r);
+            if (rec.role === "hand") handMoved = true;   // ...and restack the pair
             sharpenCard(img, rec);   // a bigger slot wants a bigger texture
         }
         // Once, after the sweep: a pair has to be arranged together, and both of
