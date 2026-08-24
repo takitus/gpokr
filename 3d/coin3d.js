@@ -106,6 +106,54 @@
         return tex;
     }
 
+    // Two lights, on the cards' layer only.
+    //
+    // The numbers are solved, not taste: a Lambert surface comes out at
+    // ambient + key * max(0, n·l), and a card facing the viewer has n·l ≈ 0.56
+    // against this direction. 0.66 + 0.6*0.56 = 1.0, so the FACE renders at
+    // exactly its own colour and the artwork reads true — which is what the
+    // unlit material used to guarantee and what would otherwise be lost.
+    //
+    // Everything that is not the face then falls out for free: the underside rim
+    // faces away from the light and gets ambient alone, 34% darker, which is the
+    // shading that stops a thick card looking like a white block. The left rim
+    // catches a little, the right rim less. And as a card turns over during the
+    // deal its face slides down that curve on its own.
+    function cardLights(T, s) {
+        const amb = new T.AmbientLight(0xffffff, CARD_AMBIENT);
+        amb.layers.set(CARD_LAYER);
+        const key = new T.DirectionalLight(0xfff8ec, CARD_KEY);
+        key.position.set(CARD_KEY_DIR[0], CARD_KEY_DIR[1], CARD_KEY_DIR[2]);
+        key.layers.set(CARD_LAYER);
+        s.scene.add(amb, key);
+    }
+
+    // The shadow a card drops. Card-shaped and blurred, rather than the coin's
+    // radial blob: a rectangle's shadow has corners, and at this size the
+    // difference between the two is the difference between a card lying on felt
+    // and a card floating over a smudge.
+    function cardShadowTexture(T) {
+        const S = 128, PAD = 18, R = 12;
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = S;
+        const g = cv.getContext("2d");
+        if (!g) return null;
+        try { g.filter = "blur(9px)"; } catch (e) { /* drawn hard, still passable */ }
+        g.fillStyle = "rgba(0,0,0,0.55)";
+        const w = S - PAD * 2, h = S - PAD * 2;
+        g.beginPath();
+        g.moveTo(PAD + R, PAD);
+        g.arcTo(PAD + w, PAD, PAD + w, PAD + h, R);
+        g.arcTo(PAD + w, PAD + h, PAD, PAD + h, R);
+        g.arcTo(PAD, PAD + h, PAD, PAD, R);
+        g.arcTo(PAD, PAD, PAD + w, PAD, R);
+        g.closePath();
+        g.fill();
+        const tex = new T.CanvasTexture(cv);
+        tex.colorSpace = T.SRGBColorSpace;
+        return tex;
+    }
+
     // ---------- layer ----------
     // One fixed, click-through canvas over the whole viewport. Everything is
     // drawn in CSS pixels: world x = screen x, world y = -screen y.
@@ -162,6 +210,8 @@
         s.scene.add(rim);
 
         s.shadowTex = shadowTexture(T);
+        s.cardShadowTex = cardShadowTexture(T);
+        cardLights(T, s);
 
         // Same proportions as the chips the portal drops, scaled to CSS px.
         const prop = window.GPE_CHIPS.art.proportions;
@@ -272,7 +322,18 @@
     // whatever they happen to be doing.
     // The edge. One tone, not lit: the renderer's lights are aimed at chips, and
     // the lean means it is almost always the underside you are looking at.
-    const CARD_EDGE = 0xcbc5b6;
+    const CARD_EDGE = 0xf6f2e9;   // paper, before any light touches it
+    // Cards are LIT, and on their own layer so they can be lit differently from
+    // the chips without disturbing them. three decides what a light touches by
+    // intersecting layers, so cards sit alone on this one with their own rig and
+    // the chip lights (layer 0, ambient 1.35 plus a 1.5 key) never reach them —
+    // that rig is aimed at a glossy disc and would blow a sheet of paper out.
+    const CARD_LAYER = 1;
+    // Aimed from where the TABLE's key light is (table3d's KEY_POS), so the two
+    // canvases agree about where the light is coming from: upper left, toward the
+    // viewer. Intensities are solved rather than picked — see cardLights().
+    const CARD_KEY_DIR = [-6, 15, 11];
+    const CARD_AMBIENT = 0.66, CARD_KEY = 0.6;
     // The slab's corner radius, in the card's own 1x1 box. TWO numbers because
     // the group scales x and y independently (a 53x69 card out of a unit
     // geometry), so a corner that comes out circular on screen has to be
@@ -394,7 +455,10 @@
         body.translate(-0.5, -0.5, -0.4975);
         const cap = new T.ShapeGeometry(shape, 8);
         cap.translate(-0.5, -0.5, 0);
-        cardGeo = { body: body, cap: cap };
+        // The shadow gets a plain square, not the card's outline: the blur in its
+        // texture lives OUTSIDE the card's footprint, and a quad cut to that
+        // outline would clip exactly the soft part off.
+        cardGeo = { body: body, cap: cap, quad: new T.PlaneGeometry(1, 1) };
         return cardGeo;
     }
 
@@ -408,16 +472,36 @@
 
         // Shared and never disposed, like the chip's cylinder.
         const geo = cardGeometries(T);
-        const faceMat = new T.MeshBasicMaterial({ map: faceTex, transparent: true });
-        const backMat = new T.MeshBasicMaterial({ map: backTex, transparent: true });
-        const slab = new T.Mesh(geo.body, new T.MeshBasicMaterial({ color: CARD_EDGE }));
+        // Lambert, not Basic: paper is diffuse, and this is what gives the rim its
+        // shading and the face its slight fall-off as it turns. The face was
+        // deliberately UNLIT while a dealt card handed back to the site's <img> —
+        // unlit meant the two matched to the pixel at the swap. Nothing hands back
+        // any more, so the card can be a thing in the light instead.
+        const faceMat = new T.MeshLambertMaterial({ map: faceTex, transparent: true });
+        const backMat = new T.MeshLambertMaterial({ map: backTex, transparent: true });
+        const slab = new T.Mesh(geo.body, new T.MeshLambertMaterial({ color: CARD_EDGE }));
         const front = new T.Mesh(geo.cap, faceMat);
         front.position.z = 0.5;
         const back = new T.Mesh(geo.cap, backMat);
         back.position.z = -0.5;
         back.rotation.y = Math.PI;   // faces outward, and mirrors the back's art
+
+        // The shadow, as a child so it is carried along and scaled by the card's
+        // own transform: local x and y are the card's box, so a quad of 1.1 is
+        // 10% wider than the card whatever size the card is. Unlit and on the
+        // card layer, behind everything else in z.
+        const shTex = ensureSession() && session.cardShadowTex;
+        const shadow = shTex ? new T.Mesh(geo.quad, new T.MeshBasicMaterial({
+            map: shTex, transparent: true, depthWrite: false, opacity: 0.9,
+        })) : null;
+
         const group = new T.Group();
         group.add(slab, front, back);
+        if (shadow) group.add(shadow);
+        // Layers are per-object and NOT inherited from the group, so every mesh
+        // has to be moved onto the cards' layer by hand.
+        for (const m of group.children) m.layers.set(CARD_LAYER);
+        group.userData.gpeShadow = shadow;
         // The face texture is per-card and has to be freed by hand: three's
         // Material.dispose() releases the material, never the textures on it.
         // The back is cached and shared, so it is deliberately left alone.
@@ -527,6 +611,23 @@
             const edge = thick * Math.sin(lean);
             const faceH = Math.max(1, atH * scale - edge) / Math.cos(lean);
             group.scale.set(atW * scale, faceH, thick);
+
+            const sh = group.userData.gpeShadow;
+            if (sh) {
+                // Positioned in LOCAL units, so it is a fraction of the card
+                // whatever size the card is, and it grows and slides further out
+                // as the card thickens — a card standing higher off the felt
+                // throws its shadow further. Down and to the right, because the
+                // light is up and to the left (CARD_KEY_DIR).
+                const drop = 0.03 + thick * 0.006;
+                sh.position.set(drop * 0.6, -drop, -0.55);
+                // 1.39, because the blur is padding INSIDE the texture: 18px of
+                // 128 at each edge leaves the solid part 72% of it, so the quad
+                // has to be 1/0.72 for that part to cover the card.
+                const spread = 1.39 + thick * 0.004;
+                sh.scale.set(spread, spread, 1);
+                sh.material.opacity = Math.min(0.95, 0.4 + thick * 0.025);
+            }
         };
         // Face down: the back is the side pointing at us, so start turned over.
         put(fromX, fromY, Math.PI, DEAL.SPIN, DEAL.GROW);
@@ -1018,6 +1119,7 @@
             s.renderer.outputColorSpace = T.SRGBColorSpace;
             s.camera = new T.OrthographicCamera(0, 1, 0, -1, -2000, 2000);
             s.camera.position.set(0, 0, 500);
+            s.camera.layers.enable(CARD_LAYER);   // ...or the cards are not drawn
             buildScene(s);
             syncViewport(s);
         } catch (err) {
