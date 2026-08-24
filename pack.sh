@@ -108,6 +108,18 @@ for f in $(grep -o '"[^"]*\.\(js\|css\|png\|html\)"' manifest.json | tr -d '"') 
 done
 [ "$missing" -eq 0 ] || { echo "aborting — update the file lists in pack.sh" >&2; exit 1; }
 
+# Guard: both stores reject the upload if the manifest's own description runs
+# past 132 characters, and they only say so after you have built, signed in and
+# waited on the upload. Cheaper to hear it here. (The long marketing copy is a
+# separate dashboard field — see STORE_LISTING.md — and has its own, larger cap.)
+DESC=$(sed -n 's/.*"description": "\(.*\)",$/\1/p' manifest.json)
+DESC_LEN=${#DESC}
+[ "$DESC_LEN" -le 132 ] || {
+    echo "manifest description is $DESC_LEN characters; both stores cap it at 132" >&2
+    echo "  $DESC" >&2
+    exit 1
+}
+
 # Zip the files themselves (manifest.json at the root) — both Web Store and AMO
 # reject a zip whose contents are nested inside a wrapper folder.
 (cd "$STAGE" && zip -qr "../$NAME.zip" . -x '*.DS_Store')
