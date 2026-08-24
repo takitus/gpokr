@@ -53,7 +53,14 @@ check("popup.js mirrors it in both sync paths",
     String((popupJs.match(/\$\("cardBack"\)\.value = cardBackValue\(\);/g) || []).length));
 
 // The empty value is carried too — "" is gpokr's own back, a real choice.
-const options = [...popupHtml.matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
+//
+// Scoped to the cardBack select. The popup has more than one now (card FACES got
+// their own), and a bare sweep for <option> silently mixed them together — which
+// this caught the moment faces were added, so it stays scoped rather than
+// counting on there only ever being one picker.
+const backSelect = /<select id="cardBack">([\s\S]*?)<\/select>/.exec(popupHtml);
+check("popup.html has a cardBack <select> to read options from", !!backSelect);
+const options = [...(backSelect ? backSelect[1] : "").matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
 check('popup.html offers "" (the site\'s own back) first', options[0] === "",
     JSON.stringify(options[0]));
 check("popup.html options match the style list",

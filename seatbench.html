@@ -104,6 +104,7 @@
   // "everything at its default" — which has interactions and celebrations ON.
   (function () {
     const store = {};
+    const listeners = [];
     window.chrome = {
       storage: {
         local: {
@@ -113,10 +114,19 @@
           // point it got to — the file is one IIFE and assumes, correctly, that
           // chrome.storage never answers before it has finished loading.
           get(keys, cb) { if (cb) setTimeout(() => cb(store), 0); },
-          set(obj, cb) { Object.assign(store, obj); if (cb) setTimeout(cb, 0); },
+          // Notifies listeners, like the real one: content.js re-reads its
+          // settings from chrome.storage.onChanged, so a stub that stays silent
+          // makes every option untestable.
+          set(obj, cb) {
+            const changes = {};
+            for (const k in obj) { changes[k] = { oldValue: store[k], newValue: obj[k] }; }
+            Object.assign(store, obj);
+            setTimeout(() => { listeners.forEach((fn) => { try { fn(changes, "local"); } catch (e) {} }); }, 0);
+            if (cb) setTimeout(cb, 0);
+          },
           remove(k, cb) { if (cb) setTimeout(cb, 0); },
         },
-        onChanged: { addListener() {} },
+        onChanged: { addListener(fn) { listeners.push(fn); } },
       },
       runtime: { getURL: (p) => "/" + p, id: "seatbench" },
     };
@@ -125,6 +135,7 @@
     if (who) document.getElementById("who").textContent = who;
   })();
 </script>
+<script src="deck-svg.js"></script>
 <script src="content.js"></script>
 <script>
   // ---- the harness -------------------------------------------------------
@@ -273,6 +284,13 @@
             el, Object.assign({ backStyle: "" }, opts || {}));
     };
 
-    log("ready. __fire('dance') | __overlap() | __flop() | __board()");
+    window.__set = (patch) => new Promise((done) => {
+        chrome.storage.local.get(["gpe_settings"], (r) => {
+            const next = Object.assign({}, r.gpe_settings || {}, patch);
+            chrome.storage.local.set({ gpe_settings: next }, () => setTimeout(done, 120));
+        });
+    });
+
+    log("ready. __fire('dance') | __flop() | __board() | __set({cardFace:'svg'})");
   })();
 </script>

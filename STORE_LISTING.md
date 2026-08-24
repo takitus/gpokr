@@ -27,7 +27,13 @@ other host is requested and no code runs anywhere else.
 
 ## Remote code
 
-No remote code. Every executable file ships in the package, including
+No remote code. With the vector-deck option on, the extension fetches card
+artwork (`https://web.gpokr.com/card-symbols/faces/*.svg`) from the site's own
+server — the same files gpokr's new UI uses. Those are images: the markup is
+placed in an `<img src="data:image/svg+xml,...">`, never inserted into the page's
+DOM and never evaluated. No script is fetched or run.
+
+Every executable file ships in the package, including
 `vendor/three.iife.js` (an unmodified three.js build used for the 3D table and
 throw animations). Nothing is fetched and executed at runtime.
 
@@ -75,6 +81,10 @@ no ads. Its only network activity is:
    or a cosmetic interaction.
 2. Loading playing-card images from `img.iogc.org`, gpokr's own image host, which
    the page itself already loads.
+3. With the vector-deck option on, loading the twelve court-card SVGs from
+   `web.gpokr.com` — the site's own server, and the same files its new UI
+   fetches. Nothing is sent with them (`credentials: "omit"`), and they are
+   cached by the browser for a day.
 
 ## Where to look (AMO notes for reviewer)
 

@@ -96,6 +96,15 @@ No new images are involved: the site's own art is recolored in place by two SVG 
 
 The work is in aiming the filters, not in the recoloring. Hearts are exactly as red as diamonds and spades exactly as black as clubs, so one blanket rule would give blue hearts and green spades and help nobody — every card has to be identified individually, and the site offers nothing to identify it with. GWT inlines all 52 faces into its bundle as data: URIs (no filename in the `src`), the bundle is minified (no identifier survives), and the `<img>`s are recycled between hands with their `src` swapped (so position is no anchor either). What *is* stable is the artwork, so each card is identified by hashing its `src` against a table of the 52 — exact, with nothing that could guess a suit wrong. If gpokr ever reships its deck the hashes stop matching and the feature turns itself off rather than mislabelling; `tools/deck_hashes.py` regenerates the table.
 
+### Card faces *(vector deck)*
+Draws every card as SVG instead of using the site's 53×69 images. Pick it with **card face** in the tools tab or in the popup; **classic (site)** leaves the cards exactly as they were.
+
+gpokr's own new UI (`/?ui=new`) doesn't ship a deck of images — it composes each card at runtime from four suit paths, thirteen stroked rank glyphs, a per-rank pip layout and a card box, with only the twelve court cards as separate files. `deck-svg.js` holds those tables (about 3.7KB, lifted from that UI's bundle by `tools/gen_deck.py`) and composes cards the same way, so a card comes out looking like the one the new UI draws. The court cards are **fetched from the site on demand** and never bundled or stored: they're 471KB between them, they cache for a day, and a card whose art hasn't arrived yet simply keeps its usual picture.
+
+Because we're drawing rather than recolouring, the four-colour option becomes exact here: blue diamonds and green clubs are the ink in the markup, not an SVG filter over someone else's red and black — so `overlay.css` skips the filters for our own faces (they'd come out black if run through them twice). It's also what the dealing animation textures from, so a dealt card is crisp at any size.
+
+The swap is the same mechanism as the card backs: the size is pinned to the site's own before the src changes, and it's re-applied on mutation because GWT re-sets that `src` on every re-render. Our own faces carry their card in the markup's `id`, which is how the swap recognises its own work and settles instead of oscillating.
+
 ### Card backs
 Replaces the face-down cards at every seat with one of four bundled designs — **rosette** (red), **lattice** (blue), **fan** (green) or **deco** (gold) — or leaves gpokr's own in place (**classic**). Pick one in the popup or from **card back** in the tools tab. Local to you: other players see whatever back they picked, and nothing about the game changes.
 

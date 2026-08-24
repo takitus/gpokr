@@ -29,6 +29,7 @@
     let HAND_SUMMARY = true;     // end-of-hand recap panel in the log (opt-out)
     let FOUR_COLOR = false;      // blue diamonds / green clubs, for color-blind players (opt-in)
     let CARD_BACK = "";          // which bundled card back to use; "" = the site's own
+    let CARD_FACE = "";          // "" = the site's own card art; "svg" = the vector deck
     let DEAL_ANIM = true;        // slide + flip each community card in as it's dealt (opt-out)
     let RIVER_LAB = false;       // hold the river on the felt and let it be dragged round (dev tool)
     // The inspector's button is off for release builds: it is authoring gear, not
@@ -165,6 +166,7 @@
         // Checked against the list rather than trusted: an unknown value would
         // point every back at a 404 and leave the seats blank.
         CARD_BACK = CARD_BACK_STYLES.indexOf(s && s.cardBack) >= 0 ? s.cardBack : "";
+        CARD_FACE = (s && s.cardFace === "svg") ? "svg" : "";
         DEAL_ANIM = !(s && s.dealAnimation === false); // opt-out
         // The deal needs coin3d's canvas, and a card gives no notice: by the time
         // one is dealt there is no time to fetch a renderer. As an extension that
@@ -2654,6 +2656,11 @@
     // what a card image is: otherwise this would run on our own <img>, find no
     // base64 to hash, and clear the stamp makeCardEl had just applied.
     const CARD_URL_NAME = /\/GPokr\/cards\/([2-9TJQKA][cdhs])\.png/;
+    // ...and a face WE drew (deck-svg.js writes its card into the markup's id, so
+    // it survives into the data: URI). Checked before anything else below: there
+    // is no base64 to hash and no CDN name to read in one of ours, so without
+    // this the stamp we are standing on would be cleared the moment we swap.
+    const OUR_FACE_NAME = /gpe-face-([2-9TJQKA][cdhs])/;
     // Natural size of every card in the deck — used only to tell "this is a card
     // we can't name" from "this is some other image", for the warning below.
     const CARD_W = 53, CARD_H = 69;
@@ -2667,9 +2674,11 @@
         const src = img.currentSrc || img.getAttribute("src") || "";
         if (src === img._gpeCardSrc) return;
         img._gpeCardSrc = src;
-        const m = DATA_URI_B64.exec(src);
-        const named = CARD_URL_NAME.exec(src);
-        const card = m ? DECK_BY_HASH.get(fnv1a32(m[1])) : (named ? named[1] : null);
+        const ours = OUR_FACE_NAME.exec(src);
+        const m = ours ? null : DATA_URI_B64.exec(src);
+        const named = ours ? null : CARD_URL_NAME.exec(src);
+        const card = ours ? ours[1]
+            : (m ? DECK_BY_HASH.get(fnv1a32(m[1])) : (named ? named[1] : null));
         if (card) { img.dataset.gpeCard = card; return; }
         delete img.dataset.gpeCard;
         // A card-shaped image we can't name means the deck was reshipped and the
@@ -2689,6 +2698,11 @@
         const before = img.dataset.gpeCard || "";
         stampCardImg(img);
         const after = img.dataset.gpeCard || "";
+        // Before the deal below, so a card that is about to fly in is already
+        // showing the deck we mean to show — the animation textures itself from
+        // this element, and would otherwise carry the site's art onto a board
+        // whose other cards are ours.
+        styleCardFace(img);
         // GWT recycles the board's images by swapping their src, so a change here
         // — not an element appearing or leaving — is what both a card being dealt
         // and a board being cleared look like in the DOM.
@@ -3043,6 +3057,61 @@
         // Pin first, then swap, so the oversized image is never laid out raw.
         img.setAttribute("width", String(img._gpeBackW));
         img.setAttribute("height", String(img._gpeBackH));
+        img.setAttribute("src", url);
+    }
+
+    // ---------- card faces: the vector deck ----------
+    // Points a card image at the deck deck-svg.js draws, and puts the site's own
+    // art back when the option is off. Same shape as styleCardBack below it, and
+    // for the same reasons: GWT owns these elements and re-sets their src on
+    // every re-render, so the swap is re-applied on mutation rather than once,
+    // and it settles because our own faces are recognised (OUR_FACE_NAME).
+    //
+    // The size is pinned before the swap, like the backs: the SVG is authored at
+    // 120x168 and the element is 53x69, and an <img> whose intrinsic size changes
+    // under GWT's layout is how you get a card twice the size of its slot for a
+    // frame.
+    //
+    // Court cards are fetched, so faceUrl() may say "not yet". Nothing waits for
+    // it: the card keeps the site's art and GPE_DECK.onReady sweeps again when
+    // the art lands, which is one request per court card per day.
+    function styleCardFace(img) {
+        const card = img.dataset.gpeCard;
+        const src = img.getAttribute("src") || "";
+        const memo = src + "|" + CARD_FACE + "|" + (FOUR_COLOR ? "4" : "2");
+        if (memo === img._gpeFaceMemo) return;
+
+        const mine = OUR_FACE_NAME.test(src);
+        if (!CARD_FACE) {
+            // Off: give back whatever the site had, if we were the ones who
+            // replaced it. Anything else is left exactly alone.
+            if (mine && img._gpeSiteFace) {
+                img.removeAttribute("data-gpe-face");
+                img.setAttribute("src", img._gpeSiteFace);
+                return;                       // the write re-enters; memo set then
+            }
+            img._gpeFaceMemo = memo;
+            return;
+        }
+        if (!card || !window.GPE_DECK) { img._gpeFaceMemo = memo; return; }
+        const url = GPE_DECK.faceUrl(card, FOUR_COLOR);
+        // Deliberately NOT memoised: "no url" is usually a court card whose art
+        // is still in flight, and memoising it would mean the sweep GPE_DECK
+        // triggers when the art lands looks at this image, sees nothing changed,
+        // and leaves it on the site's picture for the rest of the session.
+        if (!url) return;
+        if (url === src) { img._gpeFaceMemo = memo; return; }
+        if (!mine) {
+            // Remember the site's own art once, so turning the option off is
+            // reversible without a reload.
+            img._gpeSiteFace = src;
+            const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+            if (w && h) {
+                img.setAttribute("width", String(w));
+                img.setAttribute("height", String(h));
+            }
+        }
+        img.dataset.gpeFace = "svg";   // overlay.css keeps the filters off ours
         img.setAttribute("src", url);
     }
 
@@ -4850,6 +4919,38 @@
         chainBtn.classList.toggle("gpe-active", SHOW_TESTER);
     }
 
+    // Card faces: the site's own art, or the vector deck. Same row shape as the
+    // card back below.
+    function buildCardFaceRow() {
+        const row = document.createElement("div");
+        row.className = "gpe-side-option";
+        row.appendChild(document.createTextNode("card face"));
+        const info = document.createElement("span");
+        info.className = "gpe-info";
+        info.textContent = "\u24d8";
+        attachInstantTip(info,
+            "\"vector\" draws every card as SVG instead of using the site's 53x69 " +
+            "images \u2014 the deck gpokr's own new UI uses, so it stays crisp at " +
+            "any size and the four-colour option becomes exact rather than a " +
+            "recolouring of the old art. The twelve court cards are fetched from " +
+            "the site the first time each is needed; until one arrives that card " +
+            "keeps its usual picture. Local to you, like everything else here.");
+        row.appendChild(info);
+        const sel = document.createElement("select");
+        sel.id = "gpe-card-face";
+        sel.className = "gpe-side-select";
+        for (const [value, label] of [["", "classic (site)"], ["svg", "vector"]]) {
+            const opt = document.createElement("option");
+            opt.value = value;
+            opt.textContent = label;
+            sel.appendChild(opt);
+        }
+        sel.value = CARD_FACE;
+        sel.addEventListener("change", () => saveSetting("cardFace", sel.value));
+        row.appendChild(sel);
+        return row;
+    }
+
     // The card back is a choice, not a toggle, so it gets a <select> row of its
     // own rather than riding SIDE_OPTIONS. Not a <label>: there is no checkbox
     // for a click to fall through to.
@@ -4889,6 +4990,8 @@
         }
         const back = document.getElementById("gpe-card-back");
         if (back && document.activeElement !== back) back.value = CARD_BACK;
+        const face = document.getElementById("gpe-card-face");
+        if (face && document.activeElement !== face) face.value = CARD_FACE;
         syncBetWindowInputs();
         updateChainBtn();
         updateRiverLabBtn();
@@ -5114,6 +5217,7 @@
             }
             pane.appendChild(row);
         }
+        pane.appendChild(buildCardFaceRow());
         pane.appendChild(buildCardBackRow());
 
         // "who's here" roster: its own tab pane
@@ -8008,6 +8112,9 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     ensureWsMonitor();
     warmSounds();
     watchCardImages(); // track card images as GWT swaps them
+    // A court card's art arrives asynchronously and there may be one on screen
+    // already, so re-examine every card image when it lands.
+    if (window.GPE_DECK && GPE_DECK.onReady) GPE_DECK.onReady(() => sweepCardImgs());
     sweepCardImgs();
     dealArmed = true;  // ...and only now is a changed card a card being DEALT
     // A resize both moves the slots and clears the canvas the parked cards are

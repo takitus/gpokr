@@ -12,6 +12,8 @@
     const CARD_BACK_STYLES = ["rosette", "lattice", "fan", "deco"];
     const cardBackValue = () =>
         CARD_BACK_STYLES.indexOf(settings.cardBack) >= 0 ? settings.cardBack : "";
+    // Faces are a choice too: "" is the site's own art, "svg" the vector deck.
+    const cardFaceValue = () => (settings.cardFace === "svg" ? "svg" : "");
     // Toggles that default on when nothing was ever saved (opt-out, not opt-in).
     const TOGGLE_DEFAULTS = { showBetButtons: true };
     const toggleChecked = (id) =>
@@ -39,6 +41,7 @@
         settings = res[SETTINGS_KEY] || {};
         TOGGLE_IDS.forEach((id) => { $(id).checked = toggleChecked(id); });
         $("cardBack").value = cardBackValue();
+        $("cardFace").value = cardFaceValue();
         applyPopupTheme();
         renderBetRows();
         renderSession(res[SESSION_KEY]);
@@ -46,6 +49,11 @@
 
     $("cardBack").addEventListener("change", () => {
         settings.cardBack = $("cardBack").value;
+        saveSettings();
+    });
+
+    $("cardFace").addEventListener("change", () => {
+        settings.cardFace = $("cardFace").value;
         saveSettings();
     });
 
@@ -202,6 +210,7 @@
             settings = changes[SETTINGS_KEY].newValue || {};
             TOGGLE_IDS.forEach((id) => { $(id).checked = toggleChecked(id); });
             $("cardBack").value = cardBackValue();
+            $("cardFace").value = cardFaceValue();
             applyPopupTheme();
             renderBetRows();
         }

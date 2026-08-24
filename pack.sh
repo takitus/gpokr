@@ -55,7 +55,7 @@ mkdir -p "$STAGE/vendor" "$STAGE/3d" "$STAGE/bridge"
 # (vendor/three.iife.js is itself generated — see vendor/README.md.) Split by
 # directory so the source archive can rebuild the same layout; esbuild's
 # --outbase=. below keeps 3d/ and vendor/ nested in the output.
-BUILT_TOP="content.js odds.js popup.js overlay.css dark.css"
+BUILT_TOP="content.js odds.js deck-svg.js popup.js overlay.css dark.css"
 BUILT_3D="3d/chips3d.js 3d/table3d.js 3d/coin3d.js 3d/props3d.js"
 # The page-world WebSocket tap. Also a web_accessible_resource, because the
 # site-hosted build fetches it by URL instead of getting it as a content script.
@@ -140,10 +140,10 @@ if [ "$MINIFY" -eq 1 ]; then
     # BUILD.md points at it to explain how the 3D models were optimized — it is
     # authoring-only and this script never calls it.
     cp -R "$ASSETS" "$SRC_STAGE/assets"
-    cp tools/optimize-model.sh tools/drop-node.js "$SRC_STAGE/tools/"
+    cp tools/optimize-model.sh tools/drop-node.js tools/gen_deck.py "$SRC_STAGE/tools/"
     find "$SRC_STAGE" -name '.DS_Store' -delete
 
-    for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md tools/optimize-model.sh tools/drop-node.js $BUILT_3D $BUILT_BRIDGE $REQUIRED_ASSETS; do
+    for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md tools/optimize-model.sh tools/drop-node.js tools/gen_deck.py $BUILT_3D $BUILT_BRIDGE $REQUIRED_ASSETS; do
         [ -f "$SRC_STAGE/$f" ] || { echo "MISSING from source archive: $f" >&2; exit 1; }
     done
 

@@ -37,6 +37,13 @@ material and puts it out of reach. Both helpers are in this archive. Nothing und
 `assets/` needs a build tool to reproduce: the files in this archive *are* the
 files in the add-on.
 
+`deck-svg.js` contains four data tables (suit paths, rank glyphs, a pip layout
+and the card box) taken from the SVG deck gpokr's own new UI draws, so the
+classic table can use the same cards. `tools/gen_deck.py` is the script that
+extracted them and can extract them again; it is authoring-only and `pack.sh`
+never calls it. The twelve court-card artworks are not in the package at all —
+they are fetched from `web.gpokr.com` at runtime, only when the option is on.
+
 The only build tool is **esbuild 0.28.1**, used solely as a minifier (no bundling,
 no transpiling, no code generation). Every file is minified independently, so each
 packaged file corresponds 1:1 to the source file of the same name.

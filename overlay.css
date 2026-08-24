@@ -68,8 +68,12 @@
    data-gpe-card="Td", the site's stamped by stampCardImg() and ours set when
    the element is built. Hearts and spades are deliberately absent — red and
    black keep meaning what they always did, so only the ambiguity is removed. */
-html.gpe-fourcolor [data-gpe-card$="d"] { filter: url(#gpe-suit-diamond); }
-html.gpe-fourcolor [data-gpe-card$="c"] { filter: url(#gpe-suit-club); }
+/* The filters recolour the SITE's card art. Our own SVG deck (deck-svg.js) is
+   drawn with the four-colour ink already in it, so it is excluded here or it
+   would be recoloured twice — blue diamonds run through a blue filter come out
+   black. data-gpe-face marks a card we swapped. */
+html.gpe-fourcolor [data-gpe-card$="d"]:not([data-gpe-face]) { filter: url(#gpe-suit-diamond); }
+html.gpe-fourcolor [data-gpe-card$="c"]:not([data-gpe-face]) { filter: url(#gpe-suit-club); }
 /* Holds the injected <svg> of filter definitions: present, never seen. */
 #gpe-suit-filters {
     position: absolute;
