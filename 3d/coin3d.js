@@ -116,8 +116,31 @@
         return canvas;
     }
 
+    // The canvas is fixed at width:100%/height:100%, so its CSS box is the viewport
+    // WITHOUT the scrollbars — which is documentElement.clientWidth, not
+    // window.innerWidth. Sizing the backing store from innerWidth made the two
+    // disagree by the width of a scrollbar, and the browser then resampled the
+    // whole canvas to fit: measured on a real table at devicePixelRatio 1.75, a
+    // backing store of 1214 shown in a 684px box, a 1.5% non-integer downscale.
+    // That is enough to visibly soften anything with fine detail in it — a dealt
+    // card's glyphs above all — and since the camera frustum was built from the
+    // same number, every prop was also drawn 1.5% small and slightly off from
+    // whatever it was standing on.
+    //
+    // clientWidth is also the space getBoundingClientRect coordinates run over,
+    // which is what everything here positions with, so this makes one CSS pixel
+    // of the page one world unit and one device pixel per dpr, exactly.
+    function viewportSize() {
+        const d = document.documentElement;
+        return {
+            w: Math.max(1, (d && d.clientWidth) || window.innerWidth || 1),
+            h: Math.max(1, (d && d.clientHeight) || window.innerHeight || 1),
+        };
+    }
+
     function syncViewport(s) {
-        const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+        const vp = viewportSize();
+        const w = vp.w, h = vp.h;
         if (s.vw === w && s.vh === h) return;
         s.vw = w; s.vh = h;
         s.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -931,7 +954,7 @@
             const c = centerOf(tableRect);
             from = { x: c.x, y: tableRect.bottom + 30, h: 40 };
         } else {
-            from = { x: to.x, y: window.innerHeight - 20, h: 40 };
+            from = { x: to.x, y: viewportSize().h - 20, h: 40 };
         }
         const coin = addCoin(s, from, to, feltBounds(tableRect), o);
         if (!coin) return false;
