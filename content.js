@@ -2859,6 +2859,43 @@
         for (const img of Array.from(dealtCards.keys())) unparkCard(img);
     }
 
+    // A dealt card is a texture, and a texture is only as sharp as the image it
+    // came from. The card on the page is authored at the size the PAGE lays out
+    // at — which is what keeps gpokr's layout still — so uploading that same
+    // element gives a 53x69 texture stretched over a card the site may draw at
+    // 75x103. That was the blur, and it cleared on a reload only because a
+    // reload deals nothing and you see the DOM card again.
+    //
+    // So: never wait for a bigger copy, because waiting delays a card the board
+    // is covering. Fly with what is there and upgrade in place the moment a
+    // sharper one has rasterised. The same path keeps a parked card honest when
+    // the four-colour setting changes or its slot is resized, which is why the
+    // key it compares includes both.
+    function cardTexKey(card, rect) {
+        return card + (FOUR_COLOR ? "|4" : "|2") + "|" +
+            Math.round(rect.width * DEAL_TEX_SCALE) + "x" + Math.round(rect.height * DEAL_TEX_SCALE);
+    }
+
+    function sharpenCard(img, rec) {
+        if (!CARD_FACE || !window.GPE_DECK || !rec.handle || !rec.handle.retexture) return;
+        const card = img.dataset.gpeCard;
+        const rect = liveRect(img);
+        if (!card || !rect) return;
+        const key = cardTexKey(card, rect);
+        if (key === rec.texKey) return;
+        const url = GPE_DECK.faceUrl(card, FOUR_COLOR,
+            { w: rect.width * DEAL_TEX_SCALE, h: rect.height * DEAL_TEX_SCALE });
+        if (!url) return;                     // a court card whose art is still coming
+        rec.texKey = key;                     // set before the load, so it is asked once
+        const tex = new Image();
+        tex.addEventListener("load", () => {
+            // The card may have gone, or been replaced, while this decoded.
+            if (dealtCards.get(img) === rec && rec.handle) rec.handle.retexture(tex);
+        }, { once: true });
+        tex.addEventListener("error", () => { rec.texKey = null; }, { once: true });
+        tex.src = url;
+    }
+
     // Parked cards ARE the board, so they have to be kept honest: followed when
     // the layout moves under them, and dropped when the slot they stand for goes
     // away without its src changing (a re-render, the table being rebuilt).
@@ -2873,6 +2910,9 @@
         }
         for (const img of Array.from(dealtCards.keys())) {
             const rec = dealtCards.get(img);
+            // Cheap: cardTexKey has to differ before anything is loaded, so this
+            // is a string compare per parked card per poll.
+            sharpenCard(img, rec);
             if (!img.isConnected || !img.dataset.gpeCard) { unparkCard(img); continue; }
             // The log is still the authority after the fact, not just at the
             // moment of dealing: a card it no longer lists on the board has no
@@ -2889,6 +2929,7 @@
             if (!moved) continue;
             rec.at = { left: r.left, top: r.top, width: r.width, height: r.height };
             if (rec.handle) rec.handle.move(r);
+            sharpenCard(img, rec);   // a bigger slot wants a bigger texture
         }
     }
 
@@ -2972,7 +3013,7 @@
 
         const fly = () => {
             if (dealtCards.get(img) !== rec) return;   // superseded, or already undone
-            rec.handle = GPE_COIN.dealCard(rect, rec.tex || img, {
+            rec.handle = GPE_COIN.dealCard(rect, img, {
                 delay: delay,
                 backStyle: CARD_BACK,
                 onFaceUp: () => {
@@ -2980,6 +3021,7 @@
                 },
             });
             if (!rec.handle) unparkCard(img);          // nothing to show: give the real one back
+            else sharpenCard(img, rec);                // ...and upgrade its texture
         };
 
         // A texture from an image that has not decoded uploads nothing. These are
@@ -2987,24 +3029,6 @@
         // but "usually" would show as a blank card.
         let waited = false;
         const once = () => { if (waited) return; waited = true; fly(); };
-
-        // If this card is one of ours, draw a bigger copy of it purely to be the
-        // texture. Nothing shows it: it is never added to the document, and the
-        // card on the page is untouched. Falls straight through to the element
-        // itself if the deck can't produce one.
-        const card = img.dataset.gpeCard;
-        const hi = (CARD_FACE && card && window.GPE_DECK)
-            ? GPE_DECK.faceUrl(card, FOUR_COLOR,
-                { w: rect.width * DEAL_TEX_SCALE, h: rect.height * DEAL_TEX_SCALE })
-            : null;
-        if (hi) {
-            const tex = new Image();
-            tex.addEventListener("load", () => { rec.tex = tex; once(); }, { once: true });
-            tex.addEventListener("error", once, { once: true });   // fly with the element
-            tex.src = hi;
-            setTimeout(once, DEAL_DECODE_MS);
-            return;
-        }
 
         if (img.complete && img.naturalWidth) { fly(); return; }
         img.addEventListener("load", once, { once: true });

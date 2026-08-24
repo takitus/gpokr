@@ -309,12 +309,26 @@
     // rounded corners, and the face image carries them in its own alpha. At
     // exactly edge-on the pair is a zero-width sliver for one frame, which is
     // what an edge-on card looks like anyway.
+    // A card is drawn near 1:1 in screen space, so it wants no mip chain: mipmaps
+    // soften a sprite at that scale, and on a WebGL1 fallback a non-power-of-two
+    // texture with mipmapping gets RESIZED to a power of two — 150 down to 128 —
+    // which is blur baked in before anything is drawn. LinearFilter with no mips
+    // is the sharp choice here, and the slight aliasing it trades for only shows
+    // if the texture is much larger than the card, which the caller controls.
+    function cardTexture(T, src) {
+        const tex = new T.Texture(src);
+        tex.colorSpace = T.SRGBColorSpace;   // matches the renderer's output
+        tex.generateMipmaps = false;
+        tex.minFilter = T.LinearFilter;
+        tex.magFilter = T.LinearFilter;
+        tex.needsUpdate = true;
+        return tex;
+    }
+
     function cardMesh(T, faceImg, backStyle) {
         let faceTex = null;
         try {
-            faceTex = new T.Texture(faceImg);
-            faceTex.colorSpace = T.SRGBColorSpace;   // matches the renderer's output
-            faceTex.needsUpdate = true;
+            faceTex = cardTexture(T, faceImg);
         } catch (e) { return null; }
         const backTex = cardBackTexture(T, backStyle);
         if (!backTex) return null;
@@ -340,6 +354,7 @@
         // Material.dispose() releases the material, never the textures on it.
         // The back is cached and shared, so it is deliberately left alone.
         group.userData.gpeFaceTex = faceTex;
+        group.userData.gpeFaceMat = face.material;
         return group;
     }
 
@@ -475,6 +490,29 @@
                 if (tex) { try { tex.dispose(); } catch (e) {} }
                 s.dirty = true;
                 kick(s);
+            },
+            // Swap the face for a sharper (or recoloured) copy of itself, without
+            // disturbing the animation. The card is a TEXTURE, so it is only as
+            // sharp as the image it was uploaded from — and the image the page
+            // shows is authored at the size the page lays out at, not the size
+            // this is drawn at. Rather than delay the deal waiting for a bigger
+            // one to rasterise, it starts with what is there and is upgraded the
+            // moment the better copy exists.
+            retexture(src) {
+                if (gone || !src) return false;
+                const mat = group.userData && group.userData.gpeFaceMat;
+                if (!mat) return false;
+                let tex = null;
+                try { tex = cardTexture(T, src); } catch (e) { return false; }
+                const old = group.userData.gpeFaceTex;
+                mat.map = tex;
+                mat.needsUpdate = true;
+                group.userData.gpeFaceTex = tex;
+                if (old) { try { old.dispose(); } catch (e) {} }
+                // A parked card is not being drawn every frame, so ask for one.
+                s.dirty = true;
+                kick(s);
+                return true;
             },
             isParked() { return parked && !gone; },
             isGone() { return gone; },
