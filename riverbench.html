@@ -1,6 +1,13 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>river bench</title>
+<!-- Dev harness for the river: loads three, coin3d/table3d/props3d straight off
+     disk and holds one river on a stand-in table, so it can be measured (see
+     __measure below) without a gpokr session. It has to sit at the repo root for
+     those relative script paths to resolve, which is also why it cannot be named
+     _riverbench.html: Chrome refuses to load an unpacked extension containing a
+     root file whose name starts with "_" — that prefix is reserved (_locales,
+     _metadata). Nothing packages it; pack.sh copies an explicit file list. -->
 <style>
   html,body{margin:0;background:#0e0f12;height:100%}
   #table{position:absolute;left:40px;top:40px;width:790px;height:396px;background:#1b1d22}
