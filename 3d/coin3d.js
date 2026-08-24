@@ -267,7 +267,10 @@
     // stand in for a real card indefinitely without the board looking different —
     // and what makes the fallback invisible if a card is ever handed back.
     // Shading would look better in flight and wrong for as long as it sits still.
-    const CARD_TH = 0.6;         // half the card's thickness, CSS px
+    // The edge, faked as three flat tones rather than lit: the renderer's lights
+    // are aimed at chips, and a card wants its top brighter than its underside
+    // whatever they happen to be doing.
+    const CARD_EDGE = { side: 0xd9d4c8, top: 0xf3efe6, bottom: 0xc9c3b4 };
     const CARD_RADIUS = 0.07;    // corner radius, as a fraction of the card's width
 
     // The back. Nothing ships a single-card back — assets/backs/*.png are the
@@ -356,28 +359,26 @@
         const backTex = cardBackTexture(T, backStyle);
         if (!backTex) return null;
 
-        // One unit plane for every card ever dealt; the size comes from the
-        // group's scale. Shared and never disposed, like the chip's cylinder.
-        if (!cardGeo) cardGeo = new T.PlaneGeometry(1, 1);
-        const geo = cardGeo;
-        const face = new T.Mesh(geo, new T.MeshBasicMaterial({
-            map: faceTex, transparent: true, side: T.FrontSide, depthWrite: false,
-        }));
-        const back = new T.Mesh(geo, new T.MeshBasicMaterial({
-            map: backTex, transparent: true, side: T.FrontSide, depthWrite: false,
-        }));
-        // The back looks the other way and sits a hair behind, so neither z-fights
-        // the other and the card has a thickness you can see at a glancing angle.
-        back.rotation.y = Math.PI;
-        face.position.z = CARD_TH;
-        back.position.z = -CARD_TH;
+        // One unit box for every card ever dealt. Shared and never disposed, like
+        // the chip's cylinder.
+        if (!cardGeo) cardGeo = new T.BoxGeometry(1, 1, 1);
+        const paper = (hex) => new T.MeshBasicMaterial({ color: hex });
+        const faceMat = new T.MeshBasicMaterial({ map: faceTex, transparent: true });
+        const backMat = new T.MeshBasicMaterial({ map: backTex, transparent: true });
+        // BoxGeometry's material groups run +x, -x, +y, -y, +z, -z. The lean tips
+        // the far edge away, so the BOTTOM is the one the viewer catches.
+        const mesh = new T.Mesh(cardGeo, [
+            paper(CARD_EDGE.side), paper(CARD_EDGE.side),
+            paper(CARD_EDGE.top), paper(CARD_EDGE.bottom),
+            faceMat, backMat,
+        ]);
         const group = new T.Group();
-        group.add(face, back);
+        group.add(mesh);
         // The face texture is per-card and has to be freed by hand: three's
         // Material.dispose() releases the material, never the textures on it.
         // The back is cached and shared, so it is deliberately left alone.
         group.userData.gpeFaceTex = faceTex;
-        group.userData.gpeFaceMat = face.material;
+        group.userData.gpeFaceMat = faceMat;
         return group;
     }
 
@@ -399,7 +400,29 @@
         LEAD: 26,           // px it comes in from the side, so it arcs rather than drops
         GROW: 1.14,         // scale it arrives at, easing to 1 as it lands
         Z: 12,              // over the felt and the props, under nothing that matters
+        THICK: 2,           // default card thickness, CSS px
+        // A card lying flat under an orthographic camera shows NO thickness: its
+        // depth runs straight down the view axis, so a 20px slab looks exactly
+        // like paper. So a thick card is leaned a little toward the viewer, which
+        // is the only thing that puts its edge on screen, and its height is
+        // divided by cos(lean) so the face still fills the slot it stands in for.
+        // The lean grows with the thickness, because the two are the same
+        // question: how much of the card's footprint is edge rather than face.
+        // At 2px there is nothing to show and it stays nearly flat; wound up to
+        // 24 it is a third of a right angle and the edge is a good tenth of the
+        // card. Paper does not need tilting, a slab does.
+        LEAN_MAX_DEG: 32,
+        LEAN_FROM: 0.6,     // thinner than this stays perfectly flat
+        MAX_THICK: 24,
     };
+
+    const clampThick = (t) => {
+        const n = (typeof t === "number" && isFinite(t)) ? t : DEAL.THICK;
+        // Never zero: at zero the two faces are coincident and z-fight.
+        return Math.max(0.2, Math.min(DEAL.MAX_THICK, n));
+    };
+    const leanFor = (thick) => (thick <= DEAL.LEAN_FROM ? 0
+        : DEAL.LEAN_MAX_DEG * Math.PI / 180 * Math.min(1, thick / DEAL.MAX_THICK));
 
     // rect is where the real card sits (viewport px). faceImg is the site's own
     // decoded <img>. onFaceUp fires once, at the end of the turn.
@@ -432,15 +455,34 @@
         const delay = Math.max(0, o.delay || 0);
 
         let t = -delay, facedUp = false, parked = false, gone = false;
+        let thick = clampThick(o.thickness);
+        let lean = leanFor(thick);
         // Mutable, so move() can follow the slot after the card has landed.
         let atX = cx, atY = cy, atW = w, atH = h;
         const put = (x, y, turn, spin, scale) => {
             group.position.set(x, -y, DEAL.Z);
             // Turn about screen Y is the flip; the camera is orthographic, so the
             // card's width is simply scaled by cos(turn) — which is what an
-            // edge-on card does, no perspective needed.
-            group.rotation.set(0, turn, spin);
-            group.scale.set(atW * scale, atH * scale, 1);
+            // edge-on card does, no perspective needed. The lean is outermost of
+            // the three (Euler XYZ applies z, then y, then x), so a leaning card
+            // flips rather than a flipping card leaning.
+            // NEGATIVE: rotating +x tips the card's top toward the viewer, which
+            // shows its top edge and reads as a card leaning back. The table is
+            // seen from above, so the edge that should show is the near one —
+            // tip the top AWAY and the underside band lands below the face.
+            group.rotation.set(-lean, turn, spin);
+            // z is NOT scaled to the card's box: local z runs -0.5..+0.5, so this
+            // is the thickness in CSS px.
+            //
+            // The face is sized so the whole SLAB fills the slot, edge included:
+            // a leaned card projects its face at cos(lean) of its height and adds
+            // thick*sin(lean) of edge below it, so solving for the face height
+            // keeps the card's footprint exactly the box it stands in for however
+            // fat it gets. Fatten it and the edge eats into the face rather than
+            // the card growing out of its slot.
+            const edge = thick * Math.sin(lean);
+            const faceH = Math.max(1, atH * scale - edge) / Math.cos(lean);
+            group.scale.set(atW * scale, faceH, thick);
         };
         // Face down: the back is the side pointing at us, so start turned over.
         put(fromX, fromY, Math.PI, DEAL.SPIN, DEAL.GROW);
@@ -537,6 +579,19 @@
                 kick(s);
                 return true;
             },
+            // Live from the slider: no geometry is rebuilt, because thickness is
+            // only the group's z scale.
+            setThickness(t) {
+                if (gone) return;
+                const next = clampThick(t);
+                if (next === thick) return;
+                thick = next;
+                lean = leanFor(thick);
+                if (parked) put(atX, atY, 0, 0, 1);
+                s.dirty = true;
+                kick(s);
+            },
+            thickness() { return thick; },
             isParked() { return parked && !gone; },
             isGone() { return gone; },
         };

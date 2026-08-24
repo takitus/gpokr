@@ -1646,6 +1646,10 @@ html.gpe-river-lab .iogc-GameWindow-table:active { cursor: grabbing; }
     width: 232px;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
 }
+/* The card panel is the second floating panel, so it sits clear of the 3D
+   table's rather than exactly on top of it. */
+#gpe-card-editor { top: 130px; left: 262px; width: 250px; }
+
 /* ---- 3D-table texture editor: labeled sliders ---- */
 .gpe-slider-row {
     display: flex;

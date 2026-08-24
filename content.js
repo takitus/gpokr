@@ -30,6 +30,7 @@
     let FOUR_COLOR = false;      // blue diamonds / green clubs, for color-blind players (opt-in)
     let CARD_BACK = "";          // which bundled card back to use; "" = the site's own
     let CARD_FACE = "";          // "" = the site's own card art; "svg" = the vector deck
+    let CARD_THICK = 2;          // dealt cards' thickness in CSS px (see MOTIONS-less DEAL in coin3d)
     let DEAL_ANIM = true;        // slide + flip each community card in as it's dealt (opt-out)
     let RIVER_LAB = false;       // hold the river on the felt and let it be dragged round (dev tool)
     // The inspector's button is off for release builds: it is authoring gear, not
@@ -63,6 +64,14 @@
     // back from storage is checked against a list rather than trusted.
     const BACKDROP_STYLES = ["grain", "glow", "carpet", "clover", "deco", "wood"];
     const SEAT_STYLES = ["stool", "chair"];
+    // Card thickness, in CSS px. 24 is already comic; the slider stops there.
+    const CARD_THICK_MAX = 24;
+    function clampThick(v) {
+        const n = parseFloat(v);
+        if (!isFinite(n)) return 2;
+        return Math.max(0, Math.min(CARD_THICK_MAX, n));
+    }
+
     const clampZoom = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n > 0) ? Math.min(10, Math.max(0.1, n)) : (dflt != null ? dflt : 1); };
     const clampDepth = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0) ? Math.min(3, Math.max(0, n)) : dflt; };
     const clamp01 = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n >= 0 && n <= 1) ? n : dflt; };
@@ -167,6 +176,7 @@
         // point every back at a 404 and leave the seats blank.
         CARD_BACK = CARD_BACK_STYLES.indexOf(s && s.cardBack) >= 0 ? s.cardBack : "";
         CARD_FACE = (s && s.cardFace === "svg") ? "svg" : "";
+        CARD_THICK = clampThick(s && s.cardThickness);
         DEAL_ANIM = !(s && s.dealAnimation === false); // opt-out
         // The deal needs coin3d's canvas, and a card gives no notice: by the time
         // one is dealt there is no time to fetch a renderer. As an extension that
@@ -2913,6 +2923,8 @@
             // Cheap: cardTexKey has to differ before anything is loaded, so this
             // is a string compare per parked card per poll.
             sharpenCard(img, rec);
+            // Follows the thickness slider without a re-deal.
+            if (rec.handle && rec.handle.setThickness) rec.handle.setThickness(CARD_THICK);
             if (!img.isConnected || !img.dataset.gpeCard) { unparkCard(img); continue; }
             // The log is still the authority after the fact, not just at the
             // moment of dealing: a card it no longer lists on the board has no
@@ -3016,6 +3028,7 @@
             rec.handle = GPE_COIN.dealCard(rect, img, {
                 delay: delay,
                 backStyle: CARD_BACK,
+                thickness: CARD_THICK,
                 onFaceUp: () => {
                     if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; }
                 },
@@ -4923,19 +4936,6 @@
         ["gpe-dark-mode", "dark mode", "darkMode", () => DARK_MODE],
         ["gpe-hand-summary", "hand summary", "handSummary", () => HAND_SUMMARY,
             "recap panel in the game log at the end of each hand"],
-        ["gpe-deal-anim", "dealing animation", "dealAnimation", () => DEAL_ANIM,
-            "Each community card slides in from the top of the screen face down " +
-            "and turns over on the spot it lands \u2014 the flop dealt one at a " +
-            "time, then the turn and the river. The 3D card stays as the board's " +
-            "card, drawn from the site's own artwork, so nothing about the board " +
-            "looks different once it lands. A card is face-down while it flies, " +
-            "so it reads about half a second later than usual \u2014 and if " +
-            "anything isn't ready, it simply appears the way it always did."],
-        ["gpe-four-color", "four-color deck", "fourColor", () => FOUR_COLOR,
-            "Recolors the card art so diamonds are blue and clubs are green, " +
-            "leaving hearts red and spades black. For anyone who can't reliably " +
-            "separate the two red suits from the two black ones. The site's own " +
-            "images are recolored in place — nothing about the game changes."],
         ["gpe-hotkeys", "keyboard shortcuts", "hotkeys", () => HOTKEYS,
             "F = fold · C = check/call · 1–9 = bet-size buttons · ↑/↓ = ±1 big blind"],
         ["gpe-bet-buttons", "bet buttons", "showBetButtons", () => SHOW_BET_BUTTONS],
@@ -4977,67 +4977,32 @@
         chainBtn.classList.toggle("gpe-active", SHOW_TESTER);
     }
 
-    // Card faces: the site's own art, or the vector deck. Same row shape as the
-    // card back below.
-    function buildCardFaceRow() {
+    // One row for everything about how a card looks. The four settings behind it
+    // used to be two checkboxes and two selects scattered down this tab, which
+    // read as four unrelated options when they are really one decision.
+    function buildCardsRow() {
         const row = document.createElement("div");
         row.className = "gpe-side-option";
-        row.appendChild(document.createTextNode("card face"));
+        row.appendChild(document.createTextNode("cards"));
         const info = document.createElement("span");
         info.className = "gpe-info";
         info.textContent = "\u24d8";
         attachInstantTip(info,
-            "\"vector\" draws every card as SVG instead of using the site's 53x69 " +
-            "images \u2014 the deck gpokr's own new UI uses, so it stays crisp at " +
-            "any size and the four-colour option becomes exact rather than a " +
-            "recolouring of the old art. The twelve court cards are fetched from " +
-            "the site the first time each is needed; until one arrives that card " +
-            "keeps its usual picture. Local to you, like everything else here.");
+            "Faces, backs, four colours, and how thick a dealt card is. Local to " +
+            "you, and none of it changes anything about the game.");
         row.appendChild(info);
-        const sel = document.createElement("select");
-        sel.id = "gpe-card-face";
-        sel.className = "gpe-side-select";
-        for (const [value, label] of [["", "classic (site)"], ["svg", "vector"]]) {
-            const opt = document.createElement("option");
-            opt.value = value;
-            opt.textContent = label;
-            sel.appendChild(opt);
-        }
-        sel.value = CARD_FACE;
-        sel.addEventListener("change", () => saveSetting("cardFace", sel.value));
-        row.appendChild(sel);
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "gpe-side-edit";
+        edit.textContent = "edit";
+        edit.addEventListener("click", (e) => {
+            e.preventDefault(); e.stopPropagation(); openCardEditor();
+        });
+        row.appendChild(edit);
         return row;
     }
 
-    // The card back is a choice, not a toggle, so it gets a <select> row of its
-    // own rather than riding SIDE_OPTIONS. Not a <label>: there is no checkbox
-    // for a click to fall through to.
-    function buildCardBackRow() {
-        const row = document.createElement("div");
-        row.className = "gpe-side-option";
-        row.appendChild(document.createTextNode("card back"));
-        const info = document.createElement("span");
-        info.className = "gpe-info";
-        info.textContent = "\u24d8";
-        attachInstantTip(info,
-            "Replaces the face-down cards at every seat with one of our own " +
-            "designs. Local only \u2014 other players still see whatever back they " +
-            "picked, and nothing about the game changes. \"classic\" is gpokr's own.");
-        row.appendChild(info);
-        const sel = document.createElement("select");
-        sel.id = "gpe-card-back";
-        sel.className = "gpe-side-select";
-        for (const style of [""].concat(CARD_BACK_STYLES)) {
-            const opt = document.createElement("option");
-            opt.value = style;
-            opt.textContent = CARD_BACK_LABELS[style] || style;
-            sel.appendChild(opt);
-        }
-        sel.value = CARD_BACK;
-        sel.addEventListener("change", () => saveSetting("cardBack", sel.value));
-        row.appendChild(sel);
-        return row;
-    }
+
 
     // Panel checkboxes mirror the persistent settings (same ones as the popup);
     // either UI updates the other through chrome.storage.
@@ -5046,10 +5011,10 @@
             const box = document.getElementById(id);
             if (box) box.checked = current();
         }
-        const back = document.getElementById("gpe-card-back");
-        if (back && document.activeElement !== back) back.value = CARD_BACK;
-        const face = document.getElementById("gpe-card-face");
-        if (face && document.activeElement !== face) face.value = CARD_FACE;
+        // The card settings live in their own panel now, which re-syncs itself
+        // when it is opened and while it is on screen.
+        const cards = document.getElementById("gpe-card-editor");
+        if (cards && cards.style.display === "block" && cards._gpeRefresh) cards._gpeRefresh();
         syncBetWindowInputs();
         updateChainBtn();
         updateRiverLabBtn();
@@ -5275,8 +5240,7 @@
             }
             pane.appendChild(row);
         }
-        pane.appendChild(buildCardFaceRow());
-        pane.appendChild(buildCardBackRow());
+        pane.appendChild(buildCardsRow());
 
         // "who's here" roster: its own tab pane
         const rosterPane = document.createElement("div");
@@ -6410,6 +6374,135 @@
     function closeBetEditor() {
         const backdrop = document.getElementById("gpe-bet-editor");
         if (backdrop) backdrop.style.display = "none";
+    }
+
+    // ---------- UI: card editor (faces, backs, colours, thickness) ----------
+    // Everything about how a card LOOKS, in one panel, because these four settings
+    // are only meaningful next to each other: a four-colour vector deck with a
+    // green back and fat edges is one decision, not four rows scattered down the
+    // tools tab. A floating panel rather than a dimming modal, same as the 3D
+    // table's, so the cards stay visible while the thickness slider moves.
+    function closeCardEditor() {
+        const b = document.getElementById("gpe-card-editor");
+        if (b) b.style.display = "none";
+    }
+
+    function buildCardEditor() {
+        const modal = document.createElement("div");
+        modal.id = "gpe-card-editor";
+        modal.className = "gpe-modal gpe-float-panel";
+
+        const head = document.createElement("div");
+        head.className = "gpe-modal-head";
+        head.appendChild(document.createTextNode("cards"));
+        const close = document.createElement("button");
+        close.type = "button"; close.textContent = "✕"; close.title = "close";
+        close.addEventListener("click", closeCardEditor);
+        head.appendChild(close);
+
+        const refreshers = [];
+        // Rows go straight on the modal, as the other panels do — there is no
+        // body wrapper in overlay.css and this does not need one.
+        const body = document.createDocumentFragment();
+
+        const selectRow = (label, options, get, key, hint) => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label";
+            lab.textContent = label;
+            if (hint) lab.title = hint;
+            const sel = document.createElement("select");
+            sel.className = "gpe-side-select";
+            for (const [value, text] of options) {
+                const opt = document.createElement("option");
+                opt.value = value; opt.textContent = text;
+                sel.appendChild(opt);
+            }
+            sel.value = get();
+            sel.addEventListener("change", () => saveSetting(key, sel.value));
+            refreshers.push(() => { if (document.activeElement !== sel) sel.value = get(); });
+            row.append(lab, sel);
+            return row;
+        };
+
+        const checkRow = (label, get, key, hint) => {
+            const row = document.createElement("label");
+            row.className = "gpe-side-option";
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.checked = get();
+            box.addEventListener("change", () => saveSetting(key, box.checked));
+            refreshers.push(() => { box.checked = get(); });
+            row.append(box, document.createTextNode(" " + label));
+            if (hint) row.title = hint;
+            return row;
+        };
+
+        body.appendChild(selectRow("face", [["", "classic (site)"], ["svg", "vector"]],
+            () => CARD_FACE, "cardFace",
+            "vector draws every card as SVG instead of using the site's images"));
+        body.appendChild(selectRow("back",
+            [""].concat(CARD_BACK_STYLES).map((v) => [v, CARD_BACK_LABELS[v] || v]),
+            () => CARD_BACK, "cardBack", "the face-down cards at every seat"));
+        body.appendChild(checkRow("four-colour deck", () => FOUR_COLOR, "fourColor",
+            "blue diamonds and green clubs"));
+        body.appendChild(checkRow("dealing animation", () => DEAL_ANIM, "dealAnimation",
+            "community cards slide in and turn over as they are dealt"));
+
+        // Thickness. Live on drag, persisted on release — the same contract the
+        // 3D table's sliders use, so dragging never writes to storage per frame.
+        const thickRow = (() => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label";
+            lab.textContent = "thickness";
+            lab.title = "how thick a dealt card is. Under this camera a flat card " +
+                "shows no edge at all, so a thick one is leaned slightly toward you.";
+            const sl = document.createElement("input");
+            sl.type = "range"; sl.min = "0"; sl.max = String(CARD_THICK_MAX); sl.step = "0.5";
+            sl.value = String(CARD_THICK);
+            const val = document.createElement("span");
+            val.className = "gpe-slider-val";
+            const fmt = (n) => (n <= 0.2 ? "paper" : n.toFixed(1) + "px");
+            val.textContent = fmt(CARD_THICK);
+            sl.addEventListener("input", () => {
+                const n = clampThick(sl.value);
+                val.textContent = fmt(n);
+                CARD_THICK = n;                      // live, before it is saved
+                for (const rec of dealtCards.values()) {
+                    if (rec.handle && rec.handle.setThickness) rec.handle.setThickness(n);
+                }
+            });
+            sl.addEventListener("change", () => saveSetting("cardThickness", clampThick(sl.value)));
+            refreshers.push(() => {
+                if (document.activeElement === sl) return;
+                sl.value = String(CARD_THICK);
+                val.textContent = fmt(CARD_THICK);
+            });
+            row.append(lab, sl, val);
+            return row;
+        })();
+        body.appendChild(thickRow);
+
+        const note = document.createElement("div");
+        note.className = "gpe-modal-hint";
+        note.textContent = "Thickness applies to cards as they are dealt, which is " +
+            "the board with the dealing animation on — a card the site drew is a " +
+            "flat image and has no edge to give it.";
+        body.appendChild(note);
+
+        modal.append(head, body);
+        document.body.appendChild(modal);
+        modal._gpeRefresh = () => refreshers.forEach((fn) => { try { fn(); } catch (e) {} });
+        return modal;
+    }
+
+    function openCardEditor() {
+        const panel = document.getElementById("gpe-card-editor") || buildCardEditor();
+        if (panel._gpeRefresh) panel._gpeRefresh();
+        panel.style.display = panel.style.display === "block" ? "none" : "block";
     }
 
     // ---------- UI: 3D-table texture editor (felt / leather zoom sliders) ----------
