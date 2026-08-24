@@ -30,8 +30,12 @@ transformed at build time either. `tools/optimize-model.sh` is the authoring
 helper that produced them — it wraps `@gltf-transform/cli` and is run by hand
 when a model is added or re-exported, never by `pack.sh`. Its output is what's
 committed under `assets/models/`, and the un-optimized export is kept outside the
-package in `assets-src/models/`. Nothing under `assets/` needs a build tool to
-reproduce: the files in this archive *are* the files in the add-on.
+package in `assets-src/models/`. One model (`float.glb`, the life ring) also went
+through `tools/drop-node.js` first, which removes a named object from an export —
+the ring's rope loop, which we don't ship — before the optimizer merges meshes by
+material and puts it out of reach. Both helpers are in this archive. Nothing under
+`assets/` needs a build tool to reproduce: the files in this archive *are* the
+files in the add-on.
 
 The only build tool is **esbuild 0.28.1**, used solely as a minifier (no bundling,
 no transpiling, no code generation). Every file is minified independently, so each

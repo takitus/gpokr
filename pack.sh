@@ -128,10 +128,10 @@ if [ "$MINIFY" -eq 1 ]; then
     # BUILD.md points at it to explain how the 3D models were optimized — it is
     # authoring-only and this script never calls it.
     cp -R "$ASSETS" "$SRC_STAGE/assets"
-    cp tools/optimize-model.sh "$SRC_STAGE/tools/"
+    cp tools/optimize-model.sh tools/drop-node.js "$SRC_STAGE/tools/"
     find "$SRC_STAGE" -name '.DS_Store' -delete
 
-    for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md tools/optimize-model.sh $BUILT_3D $BUILT_BRIDGE $REQUIRED_ASSETS; do
+    for f in BUILD.md pack.sh vendor/three.iife.js vendor/README.md tools/optimize-model.sh tools/drop-node.js $BUILT_3D $BUILT_BRIDGE $REQUIRED_ASSETS; do
         [ -f "$SRC_STAGE/$f" ] || { echo "MISSING from source archive: $f" >&2; exit 1; }
     done
 
