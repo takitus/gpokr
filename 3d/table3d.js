@@ -79,6 +79,14 @@
     const KEY_POS0 = [-6, 15, 11];
     let KEY_POS = KEY_POS0.slice();
     const FILL = 0.16;
+    // Where the fill hangs, and how hard each lamp is driven. The intensities are
+    // MULTIPLIERS on the tuned constants above rather than absolute values: 1 is
+    // the look the table ships with, and one slider can then scale coin3d's and
+    // chips3d's rigs by the same proportion even though they were tuned to
+    // completely different numbers.
+    const FILL_POS0 = [8, 9, -6];
+    let FILL_POS = FILL_POS0.slice();
+    let KEY_I = 1, FILL_I = 1, AMB_I = 1, LAMP_I = 1;
     // Overhead "table light": a point light over the felt center with real
     // distance falloff (decay 2), so the felt is brightest in the middle and
     // softly darkens toward the edges — the painted felt's radial vignette.
@@ -791,6 +799,7 @@
     }
 
     function applyBackdrop(s) {
+        if (s) s.shadowDirty = true;   // geometry moved: the shadow map is stale
         if (!s || !s.scene) return;
         const T = window.THREE;
         if (s.floor) {
@@ -1139,6 +1148,7 @@
     }
 
     function applySeats(s) {
+        if (s) s.shadowDirty = true;   // geometry moved: the shadow map is stale
         if (!s || !s.scene) return;
         const T = window.THREE;
         if (s.seats) {
@@ -1173,6 +1183,7 @@
     // and needs no correction term. It does need the camera to be placed first,
     // which is why loop() re-runs this whenever syncToTable reframes.
     function placeSeats(s) {
+        if (s) s.shadowDirty = true;   // geometry moved: the shadow map is stale
 
         if (!s.seats || !s.camera || !s.placed) return;
         const T = window.THREE;
@@ -1418,26 +1429,177 @@
     //
     // Each entry is a card's viewport rect in CSS px plus its thickness:
     //   { left, top, width, height, thick }
+    // ---------- page space <-> felt space ----------
+    // One conversion, in one place. It was written three times — the caster
+    // filter, the caster placement and projectAbove — and every future piece that
+    // moves into this scene needs the same four lines, so they live here now.
+    //
+    // The frame is read ONCE per call and passed down: getBoundingClientRect is
+    // the expensive part and a sweep placing twenty chips must not pay for it
+    // twenty times.
+    function feltFrame() {
+        const el = tableEl();
+        const r = el && el.getBoundingClientRect();
+        if (!r || r.width < 40 || r.height < 40) return null;
+        return { r: r, wpp: VIEW_W / r.width, scale: r.width / ART_W };
+    }
+
+    // A viewport point onto the felt plane. Z carries the 1/sinE stretch because
+    // a plane seen at an angle covers more world per screen pixel than a plane
+    // seen square on.
+    function toFelt(f, clientX, clientY) {
+        const s = session;
+        return {
+            X: (clientX - f.r.left - FELT_CX_PX * f.scale) * f.wpp,
+            Z: (clientY - f.r.top - (FELT_CY_PX + FELT_Y_NUDGE) * f.scale) * f.wpp / s.sinE,
+        };
+    }
+
+    // ...and a viewport RECT onto it: centre plus the extents it covers on the
+    // felt. Same stretch on the depth axis, for the same reason.
+    function rectToFelt(f, rect) {
+        const c = toFelt(f, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return {
+            X: c.X, Z: c.Z,
+            sx: Math.max(0.01, rect.width * f.wpp),
+            sz: Math.max(0.01, rect.height * f.wpp / session.sinE),
+        };
+    }
+
+    // Is this point on the cloth? The felt is a stadium; an ellipse through the
+    // same half-extents is close enough to decide.
+    //
+    // This is the pivot the whole layer turns on. It used to answer only "should
+    // a shadow caster go here?"; it now answers "which BASIS does this object
+    // live in?" — on the felt means real geometry on the felt plane that casts a
+    // real shadow, off it means a camera-facing billboard that does not.
+    function onFelt(X, Z, k) {
+        const s = session;
+        if (!s || !s.feltA || !s.feltB) return true;
+        const m = k == null ? 0.98 : k;
+        const ex = X / (s.feltA * m), ez = Z / (s.feltB * m);
+        return ex * ex + ez * ez <= 1;
+    }
+
+    // ---------- chips on the felt ----------
+    // The site draws every bet and the pot as a stack of flat 24x21 sprites. This
+    // stands one of them up as a real disc in this scene, which means it is lit by
+    // the same lamp as the rail and drops its shadow on the same felt — no catcher
+    // plane, no proxy, no second light rig.
+    //
+    // Note what ISN'T here any more. coin3d had to lean each chip by acos(21/24)
+    // to fake the table's viewing angle, and stack them up-screen by
+    // thickness*sin(lean) to fake the height. Here the camera IS the angle and +Y
+    // IS up, so a chip is a cylinder lying on the felt plane and a stack is
+    // addition. That lean constant was a fake object too.
+    function chipArt(s, denom) {
+        const T = window.THREE;
+        const types = window.GPE_CHIPS.art.types;
+        let i = types.findIndex((t) => t.denom === denom);
+        if (i < 0) i = 0;
+        if (!s.chipArt) s.chipArt = [];
+        if (s.chipArt[i]) return s.chipArt[i];
+        const { face, rim } = window.GPE_CHIPS.art.textures(T, i);
+        const a = {
+            face, rim,
+            faceMat: new T.MeshStandardMaterial({ map: face, roughness: 0.5, metalness: 0.06 }),
+            rimMat: new T.MeshStandardMaterial({ map: rim, roughness: 0.62, metalness: 0.04 }),
+        };
+        s.chipArt[i] = a;
+        return a;
+    }
+
+    // Shared unit cylinder — radius 0.5, height 1 — scaled per chip, so the size
+    // sliders cost a scale rather than a rebuild.
+    function chipGeo(s) {
+        const T = window.THREE;
+        if (!s.chipGeo) s.chipGeo = new T.CylinderGeometry(0.5, 0.5, 1, 32, 1);
+        return s.chipGeo;
+    }
+
+    // rect is the site's own chip sprite, in viewport px. diameter/thickness are
+    // in CSS px, as the sliders set them. row is the chip's height in its stack,
+    // which the site tells us through its cs-pos<col>-<row> class.
+    function parkChip(rect, denom, opts) {
+        const s = session;
+        if (!s || !rect || !rect.width) return null;
+        const T = window.THREE;
+        if (!T || !window.GPE_CHIPS) return null;
+        const o = opts || {};
+        const a = chipArt(s, denom);
+        // CylinderGeometry's material groups are [side, top, bottom].
+        const mesh = new T.Mesh(chipGeo(s), [a.rimMat, a.faceMat, a.faceMat]);
+        // The cap's UVs run along local x/z, and this camera looks down the felt
+        // at an angle — so the denomination comes out lying on its side unless the
+        // disc is turned a quarter. Measured against the four rotations on screen,
+        // not derived: +90 is the one that reads.
+        mesh.rotation.y = Math.PI / 2;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;     // so a stack shadows itself
+        s.scene.add(mesh);
+        if (!s.chips) s.chips = new Set();
+        s.chips.add(mesh);
+
+        let at = rect, row = Math.max(0, (o.row | 0));
+        let diam = o.diameter || 26, thick = o.thickness || 4;
+        let gone = false;
+
+        const place = () => {
+            const f = feltFrame();
+            if (!f) return;
+            const p = toFelt(f, at.left + at.width / 2, at.top + at.height / 2);
+            const d = diam * f.wpp, h = Math.max(0.01, thick * f.wpp);
+            // On the felt, and stacked straight up it — the whole point of being
+            // in this scene rather than over it.
+            mesh.position.set(p.X, -FELT_DROP + h / 2 + row * h, p.Z);
+            mesh.scale.set(d, h, d);
+            // Deliberately NOT gated on onFelt. That test exists to stop a shadow
+            // PROXY being planted on the leather or the floor; a real chip is
+            // different — a bet that the site drew near the rail belongs where the
+            // site drew it, and its shadow landing on the rail is correct, because
+            // the rail receives shadows too.
+        };
+        place();
+        s.needsRender = Math.max(s.needsRender, 2);
+        s.shadowDirty = true;
+
+        return {
+            move(r, newRow, size) {
+                if (gone) return;
+                if (r && r.width) at = r;
+                if (newRow != null) row = Math.max(0, newRow | 0);
+                if (size) { diam = size.diameter || diam; thick = size.thickness || thick; }
+                place();
+                s.needsRender = Math.max(s.needsRender, 2);
+                s.shadowDirty = true;
+            },
+            remove() {
+                if (gone) return;
+                gone = true;
+                s.chips.delete(mesh);
+                s.scene.remove(mesh);
+                // The materials and textures are shared per denomination and freed
+                // with the session, not with the chip.
+                s.needsRender = Math.max(s.needsRender, 2);
+                s.shadowDirty = true;
+            },
+            isGone: () => gone,
+        };
+    }
+
     function setCardCasters(list) {
         const s = session;
         if (!s || !s.cardCasters) return false;
         const T = window.THREE;
-        const el = tableEl();
-        const r = el && el.getBoundingClientRect();
+        const f = feltFrame();
         // Only cards that are ON the felt. A player's own two cards sit at their
         // seat, well outside it, and their screen position maps to a point beyond
         // the rail — where a caster would plant a card-shaped smudge on the
         // leather, or on the floor ten units below, since both receive shadows.
         // Those keep coin3d's own shadow instead.
-        const items = (r && r.width >= 40) ? (list || []).filter((c) => {
-            if (!s.feltA || !s.feltB) return true;
-            const wpp0 = VIEW_W / r.width, scale0 = r.width / ART_W;
-            const X = (c.left + c.width / 2 - r.left - FELT_CX_PX * scale0) * wpp0;
-            const Z = (c.top + c.height / 2 - r.top - (FELT_CY_PX + FELT_Y_NUDGE) * scale0) * wpp0 / s.sinE;
-            // The felt is a stadium; an ellipse through the same half-extents is
-            // close enough to decide whether a card is on the cloth at all.
-            const ex = X / (s.feltA * 0.98), ez = Z / (s.feltB * 0.98);
-            return ex * ex + ez * ez <= 1;
+        const items = f ? (list || []).filter((c) => {
+            const p = toFelt(f, c.left + c.width / 2, c.top + c.height / 2);
+            return onFelt(p.X, p.Z);
         }) : [];
         const kids = s.cardCasters.children;
 
@@ -1448,24 +1610,16 @@
             s.cardCasters.add(m);
         }
 
-        const wpp = r ? VIEW_W / r.width : 0;              // world units per css px
-        const scale = r ? r.width / ART_W : 0;
         let changed = kids.length !== s.casterCount;
         s.casterCount = kids.length;
         items.forEach((c, i) => {
             const m = kids[i];
-            if (!m || !r) return;
-            // The same conversion projectAbove uses, in the same direction: a page
-            // point onto the felt plane. Z carries the 1/sinE stretch, because a
-            // plane seen at an angle covers more world per screen pixel.
-            const cxPage = c.left + c.width / 2, cyPage = c.top + c.height / 2;
-            const X = (cxPage - r.left - FELT_CX_PX * scale) * wpp;
-            const Z = (cyPage - r.top - (FELT_CY_PX + FELT_Y_NUDGE) * scale) * wpp / s.sinE;
-            const h = Math.max(0.02, (c.thick || 2) * wpp);
+            if (!m || !f) return;
+            const q = rectToFelt(f, c);
+            const X = q.X, Z = q.Z, sx = q.sx, sz = q.sz;
+            const h = Math.max(0.02, (c.thick || 2) * f.wpp);
             // Sitting ON the felt rather than above it: the underside is the felt
             // top, so what it drops is a contact shadow, not a hovering one.
-            const sx = Math.max(0.01, c.width * wpp);
-            const sz = Math.max(0.01, c.height * wpp / s.sinE);
             const y = -FELT_DROP + h / 2;
             // Only mark the scene dirty when something actually MOVED. This is
             // called on the 300ms poll for as long as a board is out, and a
@@ -1481,29 +1635,57 @@
             m.position.set(X, y, Z);
             m.scale.set(sx, h, sz);
         });
-        if (changed) s.needsRender = Math.max(s.needsRender, 2);
+        if (changed) { s.needsRender = Math.max(s.needsRender, 2); s.shadowDirty = true; }
         return true;
     }
 
     function projectAbove(pageX, pageY, hCss) {
         const s = session;
         if (!s || !s.camera || !s.placed) return null;
-        const el = tableEl();
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        if (r.width < 40 || r.height < 40) return null;
         const T = window.THREE;
         if (!T) return null;
-        const wpp = VIEW_W / r.width;          // world units per css px
-        const scale = r.width / ART_W;         // css px per art px
-        const X = (pageX - r.left - FELT_CX_PX * scale) * wpp;
-        const Z = (pageY - r.top - (FELT_CY_PX + FELT_Y_NUDGE) * scale) * wpp / s.sinE;
-        const v = new T.Vector3(X, hCss * wpp, Z).project(s.camera);   // -> NDC
+        const f = feltFrame();
+        if (!f) return null;
+        const p = toFelt(f, pageX, pageY);
+        const v = new T.Vector3(p.X, hCss * f.wpp, p.Z).project(s.camera);   // -> NDC
         return {
-            x: r.left + (v.x * 0.5 + 0.5) * r.width,
-            y: r.top + (-v.y * 0.5 + 0.5) * r.height,
+            x: f.r.left + (v.x * 0.5 + 0.5) * f.r.width,
+            y: f.r.top + (-v.y * 0.5 + 0.5) * f.r.height,
         };
     }
+
+    // Aim the fill — the second directional, the one that opens up whatever the
+    // key leaves dark. It does not cast, so moving it costs nothing but a redraw.
+    function setFillLight(x, y, z) {
+        FILL_POS = [+x || 0, +y || 0.001, +z || 0];
+        const s = session;
+        if (!s || !s.fill) return;
+        s.fill.position.set(FILL_POS[0], FILL_POS[1], FILL_POS[2]);
+        s.fill.updateMatrixWorld(true);
+        s.needsRender = Math.max(s.needsRender, 2);
+    }
+
+    // How hard each lamp is driven, as a multiple of the tuned default. Any key
+    // may be omitted; 1 is the shipped look.
+    function setLightLevels(cfg) {
+        const c = cfg || {};
+        const num = (v, cur) => (isFinite(+v) && +v >= 0 ? Math.min(4, +v) : cur);
+        KEY_I = num(c.key, KEY_I);
+        FILL_I = num(c.fill, FILL_I);
+        AMB_I = num(c.ambient, AMB_I);
+        LAMP_I = num(c.lamp, LAMP_I);
+        const s = session;
+        if (!s) return;
+        if (s.key) s.key.intensity = KEY * KEY_I;
+        if (s.fill) s.fill.intensity = FILL * FILL_I;
+        if (s.amb) s.amb.intensity = AMBIENT * AMB_I;
+        if (s.overhead) s.overhead.intensity = OVERHEAD * LAMP_I;
+        // A dimmer key is a fainter shadow, so the map has to be redrawn.
+        s.shadowDirty = true;
+        s.needsRender = Math.max(s.needsRender, 2);
+    }
+
+    function lightLevels() { return { key: KEY_I, fill: FILL_I, ambient: AMB_I, lamp: LAMP_I }; }
 
     // Aim the shadow-casting key light. The shadow camera looks at the origin
     // from wherever the light is, so moving the light is enough — but its matrix
@@ -1515,6 +1697,7 @@
         s.key.position.set(KEY_POS[0], KEY_POS[1], KEY_POS[2]);
         s.key.updateMatrixWorld(true);
         s.key.shadow.camera.updateProjectionMatrix();
+        s.shadowDirty = true;
         s.needsRender = Math.max(s.needsRender, 2);
     }
 
@@ -1522,25 +1705,36 @@
         const T = window.THREE;
         s.scene = new T.Scene();
 
-        s.scene.add(new T.AmbientLight(0xffffff, AMBIENT));
-        const key = new T.DirectionalLight(0xffffff, KEY);
+        const amb = new T.AmbientLight(0xffffff, AMBIENT * AMB_I);
+        s.amb = amb;
+        s.scene.add(amb);
+        const key = new T.DirectionalLight(0xffffff, KEY * KEY_I);
         key.position.set(KEY_POS[0], KEY_POS[1], KEY_POS[2]);
         key.castShadow = true;
         key.shadow.mapSize.set(2048, 2048);
         key.shadow.bias = -0.0006;
         key.shadow.normalBias = 0.02;
+        // The map is 2048 square over felt, rail, wall, floor and nine stools.
+        // Re-rendering it every frame was free while nothing here moved, and stops
+        // being free the moment actors do — a dealing card would redraw the whole
+        // shadow pass at 60fps for the sake of one moving slab. So it updates only
+        // when something says it must (see shadowDirty / touchShadows), which is
+        // never for a parked board, an unchanged bet, or an idle table.
+        key.shadow.autoUpdate = false;
+        key.shadow.needsUpdate = true;      // ...once, for the first frame
         const sc = key.shadow.camera;
         sc.left = -22; sc.right = 22; sc.top = 16; sc.bottom = -16;
         sc.near = 1; sc.far = 80;
         sc.updateProjectionMatrix();
         s.scene.add(key);
         s.key = key;
-        const fill = new T.DirectionalLight(0xbfd0d8, FILL);
-        fill.position.set(8, 9, -6);
+        const fill = new T.DirectionalLight(0xbfd0d8, FILL * FILL_I);
+        fill.position.set(FILL_POS[0], FILL_POS[1], FILL_POS[2]);
+        s.fill = fill;
         s.scene.add(fill);
 
         // Overhead table light with falloff -> center-bright felt (see notes).
-        const overhead = new T.PointLight(OVERHEAD_COL, OVERHEAD, 0, OVERHEAD_DECAY);
+        const overhead = new T.PointLight(OVERHEAD_COL, OVERHEAD * LAMP_I, 0, OVERHEAD_DECAY);
         overhead.position.set(0, OVERHEAD_H, 2);
         // This lamp is the one that has to throw the table's shadow onto the
         // floor: it sits straight over the felt and, at floor distance, it is
@@ -1658,22 +1852,85 @@
         });
     }
 
+    // ---------- actors ----------
+    // Deliberately the SAME contract coin3d uses — { object3D, step(dt) -> bool,
+    // dispose? }, fixed timestep, the actor's object3D added and removed by the
+    // loop. props3d's five motion functions are written against it, so matching it
+    // exactly is what lets them move here later without touching one of them.
+    const STEP = 1 / 120;        // same numbers as coin3d
+    const MAX_SUBSTEPS = 8;
+
+    function addActor(actor) {
+        const s = session;
+        if (!s || !actor || typeof actor.step !== "function") return false;
+        if (actor.object3D) s.scene.add(actor.object3D);
+        s.actors.push(actor);
+        s.needsRender = Math.max(s.needsRender, 2);
+        return true;
+    }
+
+    function removeActor(s, actor) {
+        const i = s.actors.indexOf(actor);
+        if (i >= 0) s.actors.splice(i, 1);
+        if (actor.object3D) s.scene.remove(actor.object3D);
+        if (typeof actor.dispose === "function") { try { actor.dispose(); } catch (e) {} }
+        s.needsRender = Math.max(s.needsRender, 2);
+    }
+
+    // Something that casts moved, so the shadow map is stale for one frame.
+    function touchShadows() {
+        const s = session;
+        if (s) { s.shadowDirty = true; s.needsRender = Math.max(s.needsRender, 2); }
+    }
+
+    function stepActors(s, dt) {
+        if (!s.actors.length) return;
+        s.acc = Math.min(s.acc + dt, STEP * MAX_SUBSTEPS);
+        while (s.acc >= STEP) {
+            for (const a of s.actors.slice()) {
+                let alive = false;
+                try { alive = a.step(STEP) === true; } catch (e) { alive = false; }
+                if (!alive) removeActor(s, a);
+            }
+            s.acc -= STEP;
+        }
+        // Anything moving is a caster until proven otherwise, and a frame where an
+        // actor moved is exactly the frame the shadow map is stale.
+        s.needsRender = Math.max(s.needsRender, 2);
+        s.shadowDirty = true;
+    }
+
     // ---------- lifecycle ----------
-    function loop(s) {
+    // The rAF is unconditional and stays that way: syncToTable has to run every
+    // frame to catch the table moving under us, and it is the cheap half. The
+    // expensive halves — the render and the shadow pass — are each gated.
+    function loop(s, now) {
         if (!s.enabled) return;
-        s.raf = requestAnimationFrame(() => loop(s));
+        s.raf = requestAnimationFrame((t) => loop(s, t));
+        const t = now || 0;
+        const dt = Math.min(Math.max(0, (t - (s.last || t)) / 1000), 0.05);
+        s.last = t;
         const r = syncToTable(s);
         if (r === "gone") { disable(); return; }
         if (r) {
             s.needsRender = Math.max(s.needsRender, 2);
+            s.shadowDirty = true;          // the camera moved; every shadow is stale
             placeSeats(s);    // reframed: the seat rays moved with the camera
         }
         // Dark mode toggles without a reload, so the floor has to follow it.
         if (s.floor && s.floorDark !== isDarkTheme()) {
             applyBackdrop(s);
         }
-        if (s.needsRender > 0) { s.renderer.render(s.scene, s.camera); s.needsRender--; }
+        stepActors(s, dt);
+        if (s.needsRender > 0) {
+            if (s.shadowDirty && s.key) { s.key.shadow.needsUpdate = true; s.shadowDirty = false; }
+            s.renderer.render(s.scene, s.camera);
+            s.needsRender--;
+        }
     }
+
+    // Incremented per enable(); see the session's `epoch`.
+    let epochCounter = 0;
 
     function bail(why, err) { console.warn("[gpe] table3d: " + why, err || ""); return false; }
 
@@ -1690,6 +1947,14 @@
         const s = {
             canvas, host, saved, placed: null, enabled: true, raf: 0, needsRender: 3,
             sinE: Math.sin(e), cosE: Math.cos(e),
+            // Actors, their fixed-step accumulator, and the shadow-map flag.
+            actors: [], acc: 0, last: 0, shadowDirty: true,
+            // Bumped on every enable(). Anything holding a handle into this scene
+            // compares it and lets go when it changes: syncTable3d does
+            // disable(); enable() on any GWT re-render, and a same-tick pair
+            // leaves the canvas present while every parked object is destroyed —
+            // so "is there a canvas" is not enough to notice.
+            epoch: ++epochCounter,
         };
         try {
             s.renderer = new T.WebGLRenderer({ canvas, antialias: true, alpha: false, preserveDrawingBuffer: true });
@@ -1707,7 +1972,7 @@
             return bail("init failed", err);
         }
         session = s;
-        s.raf = requestAnimationFrame(() => loop(s));
+        s.raf = requestAnimationFrame((t) => loop(s, t));
         return true;
     }
 
@@ -1720,6 +1985,9 @@
     function dispose(s) {
         if (s.raf) cancelAnimationFrame(s.raf);
         s.enabled = false;
+        // Actors own meshes and materials of their own; give each its dispose()
+        // before the renderer goes, or a table re-render leaks one set per actor.
+        for (const a of (s.actors || []).slice()) removeActor(s, a);
         [s.feltGeo, s.railGeo, s.wallGeo, s.logoGeo, s.floorGeo,
             s.stoolSeatGeo, s.stoolLegGeo, s.stoolStretchGeo, s.casterGeo]
             .concat(s.chairGeos || []).forEach((g) => g && g.dispose());
@@ -1735,6 +2003,12 @@
         if (s.railColor) s.railColor.dispose();
         if (s.railNormal) s.railNormal.dispose();
         if (s.logoTex) s.logoTex.dispose();
+        if (s.chipGeo) s.chipGeo.dispose();
+        for (const a of s.chipArt || []) {
+            if (!a) continue;
+            a.faceMat.dispose(); a.rimMat.dispose();
+            a.face.dispose(); a.rim.dispose();   // minted for us by GPE_CHIPS.art
+        }
         if (s.renderer) {
             s.renderer.dispose();
             if (s.renderer.forceContextLoss) s.renderer.forceContextLoss();
@@ -1746,5 +2020,11 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setCardCasters, setKeyLight, keyLight: () => KEY_POS.slice(), isOn: () => !!session, _session: () => session };
+    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setCardCasters, setKeyLight, keyLight: () => KEY_POS.slice(),
+        setFillLight, fillLight: () => FILL_POS.slice(), setLightLevels, lightLevels,
+        addActor, touchShadows, parkChip,
+        // Page space <-> felt space, for anything drawing into this scene.
+        feltFrame, toFelt, rectToFelt, onFelt,
+        epoch: () => (session ? session.epoch : 0),
+        isOn: () => !!session, _session: () => session };
 })();

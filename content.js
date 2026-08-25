@@ -80,6 +80,26 @@
     // between the three matters.
     const LIGHT_POS_0 = { x: -6, y: 15, z: 11 };
     let LIGHT_POS = Object.assign({}, LIGHT_POS_0);
+    // The second directional — table3d's fill, the one that opens up what the key
+    // leaves dark. Its own position, and a brightness for each lamp in the rig.
+    const FILL_POS_0 = { x: 8, y: 9, z: -6 };
+    let FILL_POS = Object.assign({}, FILL_POS_0);
+    // Multipliers, not absolutes: 1 is the tuned look. The three renderers were
+    // each balanced to different numbers, so a proportion is the only thing one
+    // slider can mean in all of them at once.
+    const LIGHT_LVL_0 = { key: 1, fill: 1, ambient: 1, lamp: 1 };
+    let LIGHT_LVL = Object.assign({}, LIGHT_LVL_0);
+    // How far a light may be moved on each axis. Symmetric, so -N reads as the
+    // mirror of +N and the sliders sit centred at zero.
+    const LIGHT_REACH = 40;
+
+    // Where the upper hole card sits, relative to the slot gpokr gave it, in CSS
+    // px per step up the stack. Positive y is DOWN the page, as everywhere else
+    // here; 0,0 would be dead square on top of the lower card, and 4,10 is the
+    // slight down-right overlap that was picked by eye off a contact sheet.
+    const HOLE_NUDGE_0 = { x: 4, y: 10 };
+    let HOLE_NUDGE = Object.assign({}, HOLE_NUDGE_0);
+    const HOLE_REACH = 80;
 
     // Card thickness, in CSS px. 24 is already comic; the slider stops there.
     const CARD_THICK_MAX = 24;
@@ -101,12 +121,27 @@
             GPE_CHIPS.setChipSize(0.55 * (CHIP_DIAM / CHIP_DIAM_0), 0.17 * (CHIP_THICK / CHIP_THICK_0));
         }
     }
-    // ...and the light direction to all three. Each keeps its own rig; this only
-    // says where the sun is.
+    // ...and the light rig to all three. Each keeps its own tuning; these only say
+    // where the lamps hang and how hard they are driven.
+    //
+    // The KEY's position goes to all three, because all three throw shadows from
+    // it and they have to agree about where it is. The FILL's position is
+    // table3d's alone: coin3d's second directional is a near-camera rim tuned to
+    // its own flat, screen-space world, and pointing it at the table's fill would
+    // change how every thrown prop reads for no gain.
     function applyLightPos() {
         const { x, y, z } = LIGHT_POS;
         for (const api of [window.GPE_COIN, window.GPE_CHIPS, window.GPE_TABLE3D]) {
             if (api && api.setKeyLight) { try { api.setKeyLight(x, y, z); } catch (e) { /* not fatal */ } }
+        }
+        if (window.GPE_TABLE3D && GPE_TABLE3D.setFillLight) {
+            try { GPE_TABLE3D.setFillLight(FILL_POS.x, FILL_POS.y, FILL_POS.z); } catch (e) {}
+        }
+    }
+
+    function applyLightLevels() {
+        for (const api of [window.GPE_COIN, window.GPE_CHIPS, window.GPE_TABLE3D]) {
+            if (api && api.setLightLevels) { try { api.setLightLevels(LIGHT_LVL); } catch (e) {} }
         }
     }
 
@@ -220,15 +255,33 @@
         // no more notice than a card: ask for the renderer now.
         if (TABLE_CHIPS) ensureCoin3d();
         else unparkAllTableChips();
+        HOLE_NUDGE = {
+            x: clampNum(s && s.holeNudgeX, HOLE_NUDGE_0.x, -HOLE_REACH, HOLE_REACH),
+            y: clampNum(s && s.holeNudgeY, HOLE_NUDGE_0.y, -HOLE_REACH, HOLE_REACH),
+        };
+        layoutHandCards();      // ...so a change lands without waiting for a poll
         CHIP_DIAM = clampNum(s && s.chipDiameter, CHIP_DIAM_0, 8, 60);
         CHIP_THICK = clampNum(s && s.chipThickness, CHIP_THICK_0, 0.5, 20);
+        const reach = (v, d) => clampNum(v, d, -LIGHT_REACH, LIGHT_REACH);
         LIGHT_POS = {
-            x: clampNum(s && s.lightX, LIGHT_POS_0.x, -40, 40),
-            y: clampNum(s && s.lightY, LIGHT_POS_0.y, 1, 40),
-            z: clampNum(s && s.lightZ, LIGHT_POS_0.z, -40, 40),
+            x: reach(s && s.lightX, LIGHT_POS_0.x),
+            y: reach(s && s.lightY, LIGHT_POS_0.y),
+            z: reach(s && s.lightZ, LIGHT_POS_0.z),
+        };
+        FILL_POS = {
+            x: reach(s && s.fillX, FILL_POS_0.x),
+            y: reach(s && s.fillY, FILL_POS_0.y),
+            z: reach(s && s.fillZ, FILL_POS_0.z),
+        };
+        LIGHT_LVL = {
+            key: clampNum(s && s.lightKeyBright, 1, 0, 4),
+            fill: clampNum(s && s.lightFillBright, 1, 0, 4),
+            ambient: clampNum(s && s.lightAmbient, 1, 0, 4),
+            lamp: clampNum(s && s.lightLampBright, 1, 0, 4),
         };
         applyChipSize();
         applyLightPos();
+        applyLightLevels();
         DEAL_ANIM = !(s && s.dealAnimation === false); // opt-out
         // The deal needs coin3d's canvas, and a card gives no notice: by the time
         // one is dealt there is no time to fetch a renderer. As an extension that
@@ -684,7 +737,7 @@
                 .then(() => loadScript(base + "3d/coin3d.js"))
                 // A renderer that arrives after the settings did has never been
                 // told the chip size or where the light hangs, so tell it now.
-                .then(() => { applyChipSize(); applyLightPos(); return !!window.GPE_COIN; })
+                .then(() => { applyChipSize(); applyLightPos(); applyLightLevels(); return !!window.GPE_COIN; })
                 .catch((err) => {
                     console.warn("[gpe] chip toss unavailable — could not load " + err.message);
                     coinLoad = null;
@@ -3003,7 +3056,11 @@
         hands.sort((a, b) => a.r.left - b.r.left);
         hands.forEach((c, i) => {
             c.rec.handle.move(c.r);                     // its own slot, untouched
-            if (c.rec.handle.setDepth) c.rec.handle.setDepth(i * Math.max(0.2, CARD_THICK));
+            // The INDEX, not a distance: how far apart two stacked cards have to
+            // sit depends on the lean as well as the thickness, and coin3d is the
+            // only place that knows either.
+            if (c.rec.handle.setDepth) c.rec.handle.setDepth(i);
+            if (c.rec.handle.setStackNudge) c.rec.handle.setStackNudge(HOLE_NUDGE.x, HOLE_NUDGE.y);
         });
     }
 
@@ -3110,23 +3167,42 @@
         Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5 &&
         Math.abs(a.width - b.width) < 0.5;
 
+    // Which renderer draws the chips. Step 2 of the one-layer migration: when the
+    // 3D table is on they are real discs IN its scene, lit by its lamp and casting
+    // on its felt; otherwise they stay on coin3d's overlay as before. Flip to
+    // false to put them all back on coin3d.
+    const T3D_CHIPS = true;
+    function chipRenderer() {
+        if (T3D_CHIPS && window.GPE_TABLE3D && GPE_TABLE3D.isOn() &&
+            typeof GPE_TABLE3D.parkChip === "function") return GPE_TABLE3D;
+        if (window.GPE_COIN && typeof GPE_COIN.parkChip === "function") return GPE_COIN;
+        return null;
+    }
+    // The renderer a parked chip belongs to has gone if its canvas went, or — for
+    // table3d — if the session was torn down and rebuilt under it, which
+    // syncTable3d does on any GWT re-render and which leaves the canvas in place.
+    let chipEpoch = 0;
+    function chipsStale(api) {
+        if (!tableChips.size) return false;
+        if (api !== tableChips.get(tableChips.keys().next().value).api) return true;
+        if (api === window.GPE_TABLE3D) return !api.isOn() || api.epoch() !== chipEpoch;
+        return typeof api.hasCanvas !== "function" || !api.hasCanvas();
+    }
+
     // Called from the fast poll. Idempotent: it reconciles what is parked against
     // what the site is currently showing, so a stack that grew, shrank, moved or
     // vanished is handled by the same pass.
     function syncTableChips() {
-        if (!TABLE_CHIPS || !window.GPE_COIN || typeof GPE_COIN.parkChip !== "function") {
-            unparkAllTableChips();
-            return;
-        }
-        // hasCanvas is a teardown test, not an entry condition: the session is
-        // built lazily by the first parkChip, so demanding a canvas up front would
-        // mean never asking for one. What must not persist is the other way round —
-        // chips parked on a canvas that has since gone, with the site's own sprites
-        // still hidden behind discs nobody can see.
-        if (tableChips.size && (typeof GPE_COIN.hasCanvas !== "function" || !GPE_COIN.hasCanvas())) {
-            unparkAllTableChips();
-            return;
-        }
+        const api = TABLE_CHIPS ? chipRenderer() : null;
+        if (!api) { unparkAllTableChips(); return; }
+        // A teardown test, not an entry condition: the session is built lazily by
+        // the first parkChip, so demanding one up front would mean never asking for
+        // one. What must not persist is the other way round — chips parked on a
+        // renderer that has since gone, with the site's own sprites still hidden
+        // behind discs nobody can see.
+        if (chipsStale(api)) { unparkAllTableChips(); return; }
+        if (api === window.GPE_TABLE3D) chipEpoch = api.epoch();
+        const size = { diameter: CHIP_DIAM, thickness: CHIP_THICK };
         const seen = new Set();
         for (const box of document.querySelectorAll(".gpokr-ChipStack-chips")) {
             const plan = planChipStack(box);
@@ -3136,18 +3212,22 @@
                 const rec = tableChips.get(p.el);
                 // A chip whose denomination changed is a different chip: the art
                 // is baked into its materials, so it is replaced rather than moved.
-                if (rec && rec.denom === p.denom) {
-                    if (rec.row !== p.row || !sameRect(rec.at, p.at)) {
+                if (rec && rec.denom === p.denom && rec.api === api) {
+                    if (rec.row !== p.row || !sameRect(rec.at, p.at) ||
+                        rec.diam !== CHIP_DIAM || rec.thick !== CHIP_THICK) {
                         rec.row = p.row; rec.at = p.at;
-                        rec.handle.move(p.at, p.row);
+                        rec.diam = CHIP_DIAM; rec.thick = CHIP_THICK;
+                        rec.handle.move(p.at, p.row, size);
                     }
                     continue;
                 }
                 if (rec) unparkTableChip(p.el);
-                const handle = GPE_COIN.parkChip(p.at, p.denom, { row: p.row });
+                const handle = api.parkChip(p.at, p.denom, {
+                    row: p.row, diameter: CHIP_DIAM, thickness: CHIP_THICK });
                 if (!handle) continue;               // no renderer: leave the sprite showing
                 coverHold(p.el);
-                tableChips.set(p.el, { handle: handle, denom: p.denom, row: p.row, at: p.at });
+                tableChips.set(p.el, { handle: handle, api: api, denom: p.denom,
+                    row: p.row, at: p.at, diam: CHIP_DIAM, thick: CHIP_THICK });
             }
         }
         for (const el of Array.from(tableChips.keys())) {
@@ -6928,15 +7008,59 @@
             return row;
         };
 
-        // A labelled rule, to break the panel into its three subjects.
-        const sectionRow = (text) => {
+        // A labelled rule, to break the panel into its subjects. A reset handler
+        // makes the label carry its own "reset" on the right — per light, because
+        // a rig is tweaked one lamp at a time and starting that lamp over should
+        // not cost you the other two.
+        const sectionRow = (text, onReset) => {
             const d = document.createElement("div");
             d.className = "gpe-modal-section";
-            d.textContent = text;
+            d.appendChild(document.createTextNode(text));
+            if (onReset) {
+                const b = document.createElement("button");
+                b.type = "button";
+                b.className = "gpe-section-reset";
+                b.textContent = "reset";
+                b.title = "put this light back to its default";
+                // The handler does its own applying — a section knows what it
+                // owns, and this one is shared with rows that have nothing to do
+                // with the lights.
+                b.addEventListener("click", () => {
+                    onReset();
+                    if (modal._gpeRefresh) modal._gpeRefresh();
+                });
+                d.appendChild(b);
+            }
             return d;
         };
 
+        // Reset writes state AND storage, so it survives a reload — the sliders
+        // persist on release and a reset that only moved them in memory would be
+        // undone by the next settings sweep.
+        const resetTo = (pairs) => { for (const [k, v] of pairs) saveSetting(k, v); };
+
         const px = (n) => n.toFixed(1) + "px";
+
+        // Where the top card of your own pair sits. Offered because square-on-top
+        // is only one of the ways two held cards can look right, and the answer is
+        // a matter of taste rather than geometry.
+        body.appendChild(sectionRow("hole cards", () => {
+            HOLE_NUDGE = Object.assign({}, HOLE_NUDGE_0);
+            resetTo([["holeNudgeX", HOLE_NUDGE_0.x], ["holeNudgeY", HOLE_NUDGE_0.y]]);
+            layoutHandCards();
+        }));
+        const holeHint = "moves the card on TOP of your pair, relative to where the " +
+            "site put it. Right and down are positive. 0,0 sits it square on the " +
+            "lower card.";
+        for (const axis of ["x", "y"]) {
+            body.appendChild(sliderRow("top card " + axis, {
+                min: -HOLE_REACH, max: HOLE_REACH, step: 1,
+                key: "holeNudge" + axis.toUpperCase(), fmt: px, hint: holeHint,
+                get: () => HOLE_NUDGE[axis],
+                set: (n) => { HOLE_NUDGE[axis] = n; layoutHandCards(); },
+            }));
+        }
+
         body.appendChild(sectionRow("chips"));
         body.appendChild(checkRow("3D bets and pot", () => TABLE_CHIPS, "tableChips",
             "draw the table's own bet and pot chips as discs instead of the site's flat sprites"));
@@ -6955,19 +7079,80 @@
             set: (n) => { CHIP_THICK = n; applyChipSize(); },
         }));
 
-        body.appendChild(sectionRow("light"));
-        const lightHint = "where the light that throws every shadow hangs — cards, " +
-            "chips and the 3D table all take their direction from it. Low and to " +
-            "the side gives long shadows; high overhead tucks them under.";
-        for (const axis of ["x", "y", "z"]) {
-            body.appendChild(sliderRow(axis, {
-                min: axis === "y" ? 1 : -40, max: 40, step: 0.5,
-                key: "light" + axis.toUpperCase(),
-                fmt: (n) => n.toFixed(1), hint: lightHint,
-                get: () => LIGHT_POS[axis],
-                set: (n) => { LIGHT_POS[axis] = n; applyLightPos(); },
-            }));
-        }
+        // Brightness is a MULTIPLE of each renderer's own tuned level, so 1.0 is
+        // the shipped look everywhere and one slider means the same thing in all
+        // three rigs. "off" at 0 rather than a dark grey, because 0 really is off.
+        const bright = (n) => (n <= 0.005 ? "off" : n.toFixed(2) + "\u00d7");
+        const axes = ["x", "y", "z"];
+        // `pos` is a GETTER, not the object. applySettings reassigns LIGHT_POS and
+        // FILL_POS wholesale when storage changes, so a captured reference would
+        // go stale the moment any setting was saved — the slider would then read
+        // and write an orphan and appear to do nothing.
+        const axisRow = (axis, o) => sliderRow(axis, {
+            min: -LIGHT_REACH, max: LIGHT_REACH, step: 0.5, key: o.key(axis),
+            fmt: (n) => n.toFixed(1), hint: o.hint,
+            get: () => o.pos()[axis],
+            set: (n) => { o.pos()[axis] = n; applyLightPos(); },
+        });
+
+        body.appendChild(sectionRow("key light", () => {
+            LIGHT_POS = Object.assign({}, LIGHT_POS_0);
+            LIGHT_LVL.key = LIGHT_LVL_0.key;
+            resetTo([["lightX", LIGHT_POS_0.x], ["lightY", LIGHT_POS_0.y],
+                ["lightZ", LIGHT_POS_0.z], ["lightKeyBright", LIGHT_LVL_0.key]]);
+            applyLightPos(); applyLightLevels();
+        }));
+        const keyHint = "the lamp that throws the shadows — cards, chips and the 3D " +
+            "table all take their direction from it. Low and to the side gives long " +
+            "shadows; high overhead tucks them under.";
+        for (const a of axes) body.appendChild(axisRow(a, { pos: () => LIGHT_POS, hint: keyHint,
+            key: (k) => "light" + k.toUpperCase() }));
+        body.appendChild(sliderRow("brightness", {
+            min: 0, max: 3, step: 0.05, key: "lightKeyBright", fmt: bright, hint: keyHint,
+            get: () => LIGHT_LVL.key,
+            set: (n) => { LIGHT_LVL.key = n; applyLightLevels(); },
+        }));
+
+        body.appendChild(sectionRow("fill light", () => {
+            FILL_POS = Object.assign({}, FILL_POS_0);
+            LIGHT_LVL.fill = LIGHT_LVL_0.fill;
+            resetTo([["fillX", FILL_POS_0.x], ["fillY", FILL_POS_0.y],
+                ["fillZ", FILL_POS_0.z], ["lightFillBright", LIGHT_LVL_0.fill]]);
+            applyLightPos(); applyLightLevels();
+        }));
+        const fillHint = "the second lamp, opposite the key: it opens up whatever the " +
+            "key leaves dark and casts nothing of its own. Position applies to the " +
+            "3D table.";
+        for (const a of axes) body.appendChild(axisRow(a, { pos: () => FILL_POS, hint: fillHint,
+            key: (k) => "fill" + k.toUpperCase() }));
+        body.appendChild(sliderRow("brightness", {
+            min: 0, max: 3, step: 0.05, key: "lightFillBright", fmt: bright, hint: fillHint,
+            get: () => LIGHT_LVL.fill,
+            set: (n) => { LIGHT_LVL.fill = n; applyLightLevels(); },
+        }));
+
+        body.appendChild(sectionRow("ambient & lamp", () => {
+            LIGHT_LVL.ambient = LIGHT_LVL_0.ambient;
+            LIGHT_LVL.lamp = LIGHT_LVL_0.lamp;
+            resetTo([["lightAmbient", LIGHT_LVL_0.ambient], ["lightLampBright", LIGHT_LVL_0.lamp]]);
+            applyLightLevels();
+        }));
+        body.appendChild(sliderRow("ambient", {
+            min: 0, max: 3, step: 0.05, key: "lightAmbient", fmt: bright,
+            hint: "flat light from every direction at once. Raise it to lift the " +
+                "shadows without moving anything; drop it for a harder, more " +
+                "contrasty table.",
+            get: () => LIGHT_LVL.ambient,
+            set: (n) => { LIGHT_LVL.ambient = n; applyLightLevels(); },
+        }));
+        body.appendChild(sliderRow("table lamp", {
+            min: 0, max: 3, step: 0.05, key: "lightLampBright", fmt: bright,
+            hint: "the hanging lamp straight over the felt. It falls off with " +
+                "distance, which is what gives the felt its bright centre — and " +
+                "it is what throws the table's shadow onto the floor.",
+            get: () => LIGHT_LVL.lamp,
+            set: (n) => { LIGHT_LVL.lamp = n; applyLightLevels(); },
+        }));
 
         modal.append(head, body);
         document.body.appendChild(modal);
@@ -8709,7 +8894,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
             const three = window.THREE ? Promise.resolve() : loadScript(base + "vendor/three.iife.js");
             table3dLoad = three
                 .then(() => loadScript(base + "3d/table3d.js"))
-                .then(() => { applyLightPos(); return !!window.GPE_TABLE3D; })
+                .then(() => { applyLightPos(); applyLightLevels(); return !!window.GPE_TABLE3D; })
                 .catch((err) => {
                     console.warn("[gpe] 3D table unavailable — could not load " + err.message);
                     table3dLoad = null;

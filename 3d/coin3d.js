@@ -125,9 +125,9 @@
     // catches a little, the right rim less. And as a card turns over during the
     // deal its face slides down that curve on its own.
     function cardLights(T, s) {
-        const amb = new T.AmbientLight(0xffffff, CARD_AMBIENT);
+        const amb = new T.AmbientLight(0xffffff, CARD_AMBIENT * LVL_AMB);
         amb.layers.set(CARD_LAYER);
-        const key = new T.DirectionalLight(0xfff8ec, CARD_KEY);
+        const key = new T.DirectionalLight(0xfff8ec, CARD_KEY * LVL_KEY);
         key.position.set(CARD_KEY_DIR[0], CARD_KEY_DIR[1], CARD_KEY_DIR[2]);
         key.layers.set(CARD_LAYER);
         key.castShadow = true;
@@ -138,6 +138,7 @@
         // edge that casts it.
         key.shadow.bias = -0.0004;
         key.shadow.normalBias = 1;
+        s.cardAmb = amb;
         s.scene.add(amb, key, key.target);
         s.cardKey = key;
 
@@ -316,12 +317,16 @@
     function buildScene(s) {
         const T = window.THREE;
         s.scene = new T.Scene();
-        s.scene.add(new T.AmbientLight(0xffffff, 1.35));
-        const key = new T.DirectionalLight(0xfff3d8, 1.5);
+        const propAmb = new T.AmbientLight(0xffffff, PROP_AMB * LVL_AMB);
+        s.propAmb = propAmb;
+        s.scene.add(propAmb);
+        const key = new T.DirectionalLight(0xfff3d8, PROP_KEY * LVL_KEY);
         key.position.set(-0.4, 0.7, 1);
+        s.propKey = key;
         s.scene.add(key);
-        const rim = new T.DirectionalLight(0x9fc4ff, 0.5);
+        const rim = new T.DirectionalLight(0x9fc4ff, PROP_RIM * LVL_FILL);
         rim.position.set(0.6, -0.5, 0.6);
+        s.propRim = rim;
         s.scene.add(rim);
 
         s.shadowTex = shadowTexture(T);
@@ -599,6 +604,12 @@
     // canvases agree about where the light is coming from: upper left, toward the
     // viewer. Intensities are solved rather than picked — see cardLights().
     let CARD_KEY_DIR = [-6, 15, 11];
+    // Multipliers on this file's own tuned intensities. 1 is the shipped look;
+    // the slider that drives them is shared with table3d and chips3d, which were
+    // tuned to entirely different numbers — scaling each rig by a proportion is
+    // the only way one control can mean the same thing in all three.
+    let LVL_KEY = 1, LVL_FILL = 1, LVL_AMB = 1;
+    const PROP_AMB = 1.35, PROP_KEY = 1.5, PROP_RIM = 0.5;
     const CARD_AMBIENT = 0.66, CARD_KEY = 0.6;
     const CARD_SHADOW_OPACITY = 0.34;
     // Chips are small and their shadow is read at a glance rather than studied,
@@ -874,13 +885,47 @@
         // the same DEAL.Z otherwise, and two slabs at the same depth sort
         // arbitrarily — which showed up as the left card of a pair covering the
         // right one.
-        let zBias = 0;
+        // Which card in a held stack this is: 0 for the lowest, 1 for the one on
+        // top of it. NOT a distance — see stackZ below, which is where knowing
+        // the geometry actually matters.
+        let stackIx = 0;
         let thick = clampThick(o.thickness);
         let lean = leanFor(thick);
         // Mutable, so move() can follow the slot after the card has landed.
         let atX = cx, atY = cy, atW = w, atH = h;
+        // Where a card sits when it is stacked on another.
+        //
+        // Separating the pair in z ALONE does not work, and that was the bug: a
+        // card is leaned toward the viewer, so its slab does not lie in a plane of
+        // constant z — it spans height*sin(lean) of depth on top of its own
+        // thickness*cos(lean). At 6px thick that is ~20px of z, so a 6px z gap left
+        // the two slabs running straight through each other and the pair read as
+        // one flat mass with a seam down it. Opening the z gap to clear the whole
+        // extent fixes the interpenetration and replaces it with a card visibly
+        // FLOATING 20px above its partner, which is no better.
+        //
+        // The answer is to offset along the card's own NORMAL, exactly as a stack
+        // of chips does: perpendicular to the slab, by one thickness. Two parallel
+        // slabs offset perpendicular by their own thickness meet face-to-underside
+        // and cannot overlap at any depth — and because the offset follows the
+        // lean, the upper card lands a hair up-screen too, which is what puts its
+        // shadow on the card below and makes the pair read as a stack.
+        // ...plus an optional per-step nudge in screen px, so a held pair can be
+        // fanned out rather than stacked dead square. nudgeY is in SCREEN
+        // direction — positive is down the page, like every other rect here — and
+        // is negated on the way into world space.
+        let nudgeX = 0, nudgeY = 0;
+        const stackOffset = () => {
+            const d = stackIx * thick * 1.02;      // a hair of slack, so the shared face never z-fights
+            return {
+                x: stackIx * nudgeX,
+                y: d * Math.sin(lean) - stackIx * nudgeY,
+                z: d * Math.cos(lean),
+            };
+        };
         const put = (x, y, turn, spin, scale) => {
-            group.position.set(x, -y, DEAL.Z + zBias);
+            const off = stackOffset();
+            group.position.set(x + off.x, -y + off.y, DEAL.Z + off.z);
             // Turn about screen Y is the flip; the camera is orthographic, so the
             // card's width is simply scaled by cos(turn) — which is what an
             // edge-on card does, no perspective needed. The lean is outermost of
@@ -1022,11 +1067,26 @@
             thickness() { return thick; },
             // Higher is nearer the viewer. Only the hand uses it, to say which of
             // its cards is on top.
-            setDepth(bias) {
+            // The card's place in a held stack, as an INDEX (0 = bottom). The
+            // distance is worked out here, from the lean and thickness, because
+            // this is the only place that knows them.
+            // Where each card above the bottom one sits, relative to the slot the
+            // site gave it: screen px, applied once per step up the stack.
+            setStackNudge(dx, dy) {
                 if (gone) return;
-                const next = (typeof bias === "number" && isFinite(bias)) ? bias : 0;
-                if (next === zBias) return;
-                zBias = next;
+                const x = (typeof dx === "number" && isFinite(dx)) ? dx : 0;
+                const y = (typeof dy === "number" && isFinite(dy)) ? dy : 0;
+                if (x === nudgeX && y === nudgeY) return;
+                nudgeX = x; nudgeY = y;
+                if (parked) put(atX, atY, 0, 0, 1);
+                s.dirty = true;
+                kick(s);
+            },
+            setDepth(ix) {
+                if (gone) return;
+                const next = (typeof ix === "number" && isFinite(ix)) ? Math.max(0, ix) : 0;
+                if (next === stackIx) return;
+                stackIx = next;
                 if (parked) put(atX, atY, 0, 0, 1);
                 s.dirty = true;
                 kick(s);
@@ -1638,6 +1698,24 @@
             kick(s);
         },
         keyLight: () => CARD_KEY_DIR.slice(),
+
+        // Same contract as table3d's: multiples of this file's own defaults.
+        setLightLevels: (cfg) => {
+            const c = cfg || {};
+            const num = (v, cur) => (isFinite(+v) && +v >= 0 ? Math.min(4, +v) : cur);
+            LVL_KEY = num(c.key, LVL_KEY);
+            LVL_FILL = num(c.fill, LVL_FILL);
+            LVL_AMB = num(c.ambient, LVL_AMB);
+            const s = session;
+            if (!s) return;
+            if (s.cardKey) s.cardKey.intensity = CARD_KEY * LVL_KEY;
+            if (s.cardAmb) s.cardAmb.intensity = CARD_AMBIENT * LVL_AMB;
+            if (s.propKey) s.propKey.intensity = PROP_KEY * LVL_KEY;
+            if (s.propRim) s.propRim.intensity = PROP_RIM * LVL_FILL;
+            if (s.propAmb) s.propAmb.intensity = PROP_AMB * LVL_AMB;
+            s.dirty = true;
+            kick(s);
+        },
 
         // Hand the shadows over to something with real geometry, or take them
         // back. The catcher is a stand-in for a surface this scene does not have;

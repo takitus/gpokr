@@ -52,6 +52,8 @@
     // table3d's key by setKeyLight so one slider aims both.
     const DIR_POS0 = [-8, 16, 7];
     let DIR_POS = DIR_POS0.slice();
+    // Multiples of this file's own tuned intensities; see table3d.setLightLevels.
+    let LVL_KEY = 1, LVL_AMB = 1;
     const SPAWN_PER_SEC = 95;
     const G = 46;                // world units/s^2 (deliberately slow; real gravity at this scale is a blur)
     const REST = 0.36;           // bounce restitution
@@ -296,8 +298,10 @@
         const T = window.THREE;
         s.scene = new T.Scene();
 
-        s.scene.add(new T.AmbientLight(0xffffff, LIGHT_AMBIENT));
-        const dir = new T.DirectionalLight(0xffffff, LIGHT_DIR);
+        const amb = new T.AmbientLight(0xffffff, LIGHT_AMBIENT * LVL_AMB);
+        s.amb = amb;
+        s.scene.add(amb);
+        const dir = new T.DirectionalLight(0xffffff, LIGHT_DIR * LVL_KEY);
         dir.position.set(DIR_POS[0], DIR_POS[1], DIR_POS[2]);
         s.dir = dir;
         dir.castShadow = true;
@@ -782,8 +786,19 @@
         s.dir.updateMatrixWorld(true);
     }
 
+    function setLightLevels(cfg) {
+        const c = cfg || {};
+        const num = (v, cur) => (isFinite(+v) && +v >= 0 ? Math.min(4, +v) : cur);
+        LVL_KEY = num(c.key, LVL_KEY);
+        LVL_AMB = num(c.ambient, LVL_AMB);
+        const s = session;
+        if (!s) return;
+        if (s.dir) s.dir.intensity = LIGHT_DIR * LVL_KEY;
+        if (s.amb) s.amb.intensity = LIGHT_AMBIENT * LVL_AMB;
+    }
+
     window.GPE_CHIPS = {
-        drop, art, setChipSize, setKeyLight,
+        drop, art, setChipSize, setKeyLight, setLightLevels,
         chipSize: () => ({ r: CHIP_R, h: CHIP_H }),
         isRunning: () => !!session, _session: () => session,
     };
