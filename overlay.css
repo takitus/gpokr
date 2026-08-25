@@ -351,7 +351,10 @@ html.gpe-fourcolor .gpe-suit-c { color: #008000; }
    It replaced each holder saving and restoring style.visibility, which stranded
    an avatar hidden whenever two celebrations overlapped. !important because that
    inline style is what this has to keep beating. */
-img[data-gpe-covered] { visibility: hidden !important; }
+/* Covered: something of ours is drawn where this is, so it must not also draw
+   itself. Not restricted to <img> — gpokr's bet/pot chips are Image widgets and
+   GWT is free to render one as a div. */
+[data-gpe-covered] { visibility: hidden !important; }
 
 #gpe-chips-layer {
     position: fixed;
@@ -1635,6 +1638,13 @@ html.gpe-river-lab .iogc-GameWindow-table:active { cursor: grabbing; }
 #gpe-bet-add:hover,
 #gpe-chat-add:hover { background: #f0f0f0; }
 .gpe-modal-hint { font-size: 11px; color: #888; margin-top: 8px; }
+/* A labelled rule inside a settings panel, where one panel covers more than one
+   subject (see the cards/chips/light editor). */
+.gpe-modal-section {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+    color: #999; margin: 12px 0 4px; padding-top: 8px;
+    border-top: 1px solid rgba(128, 128, 128, .28);
+}
 
 /* ---- 3D-table texture editor: a floating panel (no screen dim) ---- */
 .gpe-float-panel {
@@ -1647,8 +1657,12 @@ html.gpe-river-lab .iogc-GameWindow-table:active { cursor: grabbing; }
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
 }
 /* The card panel is the second floating panel, so it sits clear of the 3D
-   table's rather than exactly on top of it. */
+   table's rather than exactly on top of it. Only the starting spot: it is
+   draggable, and a dragged position overrides both of these inline. */
 #gpe-card-editor { top: 130px; left: 262px; width: 250px; }
+#gpe-card-editor .gpe-modal-head { cursor: move; } /* the header is the drag handle */
+#gpe-card-editor .gpe-modal-head button { cursor: pointer; }
+#gpe-card-editor.gpe-dragging { box-shadow: 0 6px 20px rgba(40, 80, 120, 0.5); opacity: 0.97; }
 
 /* ---- 3D-table texture editor: labeled sliders ---- */
 .gpe-slider-row {

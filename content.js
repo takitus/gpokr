@@ -22,6 +22,7 @@
     let CELEBRATIONS = true;      // celebrate/dance: opt-OUT, and it silences other players' too
     let MUTE_CHAT = true;         // whether the mute list is enforced (the list itself persists)
     let testerPos = null;         // dragged position of the tester panel (persisted as settings.testerPos)
+    let cardEditorPos = null;     // ...and of the cards/chips/light panel (settings.cardEditorPos)
     let testerHeight = 0;         // dragged height, 0 = size to content (settings.testerHeight)
     let testerPause = 100;        // default gap after each new throw (settings.testerPause)
     let testerDock = false;       // docked to the left of the table, mirroring the right rail (settings.testerDock)
@@ -64,12 +65,49 @@
     // back from storage is checked against a list rather than trusted.
     const BACKDROP_STYLES = ["grain", "glow", "carpet", "clover", "deco", "wood"];
     const SEAT_STYLES = ["stool", "chair"];
+    // Chip size. The diameter is in CSS px, as coin3d draws a thrown chip;
+    // chips3d's dropped chips are in its own world units and follow the same
+    // ratio, so one pair of sliders governs both piles. The defaults are the
+    // sizes both have always drawn at.
+    // Replace the site's flat bet/pot chip sprites with real discs (opt-out).
+    let TABLE_CHIPS = true;
+    let CHIP_DIAM = 26;          // coin3d's 13px radius, doubled
+    let CHIP_THICK = 4;          // chips3d's 0.17/0.55 proportion at that radius
+    const CHIP_DIAM_0 = 26, CHIP_THICK_0 = 4;
+    // Where the light that throws the shadows hangs — cards, chips and the 3D
+    // table all take their direction from this one place, so moving it moves
+    // every shadow together. A direction rather than a position: only the ratio
+    // between the three matters.
+    const LIGHT_POS_0 = { x: -6, y: 15, z: 11 };
+    let LIGHT_POS = Object.assign({}, LIGHT_POS_0);
+
     // Card thickness, in CSS px. 24 is already comic; the slider stops there.
     const CARD_THICK_MAX = 24;
     function clampThick(v) {
         const n = parseFloat(v);
         if (!isFinite(n)) return 2;
         return Math.max(0, Math.min(CARD_THICK_MAX, n));
+    }
+
+    const clampNum = (v, dflt, lo, hi) => {
+        const n = parseFloat(v);
+        return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
+    };
+    // Push the chip size to both renderers. chips3d works in world units, so its
+    // share is the same proportional change applied to the sizes it ships with.
+    function applyChipSize() {
+        if (window.GPE_COIN && GPE_COIN.setChipSize) GPE_COIN.setChipSize(CHIP_DIAM, CHIP_THICK);
+        if (window.GPE_CHIPS && GPE_CHIPS.setChipSize) {
+            GPE_CHIPS.setChipSize(0.55 * (CHIP_DIAM / CHIP_DIAM_0), 0.17 * (CHIP_THICK / CHIP_THICK_0));
+        }
+    }
+    // ...and the light direction to all three. Each keeps its own rig; this only
+    // says where the sun is.
+    function applyLightPos() {
+        const { x, y, z } = LIGHT_POS;
+        for (const api of [window.GPE_COIN, window.GPE_CHIPS, window.GPE_TABLE3D]) {
+            if (api && api.setKeyLight) { try { api.setKeyLight(x, y, z); } catch (e) { /* not fatal */ } }
+        }
     }
 
     const clampZoom = (v, dflt) => { const n = parseFloat(v); return (isFinite(n) && n > 0) ? Math.min(10, Math.max(0.1, n)) : (dflt != null ? dflt : 1); };
@@ -177,6 +215,20 @@
         CARD_BACK = CARD_BACK_STYLES.indexOf(s && s.cardBack) >= 0 ? s.cardBack : "";
         CARD_FACE = (s && s.cardFace === "svg") ? "svg" : "";
         CARD_THICK = clampThick(s && s.cardThickness);
+        TABLE_CHIPS = !(s && s.tableChips === false);  // opt-out
+        // The chips need coin3d's canvas exactly as the deal does, and a bet gives
+        // no more notice than a card: ask for the renderer now.
+        if (TABLE_CHIPS) ensureCoin3d();
+        else unparkAllTableChips();
+        CHIP_DIAM = clampNum(s && s.chipDiameter, CHIP_DIAM_0, 8, 60);
+        CHIP_THICK = clampNum(s && s.chipThickness, CHIP_THICK_0, 0.5, 20);
+        LIGHT_POS = {
+            x: clampNum(s && s.lightX, LIGHT_POS_0.x, -40, 40),
+            y: clampNum(s && s.lightY, LIGHT_POS_0.y, 1, 40),
+            z: clampNum(s && s.lightZ, LIGHT_POS_0.z, -40, 40),
+        };
+        applyChipSize();
+        applyLightPos();
         DEAL_ANIM = !(s && s.dealAnimation === false); // opt-out
         // The deal needs coin3d's canvas, and a card gives no notice: by the time
         // one is dealt there is no time to fetch a renderer. As an extension that
@@ -223,6 +275,10 @@
         const tpos = s && s.testerPos;
         testerPos = (tpos && typeof tpos.left === "number" && typeof tpos.top === "number")
             ? { left: tpos.left, top: tpos.top } : null;
+        const cpos = s && s.cardEditorPos;
+        cardEditorPos = (cpos && typeof cpos.left === "number" && typeof cpos.top === "number")
+            ? { left: cpos.left, top: cpos.top } : null;
+        placeCardEditor(document.getElementById("gpe-card-editor"));
         const tp = parseInt(s && s.testerPause, 10);
         testerPause = PAUSE_CHOICES.indexOf(tp) >= 0 ? tp : 100;
         const wasDocked = testerDock;
@@ -626,7 +682,9 @@
             coinLoad = three
                 .then(() => (window.GPE_CHIPS ? null : loadScript(base + "3d/chips3d.js")))
                 .then(() => loadScript(base + "3d/coin3d.js"))
-                .then(() => !!window.GPE_COIN)
+                // A renderer that arrives after the settings did has never been
+                // told the chip size or where the light hangs, so tell it now.
+                .then(() => { applyChipSize(); applyLightPos(); return !!window.GPE_COIN; })
                 .catch((err) => {
                     console.warn("[gpe] chip toss unavailable — could not load " + err.message);
                     coinLoad = null;
@@ -2975,6 +3033,200 @@
                 thick: CARD_THICK });
         }
         t3d.setCardCasters(list);
+    }
+
+    // ---------- the table's own chips, in 3D ----------
+    //
+    // gpokr draws every bet and the pot as a stack of 24x21 PNGs inside a
+    // .gpokr-ChipStack-chips box, one <img> per chip. This stands each of them up
+    // as a real disc, the same way a dealt card stands in for the site's card
+    // image: the sprite is covered, ours is drawn where it was, and it stays
+    // there until the site changes the stack.
+    //
+    // Getting the DENOMINATION is the only part that takes any thinking, because
+    // the sprites are data: URIs baked into a GWT permutation and matching on
+    // them would break the day gpokr rebuilds. So it is derived instead, from the
+    // rule the site itself follows: the stack's own "$N" label, spent greedily
+    // from the largest chip down. That reproduces the site's multiset exactly,
+    // and it is self-checking — if the count doesn't match the number of sprites
+    // in the box, the assumption is wrong and the stack is left alone.
+    const CHIP_DENOMS = [250000, 50000, 10000, 2500, 500, 100, 25, 5, 1];
+    // The site's own chip element -> { handle, denom, row, at }.
+    const tableChips = new Map();
+
+    function chipsForAmount(amount) {
+        const out = [];
+        let left = amount;
+        for (const d of CHIP_DENOMS) {
+            const n = Math.floor(left / d);
+            for (let i = 0; i < n; i++) out.push(d);
+            left %= d;
+        }
+        return out;
+    }
+
+    // What to draw for one .gpokr-ChipStack-chips box, or null to leave it be.
+    // The site positions each sprite with a cs-pos<column>-<row> class, which is
+    // where the stack geometry comes from: the column gives the spot on the felt
+    // and the row gives the height, so ours rises by its own thickness where the
+    // site's rose by a flat 2px.
+    function planChipStack(box) {
+        const els = box.querySelectorAll("[class*='cs-pos']");
+        if (!els.length) return null;
+        const label = box.querySelector(".gpokr-ChipStack-label");
+        const amount = label ? parseMoney(label.textContent) : 0;
+        const denoms = chipsForAmount(amount);
+        if (!amount || denoms.length !== els.length) return null;  // not the stack we think it is
+        // Column base rects first: a chip's spot on the felt is where the bottom
+        // chip of its column sits, and everything above it is stacked from there.
+        const base = new Map();
+        const rows = [];
+        for (let i = 0; i < els.length; i++) {
+            const m = /\bcs-pos(\d+)-(\d+)\b/.exec(els[i].className || "");
+            const col = m ? parseInt(m[1], 10) : 0;
+            const row = m ? parseInt(m[2], 10) : 0;
+            const r = liveRect(els[i]);
+            if (!r) return null;                       // mid-render; try again next sweep
+            if (row === 0) base.set(col, r);
+            rows.push({ el: els[i], denom: denoms[i], col: col, row: row, own: r });
+        }
+        for (const p of rows) p.at = base.get(p.col) || p.own;
+        return rows;
+    }
+
+    function unparkTableChip(el) {
+        const rec = tableChips.get(el);
+        if (!rec) return;
+        tableChips.delete(el);
+        if (rec.handle) { try { rec.handle.remove(); } catch (e) {} }
+        coverRelease(el);
+    }
+
+    function unparkAllTableChips() {
+        for (const el of Array.from(tableChips.keys())) unparkTableChip(el);
+    }
+
+    const sameRect = (a, b) => !!a && !!b &&
+        Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5 &&
+        Math.abs(a.width - b.width) < 0.5;
+
+    // Called from the fast poll. Idempotent: it reconciles what is parked against
+    // what the site is currently showing, so a stack that grew, shrank, moved or
+    // vanished is handled by the same pass.
+    function syncTableChips() {
+        if (!TABLE_CHIPS || !window.GPE_COIN || typeof GPE_COIN.parkChip !== "function") {
+            unparkAllTableChips();
+            return;
+        }
+        // hasCanvas is a teardown test, not an entry condition: the session is
+        // built lazily by the first parkChip, so demanding a canvas up front would
+        // mean never asking for one. What must not persist is the other way round —
+        // chips parked on a canvas that has since gone, with the site's own sprites
+        // still hidden behind discs nobody can see.
+        if (tableChips.size && (typeof GPE_COIN.hasCanvas !== "function" || !GPE_COIN.hasCanvas())) {
+            unparkAllTableChips();
+            return;
+        }
+        const seen = new Set();
+        for (const box of document.querySelectorAll(".gpokr-ChipStack-chips")) {
+            const plan = planChipStack(box);
+            if (!plan) continue;
+            for (const p of plan) {
+                seen.add(p.el);
+                const rec = tableChips.get(p.el);
+                // A chip whose denomination changed is a different chip: the art
+                // is baked into its materials, so it is replaced rather than moved.
+                if (rec && rec.denom === p.denom) {
+                    if (rec.row !== p.row || !sameRect(rec.at, p.at)) {
+                        rec.row = p.row; rec.at = p.at;
+                        rec.handle.move(p.at, p.row);
+                    }
+                    continue;
+                }
+                if (rec) unparkTableChip(p.el);
+                const handle = GPE_COIN.parkChip(p.at, p.denom, { row: p.row });
+                if (!handle) continue;               // no renderer: leave the sprite showing
+                coverHold(p.el);
+                tableChips.set(p.el, { handle: handle, denom: p.denom, row: p.row, at: p.at });
+            }
+        }
+        for (const el of Array.from(tableChips.keys())) {
+            if (!seen.has(el) || !el.isConnected) unparkTableChip(el);
+        }
+    }
+
+    // ---------- the seat badges the cards were burying ----------
+    //
+    // gpokr flags a seat with a small ribbon: "away" when the player has sat out,
+    // "turn" when it is theirs. Both are meant to be the topmost thing at that
+    // seat, and both were until we started drawing cards on a canvas stretched
+    // over the whole page — a DOM element cannot come out in front of that. Sit
+    // out mid-hand and your own hole cards bury the flag that says you have.
+    //
+    // The fix is to draw the badge as well, from the site's own image, at the
+    // site's own spot, above everything else on the layer.
+    //
+    // Only when something of OURS is actually on top of it, though. With nothing
+    // parked over the seat the site's badge is already winning, and its own <img>
+    // is sharper than any texture we could make of it — so the common case is
+    // left completely alone and this is dormant.
+    const BADGE_SEL = ".iogc-PlayerPanel-away, .iogc-PlayerPanel-turn";
+    const seatBadges = new Map();      // the site's badge element -> { handle, at }
+
+    // A card leans and scales a little past the slot it stands in, so the test is
+    // padded rather than exact — a badge half-buried is still buried.
+    const BADGE_PAD = 4;
+    function rectsOverlap(a, b) {
+        return !!a && !!b &&
+            a.left - BADGE_PAD < b.left + b.width && a.left + a.width + BADGE_PAD > b.left &&
+            a.top - BADGE_PAD < b.top + b.height && a.top + a.height + BADGE_PAD > b.top;
+    }
+
+    // Is anything we draw sitting over this badge?
+    function badgeBuried(r) {
+        for (const rec of dealtCards.values()) if (rectsOverlap(rec.at, r)) return true;
+        for (const rec of tableChips.values()) if (rectsOverlap(rec.at, r)) return true;
+        return false;
+    }
+
+    function dropSeatBadge(el) {
+        const rec = seatBadges.get(el);
+        if (!rec) return;
+        seatBadges.delete(el);
+        if (rec.handle) { try { rec.handle.remove(); } catch (e) {} }
+    }
+
+    function dropAllSeatBadges() {
+        for (const el of Array.from(seatBadges.keys())) dropSeatBadge(el);
+    }
+
+    function syncSeatBadges() {
+        // Nothing of ours is on the page, so nothing of ours is in the way. This
+        // is also the teardown: badges parked on a canvas that has gone would be
+        // invisible, and the site's own would be back on top anyway.
+        if (!dealtCards.size && !tableChips.size) { dropAllSeatBadges(); return; }
+        if (!window.GPE_COIN || typeof GPE_COIN.parkBadge !== "function") { dropAllSeatBadges(); return; }
+        const seen = new Set();
+        for (const el of document.querySelectorAll(BADGE_SEL)) {
+            // The site hides these with display:none, so a zero-width rect IS the
+            // "not showing" signal — no need to read style.
+            const r = liveRect(el);
+            if (!r || !badgeBuried(r)) continue;
+            // An <img> that has not decoded yet uploads nothing. It will have by
+            // the next sweep; the site's own badge is no worse off meanwhile.
+            if (!el.complete || !el.naturalWidth) continue;
+            seen.add(el);
+            const rec = seatBadges.get(el);
+            if (rec) {
+                if (!sameRect(rec.at, r)) { rec.at = r; rec.handle.move(r); }
+                continue;
+            }
+            const handle = GPE_COIN.parkBadge(r, el);
+            if (handle) seatBadges.set(el, { handle: handle, at: r });
+        }
+        for (const el of Array.from(seatBadges.keys())) {
+            if (!seen.has(el) || !el.isConnected) dropSeatBadge(el);
+        }
     }
 
     // Parked cards ARE the board, so they have to be kept honest: followed when
@@ -6539,11 +6791,15 @@
 
         const head = document.createElement("div");
         head.className = "gpe-modal-head";
-        head.appendChild(document.createTextNode("cards"));
+        head.appendChild(document.createTextNode("cards, chips & light"));
         const close = document.createElement("button");
         close.type = "button"; close.textContent = "✕"; close.title = "close";
         close.addEventListener("click", closeCardEditor);
         head.appendChild(close);
+        // The header is the grip, same as the odds HUD and the tester: the panel
+        // has grown tall enough to cover the felt it is meant to be judged
+        // against, so it has to be movable.
+        makeDraggable(modal, head, "cardEditorPos");
 
         const refreshers = [];
         // Rows go straight on the modal, as the other panels do — there is no
@@ -6639,16 +6895,108 @@
             "flat image and has no edge to give it.";
         body.appendChild(note);
 
+        // Same live-on-drag / persist-on-release contract as the thickness slider
+        // above: `set` runs on every frame of the drag, storage is written once on
+        // release. `get` is what the slider snaps back to when the panel reopens.
+        const sliderRow = (label, o) => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label";
+            lab.textContent = label;
+            if (o.hint) lab.title = o.hint;
+            const sl = document.createElement("input");
+            sl.type = "range";
+            sl.min = String(o.min); sl.max = String(o.max); sl.step = String(o.step);
+            sl.value = String(o.get());
+            const val = document.createElement("span");
+            val.className = "gpe-slider-val";
+            const fmt = o.fmt || ((n) => n.toFixed(1));
+            val.textContent = fmt(o.get());
+            sl.addEventListener("input", () => {
+                const n = clampNum(sl.value, o.get(), o.min, o.max);
+                val.textContent = fmt(n);
+                o.set(n);
+            });
+            sl.addEventListener("change", () => saveSetting(o.key, clampNum(sl.value, o.get(), o.min, o.max)));
+            refreshers.push(() => {
+                if (document.activeElement === sl) return;
+                sl.value = String(o.get());
+                val.textContent = fmt(o.get());
+            });
+            row.append(lab, sl, val);
+            return row;
+        };
+
+        // A labelled rule, to break the panel into its three subjects.
+        const sectionRow = (text) => {
+            const d = document.createElement("div");
+            d.className = "gpe-modal-section";
+            d.textContent = text;
+            return d;
+        };
+
+        const px = (n) => n.toFixed(1) + "px";
+        body.appendChild(sectionRow("chips"));
+        body.appendChild(checkRow("3D bets and pot", () => TABLE_CHIPS, "tableChips",
+            "draw the table's own bet and pot chips as discs instead of the site's flat sprites"));
+        body.appendChild(sliderRow("diameter", {
+            min: 8, max: 60, step: 1, key: "chipDiameter", fmt: px,
+            hint: "how wide a chip is — the one thrown at a seat, and the ones the " +
+                "chip portal drops, which follow the same proportion",
+            get: () => CHIP_DIAM,
+            set: (n) => { CHIP_DIAM = n; applyChipSize(); },
+        }));
+        body.appendChild(sliderRow("thickness", {
+            min: 0.5, max: 20, step: 0.5, key: "chipThickness", fmt: px,
+            hint: "how thick a chip is. The default is a real chip's ratio; past " +
+                "about 8px it is a hockey puck.",
+            get: () => CHIP_THICK,
+            set: (n) => { CHIP_THICK = n; applyChipSize(); },
+        }));
+
+        body.appendChild(sectionRow("light"));
+        const lightHint = "where the light that throws every shadow hangs — cards, " +
+            "chips and the 3D table all take their direction from it. Low and to " +
+            "the side gives long shadows; high overhead tucks them under.";
+        for (const axis of ["x", "y", "z"]) {
+            body.appendChild(sliderRow(axis, {
+                min: axis === "y" ? 1 : -40, max: 40, step: 0.5,
+                key: "light" + axis.toUpperCase(),
+                fmt: (n) => n.toFixed(1), hint: lightHint,
+                get: () => LIGHT_POS[axis],
+                set: (n) => { LIGHT_POS[axis] = n; applyLightPos(); },
+            }));
+        }
+
         modal.append(head, body);
         document.body.appendChild(modal);
         modal._gpeRefresh = () => refreshers.forEach((fn) => { try { fn(); } catch (e) {} });
         return modal;
     }
 
+    // Where the panel sits: the dragged spot if there is one, clamped on-screen so
+    // a position saved on a wider window can't strand it off the edge; otherwise
+    // the default from overlay.css, which is why those are cleared rather than
+    // written back.
+    function placeCardEditor(panel) {
+        if (!panel) return;
+        if (activeDrag && activeDrag.el === panel) return;   // don't fight a drag
+        if (!cardEditorPos) { panel.style.left = ""; panel.style.top = ""; return; }
+        const p = clampToViewport(cardEditorPos.left, cardEditorPos.top,
+            panel.offsetWidth, panel.offsetHeight);
+        panel.style.left = p.left + "px";
+        panel.style.top = p.top + "px";
+    }
+
     function openCardEditor() {
         const panel = document.getElementById("gpe-card-editor") || buildCardEditor();
         if (panel._gpeRefresh) panel._gpeRefresh();
         panel.style.display = panel.style.display === "block" ? "none" : "block";
+        // After the display flip: offsetWidth/Height are zero while it is hidden,
+        // and the clamp would then read the panel as a point and pin it to the
+        // bottom-right corner.
+        if (panel.style.display === "block") placeCardEditor(panel);
     }
 
     // ---------- UI: 3D-table texture editor (felt / leather zoom sliders) ----------
@@ -8361,7 +8709,7 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
             const three = window.THREE ? Promise.resolve() : loadScript(base + "vendor/three.iife.js");
             table3dLoad = three
                 .then(() => loadScript(base + "3d/table3d.js"))
-                .then(() => !!window.GPE_TABLE3D)
+                .then(() => { applyLightPos(); return !!window.GPE_TABLE3D; })
                 .catch((err) => {
                     console.warn("[gpe] 3D table unavailable — could not load " + err.message);
                     table3dLoad = null;
@@ -8418,8 +8766,10 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     // held on, and the loop may be idle with nothing due to redraw them. Do it
     // now rather than waiting up to a poll for the board to reappear.
     window.addEventListener("resize", () => {
-        if (!dealtCards.size) return;
+        if (!dealtCards.size && !tableChips.size) return;
         syncDealtCards();
+        syncTableChips();
+        syncSeatBadges();
         if (window.GPE_COIN && GPE_COIN.redraw) GPE_COIN.redraw();
     });
     // As an extension props3d is already a content script, so its catalog is here
@@ -8443,6 +8793,8 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         syncTable3d(); // keep the 3D felt attached across GWT re-renders
         sweepCardImgs(); // backstop for any card the observer missed
         syncDealtCards(); // dealt cards follow their slots, and go when they do
+        syncTableChips(); // ...and the bet/pot stacks track theirs
+        syncSeatBadges(); // away/turn flags stay on top of whatever we drew
         // The inspector may have been switched on before the table existed, or
         // GWT may have replaced the element under us; re-arm if so.
         if (RIVER_LAB && !riverLabWired) syncRiverLab();

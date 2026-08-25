@@ -54,6 +54,15 @@
   #board{position:absolute;left:300px;top:300px;display:flex;gap:8px}
   #board img.bcard{width:53px;height:69px;display:block}
   #board img.bcard:not([src]){visibility:hidden}
+
+  /* gpokr's own ChipStack geometry, lifted verbatim from the compiled GWT
+     permutation (gpokr2/*.cache.js). Four stack positions in two rows, each
+     rising 2px per chip to a maximum of seven. The extension reads the
+     cs-pos<column>-<row> class off each sprite to know where in the stack a
+     chip is, so these classes ARE the fixture. */
+  .gpokr-ChipStack,.gpokr-ChipStack-chips{width:80px;height:55px;position:absolute}
+  .gpokr-ChipStack-label{color:#fff;font-weight:bold;font-size:12px;
+    background-color:#000;position:absolute;left:20px;top:35px;font-family:Arial}
 </style>
 <div class="iogc-GameWindow-container">
 <div id="table" class="iogc-GameWindow-table"></div>
@@ -62,6 +71,10 @@
   <img class="bcard" alt=""><img class="bcard" alt=""><img class="bcard" alt="">
   <img class="bcard" alt=""><img class="bcard" alt="">
 </div>
+<!-- Two chip stacks: a seat's bet and the pot. Built by __bet()/__pot() below,
+     which follow the site's own widget exactly. -->
+<div class="gpokr-ChipStack" id="bet-a" style="left:420px;top:250px"><div class="gpokr-ChipStack-chips"></div></div>
+<div class="gpokr-ChipStack" id="pot"   style="left:300px;top:200px"><div class="gpokr-ChipStack-chips"></div></div>
 </div>
 <table class="iogc-PlayerPanel-x"><tbody>
   <tr><td><img class="iogc-PlayerPanel-avatar" alt="avatar"
@@ -262,6 +275,41 @@
         els[1].src = "/GPokr/cards/" + b + ".png";
         return [a, b];
     };
+    // ---- seat badges --------------------------------------------------------
+    // gpokr's away/turn ribbons: 58x21 Image widgets in the player panel, hidden
+    // with display:none until they apply, and meant to sit on top of everything
+    // at that seat. Placed over the hand cards here because that is the case that
+    // broke — sit out mid-hand and your own hole cards bury the flag.
+    //
+    // The art is a stand-in, not gpokr's: what is under test is whether the badge
+    // ends up on top, and a ribbon that is obviously not the site's makes it
+    // impossible to mistake one for the other.
+    const badgeArt = (text, bg) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="58" height="29">' +
+      '<g transform="rotate(-7 29 14.5)"><rect x="2" y="7" width="54" height="16" fill="' + bg + '"/>' +
+      '<text x="29" y="19" font-family="Georgia,serif" font-size="12" fill="#fff" ' +
+      'text-anchor="middle">' + text + '</text></g></svg>');
+
+    function badgeEl(cls, text, bg) {
+      let el = document.querySelector("." + cls);
+      if (!el) {
+        el = document.createElement("img");
+        el.className = cls;
+        el.src = badgeArt(text, bg);
+        // Over the hand cards, and in the page's own stacking order — which is
+        // exactly where it loses to our canvas.
+        el.style.cssText = "position:absolute;left:640px;top:455px;width:58px;height:29px;display:none";
+        document.querySelector(".iogc-GameWindow-container").appendChild(el);
+      }
+      return el;
+    }
+    // __away(true/false), __turn(true/false)
+    window.__away = (on) => { badgeEl("iogc-PlayerPanel-away", "away", "#101010").style.display = on === false ? "none" : "block"; };
+    window.__turn = (on) => { badgeEl("iogc-PlayerPanel-turn", "turn", "#0f5323").style.display = on === false ? "none" : "block"; };
+    // Is the site's badge buried, and is ours standing in for it?
+    window.__badges = () => [...document.querySelectorAll(".iogc-PlayerPanel-away, .iogc-PlayerPanel-turn")]
+      .map((e) => ({ cls: e.className, shown: getComputedStyle(e).display !== "none" }));
+
     window.__handState = () => [...document.querySelectorAll("#hand img.hcard")].map((e) => ({
         card: e.dataset.gpeCard || null, covered: e.getAttribute("data-gpe-covered"),
         visibility: getComputedStyle(e).visibility }));
@@ -285,6 +333,67 @@
         return el ? { card: el.dataset.gpeCard || null, covered: el.getAttribute("data-gpe-covered"),
             visibility: getComputedStyle(el).visibility } : null;
     };
+
+    // ---- chip stacks -------------------------------------------------------
+    // A faithful reimplementation of gpokr's ChipStack.setAmount, from the
+    // compiled permutation: spend the amount greedily from the largest chip
+    // down, choose a column count from the total (<=2 -> 1, <=8 -> 2, <=12 -> 3,
+    // else 4), fill ceil(total/columns) chips per column, and tag each sprite
+    // cs-pos<column>-<row>. Then a "$N" label over the lot.
+    //
+    // The art is OURS, not the site's: coloured discs standing in for its 24x21
+    // PNGs. What is being tested is the geometry and the covering, and a
+    // placeholder that is obviously not gpokr's chip makes an UNcovered sprite
+    // impossible to miss.
+    const CS_DENOMS = [250000, 50000, 10000, 2500, 500, 100, 25, 5, 1];
+    const CS_COLOR = {
+      1: "#4f4f4f", 5: "#860000", 25: "#1d9841", 100: "#000000", 500: "#a8007f",
+      2500: "#5397d9", 10000: "#c0f0a8", 50000: "#efe2b8", 250000: "#d0e2e1",
+    };
+    const CS_POS = [[13, 12], [38, 12], [0, 31], [25, 31]];
+    const csSprite = (d) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="21">' +
+      '<ellipse cx="12" cy="10.5" rx="11.5" ry="10" fill="' + CS_COLOR[d] + '"/>' +
+      '<ellipse cx="12" cy="10.5" rx="7" ry="6" fill="#fff"/></svg>');
+
+    function csFill(box, amount) {
+      box.textContent = "";
+      if (!(amount > 0)) return;
+      const chips = [];
+      let left = amount;
+      for (const d of CS_DENOMS) {
+        const n = Math.floor(left / d);
+        for (let i = 0; i < n; i++) chips.push(d);
+        left %= d;
+      }
+      const c = chips.length;
+      const n = c <= 2 ? 1 : c <= 8 ? 2 : c <= 12 ? 3 : 4;
+      const per = Math.ceil(c / n);
+      let col = 0, row = 0;
+      for (const d of chips) {
+        const img = document.createElement("img");
+        img.src = csSprite(d);
+        img.className = "cs-pos" + col + "-" + row;
+        const p = CS_POS[Math.min(col, 3)];
+        img.style.cssText = "position:absolute;width:24px;height:21px;left:" +
+          p[0] + "px;top:" + (p[1] - row * 2) + "px";
+        box.appendChild(img);
+        if (++row >= per) { col++; row = 0; }
+      }
+      const lab = document.createElement("div");
+      lab.className = "gpokr-ChipStack-label";
+      lab.textContent = "$" + amount.toLocaleString();
+      box.appendChild(lab);
+    }
+
+    const csBox = (id) => document.querySelector("#" + id + " .gpokr-ChipStack-chips");
+    window.__bet = (amount) => { csFill(csBox("bet-a"), amount); return amount; };
+    window.__pot = (amount) => { csFill(csBox("pot"), amount); return amount; };
+    // What the extension has actually done to a stack: is each sprite covered,
+    // and how many discs is it drawing in its place?
+    window.__chips = (id) => Array.from(csBox(id || "bet-a").querySelectorAll("[class*=cs-pos]"))
+      .map((el) => ({ cls: el.className, covered: el.hasAttribute("data-gpe-covered"),
+                      vis: getComputedStyle(el).visibility }));
 
     window.__board = () => slots().map((el, i) => ({
         slot: i,
@@ -317,6 +426,6 @@
         });
     });
 
-    log("ready. __fire('dance') | __flop() | __board() | __set({cardFace:'svg'})");
+    log("ready. __flop() | __bet(275) | __hand('Ah','Kd') | __away() | __badges()");
   })();
 </script>

@@ -34,7 +34,12 @@
     "use strict";
 
     // ---------- chip ----------
-    const COIN_R = 13;           // radius, CSS px (thickness follows chips3d's proportions)
+    // Chip size, in CSS px, and adjustable at runtime — see setChipSize. The
+    // radius was a constant and the thickness followed chips3d's proportions;
+    // both are now settings, so a chip can be a wafer or a hockey puck.
+    const COIN_R0 = 13;          // the size it has always been, and the default
+    let coinR = COIN_R0;         // radius
+    let coinH = 0;               // thickness; 0 = follow chips3d's proportions
     const MAX_COINS = 8;         // older ones are dropped rather than piling up
 
     // ---------- flight ----------
@@ -149,7 +154,26 @@
         catcher.visible = false;                 // ...until there is a card to shade
         s.scene.add(catcher);
         s.cardCatcher = catcher;
+
+        // A second catcher, for the chips. It is a separate plane because a
+        // ShadowMaterial catcher only gives a CONTACT shadow at the height it
+        // sits at, and a chip resting on the felt is ten pixels nearer the table
+        // than a parked card is — put them both on one plane and whichever lost
+        // gets a shadow that floats. depthWrite is off so it never occludes the
+        // card plane in front of it.
+        const coinCatcher = new T.Mesh(new T.PlaneGeometry(1, 1),
+            new T.ShadowMaterial({ opacity: COIN_SHADOW_OPACITY, transparent: true, depthWrite: false }));
+        coinCatcher.receiveShadow = true;
+        coinCatcher.layers.set(CARD_LAYER);
+        coinCatcher.visible = false;
+        s.scene.add(coinCatcher);
+        s.coinCatcher = coinCatcher;
+
         s.cards = new Set();
+        // Chips parked on the felt, standing in for the site's bet/pot sprites.
+        // Records rather than meshes, because a resize has to re-place them as
+        // well as re-geometry them: the stack's rise IS the chip thickness.
+        s.stacks = new Set();
         s.catcherOn = true;      // until something better offers to catch them
     }
 
@@ -174,31 +198,71 @@
         // Switched off while the 3D table is carrying the shadows: its felt is
         // real geometry that already receives them, and two systems under one card
         // is two shadows. See GPE_TABLE3D.setCardCasters.
-        if (!s.catcherOn) { catcher.visible = false; return; }
-        if (!s.cards || !s.cards.size) { catcher.visible = false; return; }
-        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, zLow = Infinity;
-        for (const g of s.cards) {
-            const hw = Math.abs(g.scale.x) / 2, hh = Math.abs(g.scale.y) / 2;
-            x0 = Math.min(x0, g.position.x - hw); x1 = Math.max(x1, g.position.x + hw);
-            y0 = Math.min(y0, g.position.y - hh); y1 = Math.max(y1, g.position.y + hh);
-            zLow = Math.min(zLow, g.position.z - Math.abs(g.scale.z) / 2);
-        }
-        if (!isFinite(x0)) { catcher.visible = false; return; }
+        const coinCatcher = s.coinCatcher;
+        // Bounds are gathered per GROUP, so each catcher can sit at its own
+        // group's height; the shadow camera is then aimed at the union.
         const pad = 40;
-        x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
-        const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-        catcher.visible = true;
-        catcher.position.set(cx, cy, zLow);
-        catcher.scale.set(x1 - x0, y1 - y0, 1);
+        const box = () => ({ x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity, z: Infinity });
+        const place = (mesh, b) => {
+            if (!mesh) return null;
+            if (!isFinite(b.x0)) { mesh.visible = false; return null; }
+            const x0 = b.x0 - pad, y0 = b.y0 - pad, x1 = b.x1 + pad, y1 = b.y1 + pad;
+            const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+            mesh.visible = true;
+            mesh.position.set(cx, cy, b.z);
+            mesh.scale.set(x1 - x0, y1 - y0, 1);
+            return { x0, y0, x1, y1, z: b.z };
+        };
+
+        // The card catcher stands down when the 3D table is carrying the cards'
+        // shadows onto its own felt — two shadows under one card is worse than
+        // either. The CHIP catcher does not: table3d is only told about cards, so
+        // without this the bets and the pot would lose their shadows the moment
+        // the 3D table came on.
+        const cb = box();
+        if (!s.catcherOn) catcher.visible = false;
+        else for (const g of s.cards || []) {
+            const hw = Math.abs(g.scale.x) / 2, hh = Math.abs(g.scale.y) / 2;
+            cb.x0 = Math.min(cb.x0, g.position.x - hw); cb.x1 = Math.max(cb.x1, g.position.x + hw);
+            cb.y0 = Math.min(cb.y0, g.position.y - hh); cb.y1 = Math.max(cb.y1, g.position.y + hh);
+            cb.z = Math.min(cb.z, g.position.z - Math.abs(g.scale.z) / 2);
+        }
+
+        // Chips: discs of a known radius. The ground they rest on is where the
+        // mesh sits when its height is zero (see the coin update), minus half a
+        // thickness for the underside — and the shadow of one still in the air
+        // slides away from it on its own, which is the point of a real one.
+        const nb = box();
+        const chipAt = (p) => {
+            nb.x0 = Math.min(nb.x0, p.x - coinR); nb.x1 = Math.max(nb.x1, p.x + coinR);
+            nb.y0 = Math.min(nb.y0, p.y - coinR); nb.y1 = Math.max(nb.y1, p.y + coinR);
+            nb.z = COIN_REST_Z - coinH / 2;
+        };
+        for (const c of s.coins || []) {
+            if (!c.mesh || !c.mesh.visible) continue;
+            chipAt(c.mesh.position);
+        }
+        // The bet and pot stacks share that plane: a stack's shadow starts at the
+        // felt whatever it is standing on top of.
+        for (const rec of s.stacks || []) chipAt(rec.mesh.position);
+
+        const boxes = [s.catcherOn ? place(catcher, cb) : null,
+            place(coinCatcher, nb)].filter(Boolean);
+        if (!boxes.length) return;
+
+        const ux0 = Math.min(...boxes.map((b) => b.x0)), ux1 = Math.max(...boxes.map((b) => b.x1));
+        const uy0 = Math.min(...boxes.map((b) => b.y0)), uy1 = Math.max(...boxes.map((b) => b.y1));
+        const uz = Math.min(...boxes.map((b) => b.z));
 
         // A directional light lights by DIRECTION, but its shadow camera sits at
         // its position and looks at its target — so the light has to be moved to
         // hang over the cards, keeping the same direction.
+        const cx = (ux0 + ux1) / 2, cy = (uy0 + uy1) / 2;
         const d = new T.Vector3(CARD_KEY_DIR[0], CARD_KEY_DIR[1], CARD_KEY_DIR[2]).normalize();
-        const dist = Math.max(x1 - x0, y1 - y0) + 400;
-        key.target.position.set(cx, cy, zLow);
-        key.position.set(cx + d.x * dist, cy + d.y * dist, zLow + d.z * dist);
-        const half = Math.max(x1 - x0, y1 - y0) * 0.75;
+        const dist = Math.max(ux1 - ux0, uy1 - uy0) + 400;
+        key.target.position.set(cx, cy, uz);
+        key.position.set(cx + d.x * dist, cy + d.y * dist, uz + d.z * dist);
+        const half = Math.max(ux1 - ux0, uy1 - uy0) * 0.75;
         const cam = key.shadow.camera;
         cam.left = -half; cam.right = half; cam.top = half; cam.bottom = -half;
         cam.near = 1; cam.far = dist * 2.2;
@@ -265,14 +329,19 @@
 
         // Same proportions as the chips the portal drops, scaled to CSS px.
         const prop = window.GPE_CHIPS.art.proportions;
+        if (!coinH) coinH = coinR * (prop.h / prop.r);
         // CylinderGeometry's material groups are [side, top, bottom]; its axis is
         // local +Y, so the base orientation below turns the faces toward us.
-        s.coinGeo = new T.CylinderGeometry(
-            COIN_R, COIN_R, COIN_R * (prop.h / prop.r), 32, 1);
-        s.shadowGeo = new T.PlaneGeometry(COIN_R * 2.4, COIN_R * 2.4);
+        s.coinGeo = new T.CylinderGeometry(coinR, coinR, coinH, 32, 1);
+        s.shadowGeo = new T.PlaneGeometry(coinR * 2.4, coinR * 2.4);
         s.shadowMat = new T.MeshBasicMaterial({
             map: s.shadowTex, transparent: true, depthWrite: false, opacity: 0.35,
         });
+        // The painted disc under a flying chip, retired: the chip catcher below
+        // draws its shadow for real now, and that one is never switched off. Left
+        // in as a knob rather than deleted, because it is still the only shadow
+        // that works with no depth information at all.
+        s.spriteShadows = false;
         s.art = [];   // per-denomination { face, rim, faceMat, rimMat }, built on demand
     }
 
@@ -321,7 +390,12 @@
             const a = artFor(s, denomIndex(o.denom));
             // CylinderGeometry's groups are [side, top, bottom]; cloned per throw
             // so each chip can fade on its own.
-            return new T.Mesh(s.coinGeo, [a.rimMat.clone(), a.faceMat.clone(), a.faceMat.clone()]);
+            const m = new T.Mesh(s.coinGeo, [a.rimMat.clone(), a.faceMat.clone(), a.faceMat.clone()]);
+            // A chip is a solid disc; let it drop a real shadow like the cards do.
+            // The painted sprite below it stands down while this is on, or a chip
+            // arrives with two shadows.
+            m.castShadow = true;
+            return m;
         },
         // Face-on: the disc's axis points at the viewer.
         basePose: (T, q) => q.setFromAxisAngle(new T.Vector3(1, 0, 0), -Math.PI / 2),
@@ -348,6 +422,148 @@
         const mesh = def.make(T, s, { denom: denom });
         if (mesh) def.basePose(T, mesh.quaternion);
         return mesh;
+    }
+
+    // ---------- a badge over the table ----------
+    // The site puts small status ribbons on a seat — "away" when someone has sat
+    // out, "turn" when it is theirs — and they are meant to be the topmost thing
+    // at that seat. They were, until we started drawing cards on a canvas over
+    // the whole page: a DOM badge cannot come out in front of that, so a player
+    // who sits out mid-hand has their own hole cards hiding the flag that says so.
+    //
+    // So the badge is drawn too, from the site's OWN image, at the site's own
+    // spot, above everything else on the layer. Flat and unlit on purpose: this
+    // is a label, not an object on the felt, and it has to stay as legible as the
+    // site drew it — a lean would squash 8px text by the cosine and a light would
+    // change its colour.
+    const BADGE_Z = 48;    // clear of a 24px card stacked on another 24px card
+
+    function parkBadge(rect, img) {
+        const s = ensureSession();
+        if (!s || !rect || !rect.width || !img) return null;
+        const T = window.THREE;
+        if (!T) return null;
+        let tex;
+        try { tex = cardTexture(T, img); } catch (e) { return null; }
+        const mesh = new T.Mesh(unitQuad(T, s), new T.MeshBasicMaterial({
+            map: tex, transparent: true,
+            // Nothing on this layer may occlude it, and it must not occlude
+            // anything either — it is the last word at that seat.
+            depthTest: false, depthWrite: false,
+        }));
+        mesh.renderOrder = 10;
+        mesh.layers.set(CARD_LAYER);   // ...so the card camera draws it
+        s.scene.add(mesh);
+
+        let at = rect, gone = false;
+        const place = () => {
+            mesh.position.set(at.left + at.width / 2, -(at.top + at.height / 2), BADGE_Z);
+            mesh.scale.set(at.width, at.height, 1);
+        };
+        place();
+        s.dirty = true;
+        kick(s);
+
+        return {
+            move(r) {
+                if (gone || !r || !r.width) return;
+                at = r; place();
+                s.dirty = true;
+                kick(s);
+            },
+            remove() {
+                if (gone) return;
+                gone = true;
+                s.scene.remove(mesh);
+                mesh.material.dispose();
+                tex.dispose();
+                s.dirty = true;
+                kick(s);
+            },
+            isGone: () => gone,
+        };
+    }
+
+    // One unit plane, shared by every badge. Cached on the session so it dies
+    // with the renderer.
+    function unitQuad(T, s) {
+        if (!s.quadGeo) s.quadGeo = new T.PlaneGeometry(1, 1);
+        return s.quadGeo;
+    }
+
+    // ---------- a chip on the table ----------
+    // gpokr draws every bet and the pot as a little stack of 24x21 PNGs. This
+    // stands one of them up: same spot, same denomination, drawn as a disc under
+    // the same light as the cards, and it STAYS — like a dealt card, nothing here
+    // expires and the caller owns it.
+    //
+    // `row` is the chip's height in its stack, which the site tells us: its chips
+    // carry a cs-pos<column>-<row> class. The site fakes the stack by nudging each
+    // sprite 2px up the screen; a real one rises by its own thickness along the
+    // table's normal, which at this lean is 2.1px up the screen at the default
+    // 4px thickness — near enough the same stack, except that ours grows when the
+    // thickness slider does.
+    function parkChip(rect, denom, opts) {
+        const s = ensureSession();
+        if (!s || !rect || !rect.width) return null;
+        const T = window.THREE;
+        if (!T) return null;
+        const mesh = chipMesh(denom);
+        if (!mesh) return null;
+        mesh.castShadow = true;
+        s.scene.add(mesh);
+
+        let at = rect, row = Math.max(0, ((opts && opts.row) | 0));
+        let gone = false;
+        const place = () => {
+            const lean = STACK.LEAN;
+            // Up the table's normal, which projects to sin(lean) up the screen and
+            // cos(lean) toward the viewer.
+            const rise = row * coinH * Math.sin(lean);
+            const cx = at.left + at.width / 2;
+            const cy = at.top + at.height / 2 - rise;
+            mesh.position.set(cx, -cy, STACK.Z + row * coinH * Math.cos(lean));
+            // The cylinder's axis is local +Y; -90 degrees about X turns the face
+            // we want at the viewer, and the lean must then tip it the way the
+            // TABLE lies — top of the chip further away, near rim showing below
+            // the face. MINUS the lean, not plus: plus tips the top toward you,
+            // which stands the chip up on its far edge and is what a chip that
+            // is not lying flat looks like. This leaves the visible cap's normal
+            // at (0, sin lean, cos lean), which is exactly where a dealt card's
+            // face points.
+            mesh.rotation.set(-Math.PI / 2 - lean, 0, 0);
+        };
+        const rec = { mesh, place };
+        s.stacks.add(rec);
+        place();
+        s.dirty = true;
+        kick(s);
+
+        return {
+            // Follow the slot, and the row within the stack: a bet that grows
+            // re-lays the same chips rather than rebuilding them.
+            move(r, newRow) {
+                if (gone) return;
+                if (r && r.width) at = r;
+                if (newRow != null) row = Math.max(0, newRow | 0);
+                place();
+                s.dirty = true;
+                kick(s);
+            },
+            remove() {
+                if (gone) return;
+                gone = true;
+                s.stacks.delete(rec);
+                s.scene.remove(mesh);
+                // The materials are cloned per chip (see the chip projectile), so
+                // they are ours; the textures behind them are shared art and are
+                // not.
+                eachMaterial(mesh, (m) => m.dispose());
+                s.dirty = true;
+                kick(s);
+            },
+            isGone: () => gone,
+        };
     }
 
     // ---------- dealing a community card ----------
@@ -382,9 +598,15 @@
     // Aimed from where the TABLE's key light is (table3d's KEY_POS), so the two
     // canvases agree about where the light is coming from: upper left, toward the
     // viewer. Intensities are solved rather than picked — see cardLights().
-    const CARD_KEY_DIR = [-6, 15, 11];
+    let CARD_KEY_DIR = [-6, 15, 11];
     const CARD_AMBIENT = 0.66, CARD_KEY = 0.6;
     const CARD_SHADOW_OPACITY = 0.34;
+    // Chips are small and their shadow is read at a glance rather than studied,
+    // so it carries a little more weight than a card's.
+    const COIN_SHADOW_OPACITY = 0.42;
+    // Where a chip's mesh sits once it has landed: see the coin update, which
+    // puts it at z = 2 + height*0.02. The felt, as the chips reckon it.
+    const COIN_REST_Z = 2;
     // The slab's corner radius, in the card's own 1x1 box. TWO numbers because
     // the group scales x and y independently (a 53x69 card out of a unit
     // geometry), so a corner that comes out circular on screen has to be
@@ -596,6 +818,18 @@
         // Never zero: at zero the two faces are coincident and z-fight.
         return Math.max(0.2, Math.min(DEAL.MAX_THICK, n));
     };
+    // A chip standing on the felt: one of the site's own bet/pot sprites, drawn
+    // as the disc it is meant to be.
+    //
+    // The lean is not taste — it is measured off the art it replaces. gpokr's own
+    // chip sprite is 24x21, an ellipse, which is a disc seen at acos(21/24) off
+    // the view axis. Matching it means our chip covers exactly the footprint the
+    // sprite did, and the rim it shows is the rim the site was drawing in 2D.
+    const STACK = {
+        Z: 11,                              // on the felt, under a dealt card
+        LEAN: Math.acos(21 / 24),           // ~29 degrees, from the sprite's own aspect
+    };
+
     const leanFor = (thick) => (thick <= DEAL.LEAN_FROM ? 0
         : DEAL.LEAN_MAX_DEG * Math.PI / 180 * Math.min(1, thick / DEAL.MAX_THICK));
 
@@ -1096,7 +1330,7 @@
             c.shadow.scale.setScalar(clamp(k, 0.35, 1) * (c.shadowScale || 1));
             // Once a chip drops below the table plane (only confetti does), it has
             // left the table — kill its shadow so it doesn't linger on the felt.
-            c.shadow.material.opacity = c.h < 0 ? 0 : 0.38 * k * c.alpha;
+            c.shadow.material.opacity = (c.h < 0 || !s.spriteShadows) ? 0 : 0.38 * k * c.alpha;
         }
     }
 
@@ -1332,11 +1566,15 @@
         if (s.raf) cancelAnimationFrame(s.raf);
         s.coins.slice().forEach((c) => removeCoin(s, c));
         s.actors.slice().forEach((a) => removeActor(s, a));
-        [s.coinGeo, s.shadowGeo].forEach((g) => g && g.dispose());
+        [s.coinGeo, s.shadowGeo, s.quadGeo].forEach((g) => g && g.dispose());
         (s.art || []).forEach((a) => {
             if (!a) return;
             a.faceMat.dispose(); a.rimMat.dispose();
             a.face.dispose(); a.rim.dispose();   // minted for us by GPE_CHIPS.art
+        });
+        [s.cardCatcher, s.coinCatcher].forEach((m) => {
+            if (!m) return;
+            m.geometry.dispose(); m.material.dispose();
         });
         [s.shadowMat].forEach((m) => m && m.dispose());
         [s.shadowTex].forEach((t) => t && t.dispose());
@@ -1350,10 +1588,57 @@
 
     window.GPE_COIN = {
         toss, confetti, disable, registerProjectile, addActor, feltBounds, chipMesh, dealCard,
+        parkChip, parkBadge,
         // Draw once more. Needed because parked cards are held on a canvas the
         // loop is allowed to stop rendering — a resize clears it, and nothing
         // else would put them back.
         redraw: () => { const s = session; if (s) { s.dirty = true; kick(s); } },
+
+        // Chip size, in CSS px: the diameter across, and how thick the disc is.
+        // Rebuilds the shared cylinder and hands it to every chip already in the
+        // air — they share one geometry, so that is a reassignment rather than a
+        // rebuild each. The old geometry is disposed after, not before, or the
+        // meshes spend a frame pointing at freed buffers.
+        setChipSize: (diameter, thickness) => {
+            const T = window.THREE;
+            const s = session;
+            const d = Math.max(4, Math.min(120, +diameter || COIN_R0 * 2));
+            const t = Math.max(0.5, Math.min(40, +thickness || 4));
+            coinR = d / 2;
+            coinH = t;
+            if (!s || !T) return;
+            const old = s.coinGeo, oldShadow = s.shadowGeo;
+            s.coinGeo = new T.CylinderGeometry(coinR, coinR, coinH, 32, 1);
+            s.shadowGeo = new T.PlaneGeometry(coinR * 2.4, coinR * 2.4);
+            for (const c of s.coins || []) {
+                if (c.mesh) c.mesh.geometry = s.coinGeo;
+                if (c.shadow) c.shadow.geometry = s.shadowGeo;
+            }
+            // Parked chips need re-placing as well as re-geometrying: how far a
+            // stack rises per chip is the thickness that just changed.
+            for (const rec of s.stacks || []) { rec.mesh.geometry = s.coinGeo; rec.place(); }
+            if (old && old !== s.coinGeo) old.dispose();
+            if (oldShadow && oldShadow !== s.shadowGeo) oldShadow.dispose();
+            s.dirty = true;
+            kick(s);
+        },
+        chipSize: () => ({ diameter: coinR * 2, thickness: coinH }),
+
+        // Where the light that throws the shadows sits. A direction, not a place:
+        // it is a directional light, and fitCardShadows re-hangs it over whatever
+        // is on screen every frame. Moving it low makes long shadows, moving it
+        // overhead makes them tuck under.
+        setKeyLight: (x, y, z) => {
+            CARD_KEY_DIR = [+x || 0, +y || 0.001, +z || 0];
+            // No need to move the light here: fitCardShadows re-hangs it from
+            // this direction every frame. Just make sure a frame happens.
+            const s = session;
+            if (!s) return;
+            s.dirty = true;
+            kick(s);
+        },
+        keyLight: () => CARD_KEY_DIR.slice(),
+
         // Hand the shadows over to something with real geometry, or take them
         // back. The catcher is a stand-in for a surface this scene does not have;
         // when the 3D table is on, the felt IS that surface.

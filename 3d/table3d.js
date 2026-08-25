@@ -73,7 +73,11 @@
 
     const AMBIENT = 0.46;        // low, so the felt keeps a center-bright pool
     const KEY = 0.5;             // directional key (shapes the rail bevel)
-    const KEY_POS = [-6, 15, 11]; // upper, slightly left, toward the viewer
+    // Upper, slightly left, toward the viewer. Mutable: setKeyLight moves it so
+    // the shadows can be aimed by eye. It is a directional light, so this is a
+    // direction rather than a place — only the ratio between the three matters.
+    const KEY_POS0 = [-6, 15, 11];
+    let KEY_POS = KEY_POS0.slice();
     const FILL = 0.16;
     // Overhead "table light": a point light over the felt center with real
     // distance falloff (decay 2), so the felt is brightest in the middle and
@@ -1501,6 +1505,19 @@
         };
     }
 
+    // Aim the shadow-casting key light. The shadow camera looks at the origin
+    // from wherever the light is, so moving the light is enough — but its matrix
+    // has to be refreshed by hand, since nothing else touches it between frames.
+    function setKeyLight(x, y, z) {
+        KEY_POS = [+x || 0, +y || 0.001, +z || 0];
+        const s = session;
+        if (!s || !s.key) return;
+        s.key.position.set(KEY_POS[0], KEY_POS[1], KEY_POS[2]);
+        s.key.updateMatrixWorld(true);
+        s.key.shadow.camera.updateProjectionMatrix();
+        s.needsRender = Math.max(s.needsRender, 2);
+    }
+
     function buildScene(s) {
         const T = window.THREE;
         s.scene = new T.Scene();
@@ -1517,6 +1534,7 @@
         sc.near = 1; sc.far = 80;
         sc.updateProjectionMatrix();
         s.scene.add(key);
+        s.key = key;
         const fill = new T.DirectionalLight(0xbfd0d8, FILL);
         fill.position.set(8, 9, -6);
         s.scene.add(fill);
@@ -1728,5 +1746,5 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setCardCasters, isOn: () => !!session, _session: () => session };
+    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setCardCasters, setKeyLight, keyLight: () => KEY_POS.slice(), isOn: () => !!session, _session: () => session };
 })();

@@ -41,8 +41,17 @@
 
     // ---------- tuning ----------
     const CHIP_COUNT = 180;
-    const CHIP_R = 0.55;
-    const CHIP_H = 0.17;
+    // Chip size, in world units. Mutable: setChipSize resizes them at runtime so
+    // the sliders can go from wafer to hockey puck. The physics reads these every
+    // frame, so a change takes effect on the next tick with no rebuild beyond the
+    // shared cylinder.
+    const CHIP_R0 = 0.55, CHIP_H0 = 0.17;
+    let CHIP_R = CHIP_R0;
+    let CHIP_H = CHIP_H0;
+    // Where the shadow-throwing light hangs. Its own tuning, kept in step with
+    // table3d's key by setKeyLight so one slider aims both.
+    const DIR_POS0 = [-8, 16, 7];
+    let DIR_POS = DIR_POS0.slice();
     const SPAWN_PER_SEC = 95;
     const G = 46;                // world units/s^2 (deliberately slow; real gravity at this scale is a blur)
     const REST = 0.36;           // bounce restitution
@@ -51,7 +60,7 @@
     const SCATTER = 3.4;         // outward kick when a chip lands on a pile, so stacks spread
     // Land on top of a settled chip only on a fairly centered hit; glancing
     // overlaps instead reach the felt and get pushed aside (separateResting).
-    const STACK_R = CHIP_R * 0.9;
+    const stackR = () => CHIP_R * 0.9;
     // The chip faces are flat 2D art, so the target is to reproduce their albedo
     // almost exactly and let the directional add only a little top-light shaping.
     //
@@ -91,6 +100,10 @@
         // needs a darker one, because #606060 goes muddy on a body that light.
         { denom: 2500,  body: "#5292d0", label: "2.5K" },
         { denom: 10000, body: "#bde9a4", label: "10K", text: "#3c3c3c" },
+        // The site's top two. Sampled from its own sprites (a pale wheat and a
+        // pale blue-grey), both light enough to need the darker glyph.
+        { denom: 50000,  body: "#efe2b8", label: "50K",  text: "#3c3c3c" },
+        { denom: 250000, body: "#d0e2e1", label: "250K", text: "#3c3c3c" },
     ];
     const CHIP_SPOT = "#f8f8f8";   // edge spots and inner disc
     const CHIP_TEXT = "#606060";   // denomination glyphs
@@ -285,7 +298,8 @@
 
         s.scene.add(new T.AmbientLight(0xffffff, LIGHT_AMBIENT));
         const dir = new T.DirectionalLight(0xffffff, LIGHT_DIR);
-        dir.position.set(-8, 16, 7);
+        dir.position.set(DIR_POS[0], DIR_POS[1], DIR_POS[2]);
+        s.dir = dir;
         dir.castShadow = true;
         dir.shadow.mapSize.set(1024, 1024);
         dir.shadow.bias = -0.0015;
@@ -439,7 +453,7 @@
     // chip never rides another falling one.
     function supportAt(s, x, z, self) {
         let top = CHIP_H / 2;
-        const r2 = STACK_R * STACK_R;
+        const sr = stackR(), r2 = sr * sr;
         for (let i = 0; i < s.rested.length; i++) {
             const o = s.rested[i];
             if (o === self) continue;
@@ -734,7 +748,9 @@
     // pair per call — the caller owns them and must dispose them.
     const art = {
         types: CHIP_TYPES.map((t) => ({ denom: t.denom, body: t.body })),
-        proportions: { r: CHIP_R, h: CHIP_H },   // for anything drawn at another scale
+        // Read on demand, not captured: the size is adjustable now, and coin3d
+        // asks for it when it builds its own chip.
+        get proportions() { return { r: CHIP_R, h: CHIP_H }; },
         textures(T, i) {
             const type = CHIP_TYPES[((i | 0) % CHIP_TYPES.length + CHIP_TYPES.length) % CHIP_TYPES.length];
             return { face: chipFaceTexture(T, type), rim: chipRimTexture(T, type), type };
@@ -743,5 +759,32 @@
 
     // _session is a debugging handle (camera/felt/chip state) for the harness in
     // scratch; nothing in the extension reads it.
-    window.GPE_CHIPS = { drop, art, isRunning: () => !!session, _session: () => session };
+    // Resize the chips, in world units. The instanced meshes all share one
+    // cylinder, so this is a single geometry swap however many chips are in the
+    // air; the old one is disposed after the swap, not before.
+    function setChipSize(r, h) {
+        CHIP_R = Math.max(0.05, Math.min(4, +r || CHIP_R0));
+        CHIP_H = Math.max(0.02, Math.min(2, +h || CHIP_H0));
+        const s = session, T = window.THREE;
+        if (!s || !T) return;
+        const old = s.chipGeo;
+        s.chipGeo = new T.CylinderGeometry(CHIP_R, CHIP_R, CHIP_H, 28, 1);
+        for (const m of s.chipMeshes || []) m.geometry = s.chipGeo;
+        if (old && old !== s.chipGeo) old.dispose();
+    }
+
+    // Aim the light the chips' shadows come from.
+    function setKeyLight(x, y, z) {
+        DIR_POS = [+x || 0, +y || 0.001, +z || 0];
+        const s = session;
+        if (!s || !s.dir) return;
+        s.dir.position.set(DIR_POS[0], DIR_POS[1], DIR_POS[2]);
+        s.dir.updateMatrixWorld(true);
+    }
+
+    window.GPE_CHIPS = {
+        drop, art, setChipSize, setKeyLight,
+        chipSize: () => ({ r: CHIP_R, h: CHIP_H }),
+        isRunning: () => !!session, _session: () => session,
+    };
 })();
