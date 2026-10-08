@@ -333,10 +333,95 @@
     document.querySelectorAll(".gpe-tools-active, .gpe-tab-tools, .gpe-tab-roster, .gpe-tab-bets").forEach((el) =>
         el.classList.remove("gpe-tools-active", "gpe-tab-tools", "gpe-tab-roster", "gpe-tab-bets"));
 
+    // ---------- helpers: the two front ends ----------
+    // gpokr serves two tables while it rolls out its new UI: the classic GWT one,
+    // and the new one (/?ui=new, React). They share some class names but not the
+    // structure, so everything that finds a seat, a log line or a chat line goes
+    // through the helpers below rather than a selector of its own.
+    //
+    // Classic: a seat is a <table class="iogc-PlayerPanelN"> holding the avatar,
+    //   a profile link with the name, and "Chips"/"Level" stat rows. The game log
+    //   and the chat are div.gwt-HTML rows in .iogc-MessagePanel-messages and
+    //   .iogc-ChatPanel-messages.
+    // New: a seat is a [data-seat] tile in .iogc-TableLayout holding
+    //   img.iogc-PlayerPanel-avatar and a div.iogc-PlayerPanel with
+    //   .iogc-PlayerPanel-name-portrait and .iogc-PlayerStatsPanel-portrait (the
+    //   stack). Log and chat lines are both div.iogc-chatRow, and the chat pane is
+    //   ALSO a .iogc-MessagePanel (inside .iogc-ChatPanel), so the game log is
+    //   the MessagePanel that is not in the chat pane. Names in both are
+    //   span.iogc-chatProfileLink[data-profile-id], which is the user id.
+    const SEAT_SEL = 'table[class*="iogc-PlayerPanel"], .iogc-TableLayout [data-seat]';
+    const SEAT_NAME_SEL = ".iogc-PlayerPanel-name, .iogc-PlayerPanel-name-portrait";
+    function isNewUi() { return !!document.querySelector(".iogc-TableLayout, .iogc-chatRow"); }
+    function seatPanels() { return document.querySelectorAll(SEAT_SEL); }
+    function seatNameEl(panel) { return panel.querySelector(SEAT_NAME_SEL); }
+    function seatAvatar(panel) { return panel.querySelector("img.iogc-PlayerPanel-avatar"); }
+
+    // The game log's message container(s), never the chat's. Classic keeps its
+    // chat under its own class, so every MessagePanel there is log, exactly as
+    // this always read it; only the new UI needs the chat pane filtered out.
+    function gameLogContainers() {
+        const all = Array.from(document.querySelectorAll(".iogc-MessagePanel-messages"));
+        return isNewUi() ? all.filter((el) => !el.closest(".iogc-ChatPanel")) : all;
+    }
+    function gameLogContainer() { return gameLogContainers()[0] || null; }
+    function chatContainer() {
+        return document.querySelector(".iogc-ChatPanel-messages") ||
+            document.querySelector(".iogc-ChatPanel .iogc-MessagePanel-messages");
+    }
+    const LOG_ROW_SEL = "div.gwt-HTML:not(.gpe-log-cards), div.iogc-chatRow";
+    const CHAT_ROW_SEL = "div.gwt-HTML, div.iogc-chatRow";
+    // One row per log line, in order. Our own end-of-hand panel is skipped, and so
+    // is a new-UI row we've parked one inside.
+    function gameLogRows() {
+        return gameLogContainers().flatMap((c) => Array.from(c.querySelectorAll(LOG_ROW_SEL)))
+            .filter((r) => !r.querySelector(".gpe-log-cards"));
+    }
+    // A new-UI row is <span>text</span><button react/>; read the span so nothing
+    // that ever lands in the button can leak into the line.
+    function rowText(row) {
+        const span = row.classList.contains("iogc-chatRow") ? row.querySelector(":scope > span") : null;
+        return (span || row).textContent.trim();
+    }
+    function chatRows() {
+        const c = chatContainer();
+        return c ? Array.from(c.querySelectorAll(CHAT_ROW_SEL)) : [];
+    }
+    // Who sent a chat line. Classic: <b>NAME</b>: text. New UI: usually
+    // <b><span.iogc-chatProfileLink>NAME</span></b>: text, but a player who has
+    // only just arrived is drawn as <span.iogc-chatArrive>NAME</span>: text, with
+    // no <b>. Null for lines with no sender (arrivals, departures).
+    function chatSenderEl(node) {
+        const b = node.querySelector("b");
+        if (b) return b;
+        const link = node.querySelector(".iogc-chatProfileLink");
+        if (!link) return null;
+        const full = rowText(node), name = link.textContent.trim();
+        return name && full.startsWith(name) && /^\s*:/.test(full.slice(name.length)) ? link : null;
+    }
+    // What they said: the line minus "NAME:".
+    function chatBody(node, nameEl) {
+        const full = rowText(node), name = nameEl.textContent.trim();
+        return (full.startsWith(name) ? full.slice(name.length) : full).replace(/^\s*:\s*/, "");
+    }
+    // "NAME is here" / "NAME has left" -> { name, here }, else null. The new UI
+    // follows an arrival with a rank chip ("56th") outside the arrival span, so
+    // read the span when there is one.
+    function chatPresence(node) {
+        const span = node.querySelector(".iogc-chatArrive, .iogc-chatLeave");
+        const m = (span ? span.textContent : rowText(node)).trim().match(/^(.+?) (is here|has left)$/);
+        return m ? { name: m[1].trim(), here: m[2] === "is here" } : null;
+    }
+    // The new UI has its own reactions on every line; ours would sit beside them
+    // as a second, separate set.
+    function siteHasReactions(node) { return !!node.querySelector(".iogc-chatRow-react"); }
+
     // ---------- helpers: name -> avatar ----------
     function getSeatName(panel) {
         const link = panel.querySelector('a[href*="/profile/"]');
         if (link && link.textContent.trim()) return link.textContent.trim();
+        const nameEl = panel.querySelector(".iogc-PlayerPanel-name-portrait");
+        if (nameEl && nameEl.textContent.trim()) return nameEl.textContent.trim();
         const bold = panel.querySelector("b, strong");
         if (bold && bold.textContent.trim()) return bold.textContent.trim();
         return null;
@@ -344,7 +429,7 @@
 
     function findAvatarByName(name) {
         let hidden = null;
-        const panels = document.querySelectorAll('table[class*="iogc-PlayerPanel"]');
+        const panels = seatPanels();
         for (const p of panels) {
             if (getSeatName(p) !== name) continue;
             const av = p.querySelector("img.iogc-PlayerPanel-avatar");
@@ -359,10 +444,12 @@
     // hand ends. Re-applied each fast poll so it survives GWT re-renders. Uses the
     // accumulated hand scope so a fold trimmed from the visible log still counts.
     function applyFoldDimming() {
-        const panels = document.querySelectorAll('table[class*="iogc-PlayerPanel"]');
+        const panels = seatPanels();
         const setOpacity = (p, v) =>
             p.querySelectorAll("img.iogc-PlayerPanel-avatar").forEach((av) => { av.style.opacity = v; });
-        if (handHasEnded()) { panels.forEach((p) => setOpacity(p, "")); return; }
+        // The new UI greys out folded seats itself (.iogc-PlayerPanel-dimmed);
+        // dimming on top of that would only make them unreadable.
+        if (handHasEnded() || isNewUi()) { panels.forEach((p) => setOpacity(p, "")); return; }
         const me = getMyName();
         const folded = new Set();
         for (const line of fullHandScope()) {
@@ -1365,7 +1452,7 @@
         const wanted = new Set();
         const me = getMyName();
         if (COIN_TOSS && canInteract && amSeated()) {
-            for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+            for (const p of seatPanels()) {
                 const name = getSeatName(p);
                 if (!name || name === me || wanted.has(name)) continue;
                 const r = liveRect(p.querySelector("img.iogc-PlayerPanel-avatar"));
@@ -2106,9 +2193,11 @@
 
     // ---------- game log reading ----------
     function logLines() {
-        return Array.from(document.querySelectorAll(
-            ".iogc-MessagePanel-messages div, .iogc-MessagePanel-messages td, .iogc-MessagePanel-messages span"
-        )).filter((e) => e.children.length === 0 && e.textContent.trim())
+        // New UI: one row per line, the player's name a <span> inside it, so the
+        // classic leaf-element walk below would split "NAME folds" in two.
+        if (isNewUi()) return gameLogRows().map(rowText).filter(Boolean);
+        return gameLogContainers().flatMap((c) => Array.from(c.querySelectorAll("div, td, span")))
+            .filter((e) => e.children.length === 0 && e.textContent.trim())
             .map((e) => e.textContent.trim());
     }
 
@@ -2130,8 +2219,7 @@
     // approach). Read via fullHandScope().
     let handScopeBuf = [];
     function domHandScope() {
-        const rows = Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML:not(.gpe-log-cards)"))
-            .map((r) => r.textContent.trim()).filter(Boolean);
+        const rows = gameLogRows().map(rowText).filter(Boolean);
         let start = -1;
         for (let i = rows.length - 1; i >= 0; i--) if (/^Starting Hand/i.test(rows[i])) { start = i; break; }
         return start >= 0 ? rows.slice(start) : rows;
@@ -2162,13 +2250,16 @@
     // that logLines() drops — we read these rows directly and scope to the
     // stretch after the last "Starting Hand").
     function currentGameId() {
-        const rows = Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML:not(.gpe-log-cards)"));
+        const rows = gameLogRows();
         let lastStart = -1;
         for (let i = rows.length - 1; i >= 0; i--) {
-            if (/Starting Hand/i.test(rows[i].textContent)) { lastStart = i; break; }
+            if (/Starting Hand/i.test(rowText(rows[i]))) { lastStart = i; break; }
         }
         for (let i = rows.length - 1; i > lastStart; i--) {
-            const m = rows[i].textContent.match(/gpokr\.com\/games\/(\d+)/i);
+            // The new UI shows only "/games/<ID>" as the link text; the full URL
+            // is in the href either way.
+            const a = rows[i].querySelector('a[href*="/games/"]');
+            const m = (a ? a.getAttribute("href") : rows[i].textContent).match(/gpokr\.com\/games\/(\d+)/i);
             if (m) return m[1];
         }
         return null;
@@ -2249,7 +2340,7 @@
     // Visible seated players minus those who folded this hand, minus me.
     function activeOpponents() {
         const names = new Set(
-            Array.from(document.querySelectorAll(".iogc-PlayerPanel-name"))
+            Array.from(document.querySelectorAll(SEAT_NAME_SEL))
                 .filter((n) => n.textContent.trim() && n.getBoundingClientRect().width > 0)
                 .map((n) => n.textContent.trim())
         );
@@ -2301,8 +2392,10 @@
         return m ? parseInt(m[1].replace(/,/g, ""), 10) : 0;
     }
 
-    // Pot from the pot label; amount to call from the Check/Call button (0 unless facing a bet).
+    // Pot from the pot label; amount to call from the Check/Call button (0 unless
+    // facing a bet). The new UI has neither in the page, so it reads the log.
     function parsePotAndToCall() {
+        if (isNewUi()) return livePotFromLog();
         const potEl = document.querySelector(".gpokr-GameWindow-potLabel");
         const pot = potEl ? parseMoney(potEl.textContent) : 0;
         const callBtn = document.querySelector(".gpokr-GameWindow-checkCallButton");
@@ -2393,7 +2486,8 @@
 
     function updateOddsHud() {
         let hud = document.getElementById("gpe-odds-hud");
-        if (!SHOW_ODDS) {
+        // The new UI has its own hand/odds panel, so ours stays off there.
+        if (!SHOW_ODDS || isNewUi()) {
             if (hud) { clearInterval(hud._gpeReposition); hud.remove(); }
             oddsKey = "";
             return;
@@ -3112,7 +3206,7 @@
         if (typeof img.closest !== "function") return null;
         if (img.closest(".gpe-log-cards, .gpe-hand-wrap, #gpe-local-hand")) return null;   // ours
         if (!img.closest(".iogc-GameWindow-container")) return null;
-        if (img.closest('table[class*="iogc-PlayerPanel"]')) return null;   // somebody's seat
+        if (img.closest(SEAT_SEL)) return null;   // somebody's seat
         if (boardHasCard(card)) return "board";
         if (handHasCard(card)) return "hand";
         return null;
@@ -3385,15 +3479,17 @@
     // Winner of the just-ended hand and, if they showed, their cards — both from
     // the current hand's log ("NAME wins main|side pot $N", "NAME shows [..]").
 
-    // name -> seat index (from iogc-PlayerPanelN); button seat from gpokr-Dealer-N.
+    // name -> seat index (from iogc-PlayerPanelN, or the new UI's data-seat);
+    // button seat from gpokr-Dealer-N.
     function seatNameMap() {
         const map = {};
-        document.querySelectorAll('table[class*="iogc-PlayerPanel"]').forEach((p) => {
+        seatPanels().forEach((p) => {
             if (p.getBoundingClientRect().width === 0) return;
             const m = (typeof p.className === "string" ? p.className : "").match(/iogc-PlayerPanel(\d+)/);
-            const nm = p.querySelector(".iogc-PlayerPanel-name");
+            const idx = m ? m[1] : p.getAttribute("data-seat");
+            const nm = seatNameEl(p);
             const name = nm && nm.textContent.trim();
-            if (m && name) map[name] = parseInt(m[1], 10);
+            if (idx != null && name) map[name] = parseInt(idx, 10);
         });
         return map;
     }
@@ -3408,6 +3504,79 @@
         const m = el && el.textContent.match(/\$\s*([\d,]+)\s*\/\s*\$\s*([\d,]+)/);
         const n = (s) => parseInt(String(s).replace(/[^\d]/g, ""), 10) || 0;
         return m ? { sb: n(m[1]), bb: n(m[2]) } : { sb: 0, bb: 0 };
+    }
+
+    // Who posted the blinds. Classic: SB = first occupied seat clockwise after the
+    // button (gpokr-Dealer-N), BB = next. The new UI draws its button on the
+    // canvas, so there it's worked back from the log instead: preflop action
+    // starts left of the big blind, so the BB is the seat just before the first
+    // player to act and the SB the one before that (heads-up, the first to act is
+    // the SB). `order` is who acted; with no button, every seated player counts,
+    // since a big blind who is folded to never appears in the log.
+    function blindPosters(scope, seatOf, btnSeat, order) {
+        let sbName = null, bbName = null, btnName = null;
+        const bySeat = (names) => names.filter((n) => seatOf[n] != null).sort((a, b) => seatOf[a] - seatOf[b]);
+        if (btnSeat != null) {
+            const seated = bySeat(order);
+            if (!seated.length) return { sbName, bbName, btnName };
+            btnName = seated.find((n) => seatOf[n] === btnSeat) || null;
+            let fa = seated.findIndex((n) => seatOf[n] > btnSeat);
+            if (fa < 0) fa = 0; // wrap past the highest seat
+            const rot = seated.slice(fa).concat(seated.slice(0, fa)); // clockwise after the button
+            if (seated.length === 2 && btnName) { sbName = btnName; bbName = rot.find((n) => n !== btnName) || null; }
+            else { sbName = rot[0] || null; bbName = rot[1] || null; }
+            return { sbName, bbName, btnName };
+        }
+        const seated = bySeat(Object.keys(seatOf));
+        let first = null;
+        for (const line of scope) {
+            if (/^Dealing (?:flop|turn|river)/i.test(line)) break;
+            const m = line.match(/^(.+?) (?:folds|checks|calls|bets \$|raises \$)/i);
+            if (m && seatOf[m[1].trim()] != null) { first = m[1].trim(); break; }
+        }
+        const i = first ? seated.indexOf(first) : -1;
+        if (i < 0 || seated.length < 2) return { sbName, bbName, btnName };
+        const at = (k) => seated[(i + k + seated.length * 2) % seated.length];
+        if (seated.length === 2) { sbName = first; bbName = at(1); btnName = first; }
+        else { bbName = at(-1); sbName = at(-2); btnName = at(-3); }
+        return { sbName, bbName, btnName };
+    }
+
+    // The pot and my amount to call for the hand in progress, rebuilt from the log
+    // the same way parseHandDetail does it (calls match the bet, raises are
+    // raise-to, blinds are seeded). For the new UI, which draws the pot and the
+    // bets on the felt canvas rather than in the page. Unlike the end-of-hand
+    // table, an unanswered bet stays in: it's what I'm deciding whether to call.
+    function livePotFromLog() {
+        const scope = fullHandScope();
+        if (!scope.length || handHasEnded(scope)) return { pot: 0, toCall: 0 };
+        const num = (s) => parseInt(String(s).replace(/,/g, ""), 10) || 0;
+        const seatOf = seatNameMap();
+        const { sb, bb } = parseBlinds();
+        const { sbName, bbName } = blindPosters(scope, seatOf, buttonSeatIndex(), []);
+        const streetIn = {};
+        let pot = sb + bb, toMatch = bb;
+        if (sbName) streetIn[sbName] = sb;
+        if (bbName) streetIn[bbName] = bb;
+        for (const line of scope) {
+            let m;
+            if (/^Dealing (?:flop|turn|river)/i.test(line)) {
+                toMatch = 0; for (const k in streetIn) delete streetIn[k];
+                continue;
+            }
+            if ((m = line.match(/^(.+?) calls$/i))) {
+                const n = m[1].trim(), add = Math.max(0, toMatch - (streetIn[n] || 0));
+                streetIn[n] = (streetIn[n] || 0) + add; pot += add; continue;
+            }
+            if ((m = line.match(/^(.+?) (?:bets|raises) \$([\d,]+)$/i))) {
+                const n = m[1].trim(), to = num(m[2]);
+                pot += Math.max(0, to - (streetIn[n] || 0));
+                streetIn[n] = to; toMatch = Math.max(toMatch, to);
+            }
+        }
+        const me = getMyName();
+        const toCall = me ? Math.max(0, toMatch - (streetIn[me] || 0)) : 0;
+        return { pot, toCall: Math.min(toCall, myStack() || toCall) };
     }
 
     // Full breakdown of the just-ended hand for the expandable detail table.
@@ -3432,19 +3601,9 @@
         for (const line of scope) { const m = line.match(actionRe); if (m) rec(m[1].trim()); }
         if (!order.length) return null;
 
-        // Blinds: SB = first occupied seat clockwise after the button, BB = next.
         const { sb, bb } = (snap && snap.blinds) || parseBlinds();
         const btnSeat = snap ? snap.btnSeat : buttonSeatIndex();
-        let sbName = null, bbName = null, btnName = null;
-        const seated = order.filter((n) => seatOf[n] != null).sort((a, b) => seatOf[a] - seatOf[b]);
-        if (btnSeat != null && seated.length) {
-            btnName = seated.find((n) => seatOf[n] === btnSeat) || null;
-            let fa = seated.findIndex((n) => seatOf[n] > btnSeat);
-            if (fa < 0) fa = 0; // wrap past the highest seat
-            const rot = seated.slice(fa).concat(seated.slice(0, fa)); // clockwise after the button
-            if (seated.length === 2 && btnName) { sbName = btnName; bbName = rot.find((n) => n !== btnName) || null; }
-            else { sbName = rot[0] || null; bbName = rot[1] || null; }
-        }
+        const { sbName, bbName, btnName } = blindPosters(scope, seatOf, btnSeat, order);
 
         // Pass 2: reconstruct per-street contributions.
         let street = 0, toMatch = 0;
@@ -3772,17 +3931,24 @@
 
     function flushPendingLogSummary() {
         if (!pendingLogSummary) return;
-        const container = document.querySelector(".iogc-MessagePanel-messages");
+        const container = gameLogContainer();
         if (!container) { pendingLogSummary = null; return; }
         const seps = container.querySelectorAll(".seperator");
         const lastSep = seps.length ? seps[seps.length - 1] : null;
-        if (lastSep && lastSep.parentNode) {
+        const sepRow = lastSep && lastSep.closest(".iogc-chatRow");
+        if (sepRow && sepRow.parentNode) {
+            // New UI: React owns that separator and will try to remove it later,
+            // so swapping our node in for it would throw. Hide its row instead and
+            // put the panel after it, where React never looks.
+            sepRow.classList.add("gpe-sep-replaced");
+            sepRow.parentNode.insertBefore(pendingLogSummary, sepRow.nextSibling);
+        } else if (lastSep && lastSep.parentNode) {
             lastSep.parentNode.replaceChild(pendingLogSummary, lastSep);
         } else {
-            const rows = Array.from(container.querySelectorAll("div.gwt-HTML"));
+            const rows = Array.from(container.querySelectorAll(LOG_ROW_SEL));
             let anchor = null;
             for (let i = rows.length - 1; i >= 0; i--) {
-                if (/Starting Hand/i.test(rows[i].textContent)) { anchor = rows[i]; break; }
+                if (/Starting Hand/i.test(rowText(rows[i]))) { anchor = rows[i]; break; }
             }
             if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(pendingLogSummary, anchor);
             else container.appendChild(pendingLogSummary);
@@ -3820,9 +3986,11 @@
         }, HAND_MS);
     }
 
-    // My own username, from the sidebar login panel.
+    // My own username, from the sidebar login panel (classic) or the "me" card
+    // at the top of the new UI's side rail.
     function getMyName() {
-        const el = document.querySelector(".iogc-LoginPanel-nameHeading");
+        const el = document.querySelector(".iogc-LoginPanel-nameHeading") ||
+            document.querySelector(".iogc-MePanel .iogc-RailPanel-titleName");
         return el && el.textContent.trim() ? el.textContent.trim() : null;
     }
 
@@ -3906,11 +4074,11 @@
 
     // ---------- incoming chat handling ----------
     function handleChatMessage(node) {
-        const nameEl = node.querySelector("b");
+        const nameEl = chatSenderEl(node);
         if (!nameEl) {
             // Plain (no-sender) lines carry presence: "NAME is here" / "NAME has left".
-            const m = node.textContent.trim().match(/^(.+?) (is here|has left)$/);
-            if (m) notePresence(m[1].trim(), m[2] === "is here");
+            const p = chatPresence(node);
+            if (p) notePresence(p.name, p.here);
             return;
         }
         const name = nameEl.textContent.trim();
@@ -3920,12 +4088,12 @@
         // muted player shouldn't be able to put any of it on screen.
         if (isMuted(name)) { node.classList.add("gpe-muted-line"); return; }
         linkifyChat(node, nameEl); // make URLs clickable (leaves textContent intact)
-        const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
+        const text = chatBody(node, nameEl);
 
         // Pair this line with the tapped event that explains it, so it can be
         // reacted to and so incoming reactions know where to land. Only possible
         // when the tap is running; without it the line is simply not reactable.
-        if (canInteract) {
+        if (canInteract && !siteHasReactions(node)) {
             const msgId = claimMessageId(node, name, text);
             if (msgId) {
                 node._gpeMsgId = msgId;
@@ -4153,8 +4321,8 @@
     // removing the node: the site owns those elements, and unmuting has to be able
     // to put the conversation back exactly as it was.
     function applyMuteToChatPane() {
-        for (const node of document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML")) {
-            const nameEl = node.querySelector("b");
+        for (const node of chatRows()) {
+            const nameEl = chatSenderEl(node);
             const name = nameEl ? nameEl.textContent.trim() : "";
             node.classList.toggle("gpe-muted-line", !!name && isMuted(name));
         }
@@ -4162,13 +4330,14 @@
 
     function stampExistingChatLines() {
         if (!canInteract) return;
-        for (const node of document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML")) {
+        for (const node of chatRows()) {
             if (node._gpeMsgId) continue;
-            const nameEl = node.querySelector("b");
+            const nameEl = chatSenderEl(node);
             if (!nameEl) continue;   // presence lines have no sender and no event
             const name = nameEl.textContent.trim();
             if (isMuted(name)) { node.classList.add("gpe-muted-line"); continue; }
-            const text = node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "");
+            if (siteHasReactions(node)) continue;
+            const text = chatBody(node, nameEl);
             const msgId = claimMessageId(node, name, text);
             if (!msgId) continue;
             node._gpeMsgId = msgId;
@@ -4180,7 +4349,7 @@
     }
 
     function watchChat() {
-        const chat = document.querySelector(".iogc-ChatPanel-messages");
+        const chat = chatContainer();
         if (!chat) return false;
         if (chat._gpeWatched) {
             stampExistingChatLines();   // canInteract may only have arrived just now
@@ -4192,9 +4361,9 @@
             for (const m of mutations) {
                 for (const added of m.addedNodes) {
                     if (added.nodeType !== 1) continue;
-                    const htmls = added.matches && added.matches("div.gwt-HTML")
+                    const htmls = added.matches && added.matches(CHAT_ROW_SEL)
                         ? [added]
-                        : added.querySelectorAll ? added.querySelectorAll("div.gwt-HTML") : [];
+                        : added.querySelectorAll ? added.querySelectorAll(CHAT_ROW_SEL) : [];
                     htmls.forEach(handleChatMessage);
                 }
             }
@@ -4474,7 +4643,7 @@
     // a user id.
     const PHOTO_ID = /-(\d{4,})\.[a-z]{3,4}(?:[?#]|$)/i;
     function seatUserId(name) {
-        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+        for (const p of seatPanels()) {
             if (getSeatName(p) !== name) continue;
             const link = p.querySelector('a[href*="/profile/"]');
             const byHref = link && (link.getAttribute("href") || "").match(PROFILE_HREF_ID);
@@ -4490,6 +4659,14 @@
             if (a.textContent.trim() !== name) continue;
             const m = (a.getAttribute("href") || "").match(PROFILE_HREF_ID);
             if (m) return m[1];
+        }
+        // New UI: names in the game log and chat carry the id outright. Its seats
+        // have no profile link, and a default avatar carries no id, so for anyone
+        // who has acted or chatted this is the one that answers.
+        for (const el of document.querySelectorAll(".iogc-chatProfileLink[data-profile-id]")) {
+            if (el.textContent.trim() !== name) continue;
+            const id = el.getAttribute("data-profile-id");
+            if (/^\d{4,}$/.test(id)) return id;
         }
         return null;
     }
@@ -4514,9 +4691,12 @@
     // My own id comes from the sidebar avatar rather than a seat — it's there
     // whether I'm seated, standing, or only watching.
     function myUserId() {
-        const av = document.querySelector(".iogc-LoginPanel-avatar");
+        const av = document.querySelector(".iogc-LoginPanel-avatar") ||
+            document.querySelector(".iogc-MePanel img.iogc-RailPanel-picture");
         const m = av && (av.getAttribute("src") || "").match(PHOTO_ID);
-        return m ? m[1] : null;
+        if (m) return m[1];
+        const me = getMyName();
+        return me ? linkedUserId(me) : null;
     }
     // My monthly score — the number the lobby's tier "min entry" is compared
     // against. Null until the profile lands (or if the id can't be read).
@@ -4715,9 +4895,18 @@
     // One pass: create/update a badge over each visible seat, drop the rest.
     // Badges show only when stats are enabled. Clicking a badge opens the
     // note/nickname editor.
+    // The classic table is a fixed size, and the tabs were drawn for its 64px
+    // avatars at 10px. The new UI scales its whole table to the window
+    // (--table-scale), so there the tabs scale with the avatar they sit on and
+    // stay in proportion with the seat.
+    function tabFontSize(avatarWidth) {
+        if (!isNewUi()) return "";
+        return Math.max(8, Math.min(13, avatarWidth * 10 / 64)).toFixed(1) + "px";
+    }
+
     function updateStatBadges() {
         const wanted = new Set();
-        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+        for (const p of seatPanels()) {
             const name = getSeatName(p);
             if (!name || wanted.has(name)) continue;
             if (!SHOW_STATS) continue;
@@ -4749,6 +4938,7 @@
             badge.style.left = r.left + "px";
             badge.style.width = r.width + "px";
             badge.style.top = r.top + "px";
+            badge.style.fontSize = tabFontSize(r.width);
         }
         for (const [name, el] of statBadges) {
             if (!wanted.has(name)) { el.remove(); statBadges.delete(name); }
@@ -4811,13 +5001,14 @@
     // Anchor over the name element (falls back to the whole panel) so the tab
     // hugs the name/chips row rather than the avatar's stats badge.
     function positionHoverTopper(panel) {
-        const anchor = panel.querySelector(".iogc-PlayerPanel-name") || panel;
+        const anchor = seatNameEl(panel) || panel;
         const r = anchor.getBoundingClientRect();
         if (r.width === 0) return false;
         const el = hoverTopperEl;
         el.style.left = r.left + "px";
         el.style.width = r.width + "px";
         el.style.top = r.top + "px"; // translateY(-100%) lifts it above this edge
+        el.style.fontSize = tabFontSize(r.width);
         return true;
     }
 
@@ -4844,7 +5035,7 @@
     // re-renders make fresh nodes, which get re-wired) and keep a shown tab
     // glued to its panel as the layout reflows.
     function updateHoverToppers() {
-        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+        for (const p of seatPanels()) {
             if (p._gpeHoverWired) continue;
             p._gpeHoverWired = true;
             p.addEventListener("mouseenter", () => {
@@ -4887,7 +5078,7 @@
     // our own overwrite. We stash the original level value so a later toggle-off
     // can put it back even if GWT hasn't repainted the seat since.
     function applyBetReadout() {
-        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+        for (const p of seatPanels()) {
             let row = null;
             for (const r of p.querySelectorAll(".iogc-PlayerStatsPanel")) {
                 const lab = r.querySelector(".gwt-InlineLabel");
@@ -5434,7 +5625,7 @@
         if (!list) return;
         const rows = [];
         const seen = new Set();
-        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+        for (const p of seatPanels()) {
             const name = getSeatName(p);
             if (!name || seen.has(name)) continue;
             if (p.getBoundingClientRect().width === 0) continue; // visible seats only
@@ -5619,7 +5810,7 @@
 
     function seatedNames() {
         const names = new Set();
-        document.querySelectorAll(".iogc-PlayerPanel-name").forEach((n) => {
+        document.querySelectorAll(SEAT_NAME_SEL).forEach((n) => {
             const t = n.textContent.trim();
             if (t && n.getBoundingClientRect().width > 0) names.add(t);
         });
@@ -5664,11 +5855,11 @@
             // over (the reported bug) — start empty and let live "is here" /
             // "has left" events refill it.
             if (firstSight) {
-                document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML").forEach((e) => {
-                    const b = e.querySelector("b");
+                chatRows().forEach((e) => {
+                    const b = chatSenderEl(e);
                     if (b) { notePresence(b.textContent.trim(), true); return; }
-                    const m = e.textContent.trim().match(/^(.+?) (is here|has left)$/);
-                    if (m) notePresence(m[1].trim(), m[2] === "is here");
+                    const p = chatPresence(e);
+                    if (p) notePresence(p.name, p.here);
                 });
             }
         }
@@ -6217,6 +6408,9 @@
             document.querySelector(".iogc-ChatPanel input[type=text]");
     }
     function getSendButton(input) {
+        // New UI: an icon-only button, so there's no "Send" text to find it by.
+        const iconBtn = document.querySelector(".iogc-ChatPanel-sendButton");
+        if (iconBtn) return iconBtn;
         const panel = input.closest(".iogc-MessagePanel") || input.closest("table");
         if (!panel) return null;
         return Array.from(panel.querySelectorAll("button")).find((b) => b.textContent.trim() === "Send") || null;
@@ -6263,6 +6457,9 @@
     // parseMoney(panel.textContent): the bet-readout swaps the "Level" row for a
     // "$" amount, which would otherwise be the first dollar value matched.)
     function seatChips(panel) {
+        // New UI: the stack is the whole of the line under the name.
+        const stack = panel.querySelector(".iogc-PlayerStatsPanel-portrait");
+        if (stack) return parseMoney(stack.textContent);
         for (const row of panel.querySelectorAll(".iogc-PlayerStatsPanel")) {
             const lab = row.querySelector(".gwt-InlineLabel");
             if (lab && lab.textContent.trim() === "Chips") {
@@ -6276,7 +6473,7 @@
     function myStack() {
         const me = getMyName();
         if (!me) return 0;
-        for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+        for (const p of seatPanels()) {
             if (getSeatName(p) !== me) continue;
             if (p.getBoundingClientRect().width === 0) continue;
             const v = seatChips(p);
@@ -6890,8 +7087,7 @@
     // name is a profile link (e.g. tournament finishes) is dropped. textContent
     // here includes linked/bold names.
     function logRowTexts() {
-        return Array.from(document.querySelectorAll(".iogc-MessagePanel-messages div.gwt-HTML:not(.gpe-log-cards)"))
-            .map((e) => e.textContent.trim()).filter(Boolean);
+        return gameLogRows().map(rowText).filter(Boolean);
     }
 
     // Bottom-most line matching `re` (capture group 1 = name) whose name isn't
@@ -7553,11 +7749,9 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     // they show but can't be reacted to — same honesty rule as the in-page pane.
     function seedChatLog() {
         if (chatLog.length) return;
-        for (const node of document.querySelectorAll(".iogc-ChatPanel-messages div.gwt-HTML")) {
-            const nameEl = node.querySelector("b");
-            const text = nameEl
-                ? node.textContent.slice(nameEl.textContent.length).replace(/^\s*:\s*/, "")
-                : node.textContent.trim();
+        for (const node of chatRows()) {
+            const nameEl = chatSenderEl(node);
+            const text = nameEl ? chatBody(node, nameEl) : rowText(node);
             if (!text) continue;
             chatLog.push({ msgId: node._gpeMsgId || 0, name: nameEl ? nameEl.textContent.trim() : "", text });
         }

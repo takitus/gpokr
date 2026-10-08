@@ -87,6 +87,9 @@ html.gpe-fourcolor .gpe-suit-d { color: #0000ff; }
 html.gpe-fourcolor .gpe-suit-c { color: #008000; }
 
 /* ---- End-of-hand card summary in the game log (header + You/Board/Winner + detail) ---- */
+/* New UI: the hand-divider row the summary panel stands in for. React owns
+   that row, so it is hidden rather than replaced (see flushPendingLogSummary). */
+.iogc-chatRow.gpe-sep-replaced { display: none; }
 .gpe-log-cards {
     display: flex;
     flex-direction: column; /* header, then card row, then the expandable detail */
