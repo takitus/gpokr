@@ -89,6 +89,12 @@ export function startCards3d(ctx, look, backStyle) {
                 const rect = pageRect(cr, { x: x0, y: y0, width: x1 - x0, height: y1 - y0 });
                 const rec = backs.get(node);
                 if (rec && rec.epoch === epoch && !rec.handle.isGone()) {
+                    // The pair is dealt a card at a time: a card that joins
+                    // after the pair was parked is hidden with it.
+                    for (const s of sprites) {
+                        if (!rec.sprites.includes(s)) rec.sprites.push(s);
+                        s.renderable = false;
+                    }
                     rec.handle.move(rect, L.cardThick);
                     continue;
                 }

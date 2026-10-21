@@ -17,6 +17,7 @@
 
 import { findPixiApp } from "../lib/pixi.js";
 import { playClink } from "../lib/sounds.js";
+import { readCards } from "../lib/pixiCards.js";
 
 const DROP_GAP = 0.075;     // s between landings
 const DROP_SPAN = 0.55;     // s for a whole stack, however many chips
@@ -97,7 +98,16 @@ export function startChips3d(ctx, look) {
         try { rec.handle.remove(); } catch (e) { /* scene already gone */ }
         sprite.renderable = true;
     };
-    const unparkAll = () => { for (const s of [...parked.keys()]) unpark(s); };
+    const plates = new Map();       // group node -> { handle, epoch }
+    const hiddenExtras = new Map(); // ui2's shadow / label node -> its group
+    const dropPlate = (g) => { const p = plates.get(g); if (!p) return; plates.delete(g); try { p.handle.remove(); } catch (e) { /* scene gone */ } };
+    const pageRect = (cr, b) => ({ left: cr.left + b.x, top: cr.top + b.y, width: b.width, height: b.height });
+    const unparkAll = () => {
+        for (const s of [...parked.keys()]) unpark(s);
+        for (const g of [...plates.keys()]) dropPlate(g);
+        for (const k of hiddenExtras.keys()) k.renderable = true;
+        hiddenExtras.clear();
+    };
 
     const frame = () => {
         raf = requestAnimationFrame(frame);
@@ -164,6 +174,51 @@ export function startChips3d(ctx, look) {
             }
         }
         for (const s of [...parked.keys()]) if (!seen.has(s) || s.destroyed || !s.parent) unpark(s);
+
+        /* ----- per bet (or the pot): ui2's shadow and label off, our plate on ----- */
+        // ui2 draws, beside each group's chips, a dark shadow under them and a
+        // "$N" label. Its canvas is above ours, so left on they would lie ON
+        // our discs; instead they go, and the classic plate (the stack's
+        // silhouette and its value, kept clear of the cards and other stacks)
+        // takes their place. A group with a chip we cannot name stays 2D.
+        const groups = new Map();   // group node -> { stacks, foot, amount, ok }
+        for (const st of stacks) {
+            const g = st.node.parent;
+            if (!g) continue;
+            if (!groups.has(g)) groups.set(g, { stacks: new Set(), amount: 0, ok: true, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+            const rec = groups.get(g);
+            rec.stacks.add(st.node);
+            for (const x of st.sprites) {
+                const p = parked.get(x.sprite);
+                if (!p) { rec.ok = false; continue; }
+                rec.amount += p.denom;
+                rec.x0 = Math.min(rec.x0, p.at.left); rec.y0 = Math.min(rec.y0, p.at.top);
+                rec.x1 = Math.max(rec.x1, p.at.left + p.at.width); rec.y1 = Math.max(rec.y1, p.at.top + p.at.height);
+            }
+        }
+        const pad = (r, k) => ({ left: r.left - k, top: r.top - k, width: r.width + 2 * k, height: r.height + 2 * k });
+        const cardRects = readCards(app).board.map(({ sprite }) => pad(pageRect(cr, sprite.getBounds()), 5));
+        const feet = new Map();
+        for (const [g, rec] of groups) if (rec.ok && rec.amount) feet.set(g, { left: rec.x0, top: rec.y0, width: rec.x1 - rec.x0, height: rec.y1 - rec.y0 });
+        const seenGroups = new Set();
+        for (const [g, foot] of feet) {
+            seenGroups.add(g);
+            const rec = groups.get(g);
+            for (const k of g.children) {
+                if (rec.stacks.has(k) || hiddenExtras.has(k)) continue;
+                hiddenExtras.set(k, g);
+                k.renderable = false;
+            }
+            if (!api.parkStackPlate) continue;
+            const avoid = cardRects.concat([...feet].filter(([o]) => o !== g).map(([, f]) => pad(f, 5)));
+            const pl = plates.get(g);
+            if (pl && pl.epoch === epoch && !pl.handle.isGone()) { pl.handle.move(foot, rec.amount, DIAM, avoid); continue; }
+            if (pl) dropPlate(g);
+            const handle = api.parkStackPlate(foot, rec.amount, { diameter: DIAM, avoid });
+            if (handle) plates.set(g, { handle, epoch });
+        }
+        for (const g of [...plates.keys()]) if (!seenGroups.has(g)) dropPlate(g);
+        for (const [k, g] of [...hiddenExtras]) if (!seenGroups.has(g) || k.parent !== g) { k.renderable = true; hiddenExtras.delete(k); }
     };
     raf = requestAnimationFrame(frame);
 
