@@ -381,15 +381,24 @@ export function startInteractions(ctx, tracker, editors) {
 
     /* ----- buttons ----- */
     const seatButtons = new Map();   // seat -> button
-    const personalBtn = document.createElement("button");
-    personalBtn.type = "button";
-    personalBtn.className = "gpt-root gpt-personal-btn";
-    personalBtn.textContent = "🥳";
-    personalBtn.hidden = true;
-    personalBtn.addEventListener("mouseenter", () => { if (!personalBtn.disabled) personalMenu.open(personalBtn, null); });
-    personalBtn.addEventListener("mouseleave", personalMenu.later);
-    personalBtn.addEventListener("click", (e) => { e.preventDefault(); if (!personalBtn.disabled) personalMenu.open(personalBtn, null); });
-    document.body.append(personalBtn);
+    // The celebrations button lives in the chat bar, with share and quick chat:
+    // the classic one sat by the pot, which ui2 draws on its canvas, and a
+    // button on the felt was too small to find. It is always shown while
+    // celebrations are on, dimmed with the reason when it cannot fire.
+    const personalBtns = new Set();
+    offs.push(ctx.ui.register("chat.toolbar", slot(ctx, (el) => {
+        el.classList.add("gpt-root");
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "gpt-chat-btn gpt-personal-btn";
+        b.textContent = "🥳 celebrate";
+        b.addEventListener("mouseenter", () => { if (!b.disabled) personalMenu.open(b, null); });
+        b.addEventListener("mouseleave", personalMenu.later);
+        b.addEventListener("click", (e) => { e.preventDefault(); if (!b.disabled) personalMenu.open(b, null); });
+        el.append(b);
+        personalBtns.add(b);
+        return { destroy() { personalBtns.delete(b); } };
+    })));
 
     let raf = 0;
     const place = () => {
@@ -425,19 +434,19 @@ export function startInteractions(ctx, tracker, editors) {
             seatButtons.delete(seat);
             if (throwMenu.target === seat) throwMenu.close();
         }
-        // The 🥳 button sits on the felt's top-right edge while I'm seated.
-        const f = tableFrame();
-        const showP = celebOn() && me >= 0 && !!f;
-        if (personalBtn.hidden === showP) personalBtn.hidden = !showP;
-        if (showP) {
-            const sc = f.width / 790;
-            personalBtn.style.left = f.left + (395 + 262) * sc + "px";
-            personalBtn.style.top = f.top + (190 - 96) * sc + "px";
-            const open = celebrationsAllowed();
-            personalBtn.disabled = !open;
-            personalBtn.title = open ? "Celebrations" : "not while the hand is playing — free again once it's over";
-            if (!open) personalMenu.close();
-        } else personalMenu.close();
+        // The celebrations button: shown while celebrations are on, live only
+        // when it can actually fire (seated, between hands).
+        const on = celebOn();
+        const seated = me >= 0;
+        const between = celebrationsAllowed();
+        for (const b of personalBtns) {
+            if (b.hidden === on) b.hidden = !on;
+            b.disabled = !(seated && between);
+            b.title = !seated ? "take a seat to celebrate"
+                : !between ? "not while the hand is playing — free again once it's over"
+                : "celebrate: confetti, clap, dance, rail slide, river";
+        }
+        if (!on || !seated || !between) personalMenu.close();
     };
     place();
 
@@ -732,7 +741,6 @@ export function startInteractions(ctx, tracker, editors) {
         document.removeEventListener("mousedown", onDown);
         for (const b of seatButtons.values()) b.remove();
         for (const m of menus) m.panel.remove();
-        personalBtn.remove();
         for (const c of [...stunts]) c();
     };
 }

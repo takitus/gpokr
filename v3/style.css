@@ -278,24 +278,10 @@ body.dark-mode .gpt-bet-col button:hover { background: #344056; }
 .gpt-interact-btn:hover { opacity: 1; transform: translate(-50%, -50%) scale(1.25); }
 .gpt-interact-btn:active { transform: translate(-50%, -50%) scale(.92); }
 
-.gpt-personal-btn {
-    all: unset;
-    position: fixed;
-    z-index: 9;
-    box-sizing: border-box;
-    transform: translate(-50%, -50%);
-    display: inline-flex; align-items: center; justify-content: center;
-    padding: 2px 5px;
-    font-size: 12px; line-height: 1;
-    border: 1px solid #c9c9c9; border-radius: 6px;
-    background: #fff;
-    cursor: pointer;
-}
+/* 🥳 celebrate, in the chat bar: a chat button, dimmed when it cannot fire. */
 .gpt-personal-btn[hidden] { display: none; }
-.gpt-personal-btn:hover { background: #f0f0f0; }
-.gpt-personal-btn:disabled { opacity: .35; cursor: default; }
-body.dark-mode .gpt-personal-btn { background: #2a3342; border-color: #45526b; }
-body.dark-mode .gpt-personal-btn:hover:not(:disabled) { background: #344056; }
+.gpt-personal-btn:disabled { opacity: .4; cursor: default; }
+.gpt-personal-btn:disabled:hover { background: transparent; }
 
 .gpt-interact-panel {
     position: fixed;

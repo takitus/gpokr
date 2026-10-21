@@ -58,11 +58,30 @@ function adoptLegacy(id, legacy) {
     }
 }
 
+/* v3 ran as "takitus-tools" before it took its own id ("takitus-gpokr-tools"),
+ * and that is also the id of ui2's bundled copy. Whatever v3 saved under the
+ * old id comes across once; the bundled copy's own document ("doc") stays
+ * where it is, since it was never ours. */
+const OLD_ID = "takitus-tools";
+function adoptOldId(id) {
+    if (id === OLD_ID) return;
+    try {
+        const from = `ext.${OLD_ID}.`, to = `ext.${id}.`;
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || !k.startsWith(from) || k === from + "doc") continue;
+            const nk = to + k.slice(from.length);
+            if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+        }
+    } catch (e) { /* storage blocked */ }
+}
+
 async function main() {
     if (window.__gptShim) return;
     window.__gptShim = { version: 0 };
 
     const manifest = await (await fetch(new URL("manifest.json", V3))).json();
+    adoptOldId(manifest.id);
     const settings = settingsStore(manifest);
     window.postMessage({ __gpt: "hello" }, "*");
     await settings.ready;
