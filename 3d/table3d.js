@@ -224,7 +224,13 @@
     // black sides it is supposed to be brighter than.
     const CHAIR_COL_PRINT = 0x3a3a42;
 
-    function tableEl() { return document.querySelector(".iogc-GameWindow-table"); }
+    // The element the table is drawn into and framed by: the classic client's
+    // .iogc-GameWindow-table, or whatever setHost() was handed — ui2 has no
+    // such element (and uses the class name for something else), so GPokr
+    // Tools v3 gives it one sized to the classic art frame over ui2's felt.
+    let hostOverride = null;
+    function tableEl() { return hostOverride || document.querySelector(".iogc-GameWindow-table"); }
+    function setHost(el) { hostOverride = el || null; }
 
     let session = null;
     let broken = false;
@@ -744,7 +750,7 @@
         if (surroundHex) return;   // an explicit choice wins
         let url = null;
         try {
-            const host = document.querySelector(".iogc-GameWindow-table");
+            const host = tableEl();
             const bg = host && getComputedStyle(host).backgroundImage;
             const m = bg && bg.match(/url\(["']?(.*?)["']?\)/);
             url = m && m[1];
@@ -1309,12 +1315,15 @@
         }
     }
 
-    // Load the bundled gpokr logo (one of our own resources either way, so no
-    // cross-origin taint) and hand back a CanvasTexture + its aspect ratio.
+    // Load the bundled gpokr logo and hand back a CanvasTexture + its aspect
+    // ratio. Asked for with CORS: our files are same-origin with the classic
+    // page, but not with ui2's, where an extension or CDN URL drawn into the
+    // canvas would taint it and WebGL would refuse the texture.
     function loadLogoTexture(T, onReady) {
         const url = assetUrl("assets/gpokr-logo.svg");
         if (!url) return;
         const img = new Image();
+        img.crossOrigin = "anonymous";
         img.onload = () => {
             const w = 512, h = Math.max(1, Math.round(512 * (img.naturalHeight || 74) / (img.naturalWidth || 184)));
             const cv = document.createElement("canvas");
@@ -3020,7 +3029,7 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setKeyLight, keyLight: () => KEY_POS.slice(),
+    window.GPE_TABLE3D = { enable, disable, setHost, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setKeyLight, keyLight: () => KEY_POS.slice(),
         setFillLight, fillLight: () => FILL_POS.slice(), setLightLevels, lightLevels,
         addActor, touchShadows, parkChip, dealCard, setElevation, elevation, setChipRound, parkStackPlate, feltFit, feltHas, parkCardBack,
         // Page space <-> felt space, for anything drawing into this scene.

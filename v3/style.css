@@ -1,0 +1,488 @@
+/* GPokr Tools v3. Colours follow ui2's own tokens where it has them, with
+ * fallbacks for the light theme. */
+
+.gpt-root {
+    --gpt-fg: var(--sh-text, #1d2329);
+    --gpt-dim: var(--sh-text-dim, #6b7680);
+    --gpt-line: var(--sh-border, rgba(0, 0, 0, .12));
+    --gpt-bg: var(--sh-surface, #fff);
+    --gpt-win: #2e9d4f;
+    --gpt-red: #d23b3b;
+    font: 12px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--gpt-fg);
+}
+body.dark-mode .gpt-root {
+    --gpt-fg: var(--sh-text, #e6eaee);
+    --gpt-dim: var(--sh-text-dim, #93a0ab);
+    --gpt-line: var(--sh-border, rgba(255, 255, 255, .12));
+    --gpt-bg: var(--sh-surface, #1f2427);
+    --gpt-win: #5fd17f;
+    --gpt-red: #ff7b7b;
+}
+
+/* ---------- hand summary box (under the game log) ---------- */
+/* The log's column becomes a stack: the log scrolls in whatever the box
+   leaves, the box keeps its own height and scrollback. */
+/* ui2 gives the column height: 100% of a row whose height comes from the chat
+   column's content, so it doesn't resolve; the feature measures the chat
+   column into --gpt-logh instead. */
+[data-gpt-logcol] { display: flex !important; flex-direction: column; height: var(--gpt-logh, 100%) !important; min-height: 0; overflow: hidden; }
+[data-gpt-logcol] > .iogc-MessagePanel { flex: 1 1 0; min-height: 80px; overflow: hidden; }
+[data-gpt-logcol] > .iogc-MessagePanel .iogc-MessagePanel-inner,
+[data-gpt-logcol] > .iogc-MessagePanel .iogc-MessagePanel-messages { height: 100%; }
+.gpt-sumbox {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    height: 230px;
+    min-height: 90px;
+    max-height: 70%;
+    resize: vertical;          /* drag the bottom edge to give it more room */
+    overflow: hidden;
+    margin-top: 6px;
+    border-top: 1px solid var(--gpt-line);
+}
+.gpt-sumbox-list { flex: 1 1 auto; overflow-y: auto; padding: 4px 0; }
+.gpt-sumbox-empty { color: var(--gpt-dim); padding: 10px 12px; }
+
+.gpt-sum {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 9px 12px;
+    margin: 3px 8px 6px 0;
+    color: #f2f2f2;
+    /* the table in miniature: felt with a centre-bright vignette in a leather rail */
+    background: radial-gradient(ellipse 130% 105% at 50% 38%, #2c5754 0%, #234a48 46%, #162e2c 100%);
+    border: 4px solid #211d15;
+    border-radius: 14px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), 0 1px 0 rgba(255, 255, 255, .08) inset, 0 2px 5px rgba(0, 0, 0, .35);
+}
+.gpt-sum.is-live { opacity: .8; }
+.gpt-sum-win { font: bold 12px/1.3 Arial, sans-serif; }
+.gpt-sum-live { font-weight: normal; font-style: italic; opacity: .8; }
+.gpt-sum-cardrow { display: flex; align-items: flex-start; gap: 14px; }
+.gpt-sum-col { display: flex; flex-direction: column; gap: 2px; }
+.gpt-sum-colhead {
+    font: bold 10px/1.3 Arial, sans-serif;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 62px; /* two cards wide: a long winner name ellipsizes */
+}
+.gpt-sum-cards { display: inline-flex; gap: 2px; }
+.gpt-card-img {
+    box-sizing: border-box;
+    width: 30px; height: 39px;
+    border-radius: 3px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+}
+.gpt-text-card { display: flex; align-items: center; justify-content: center; font: bold 13px/1 Arial, sans-serif; color: #111; border: 1px solid #999; }
+.gpt-suit-h, .gpt-suit-d { color: #c81818; }
+.gpt-slot-card { background: transparent; border: 1px dashed rgba(255, 255, 255, .28); box-shadow: none; }
+.gpt-sum-toggle {
+    all: unset; box-sizing: border-box; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 39px; min-width: 22px; font-size: 15px; line-height: 1;
+    border-radius: 5px; opacity: .7;
+}
+.gpt-sum-toggle:hover { opacity: 1; background: rgba(255, 255, 255, .14); }
+.gpt-sum-replay { align-self: flex-end; margin-left: auto; color: #9fd3ff; font: 11px Arial, sans-serif; }
+
+/* per-player breakdown: name | cards | pre | flop | turn | river | total */
+.gpt-sum-detail[hidden] { display: none; }
+.gpt-sum-detail {
+    display: grid;
+    grid-template-columns: 78px auto repeat(5, minmax(32px, max-content));
+    width: fit-content; max-width: 100%; overflow-x: auto;
+    gap: 1px 6px; align-items: center;
+    font: 11px/1.3 Arial, sans-serif;
+    margin-top: 2px; padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, .18);
+}
+.gpt-sum-drow { display: contents; }
+.gpt-sum-dhead > span { font-weight: bold; opacity: .75; }
+.gpt-sum-drow.is-me .gpt-sum-dname-text { font-weight: bold; }
+.gpt-sum-dname { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
+.gpt-sum-dname-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gpt-sum-btn {
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #d8b23a; color: #1a1a1a; font: bold 9px/1 Arial, sans-serif;
+}
+.gpt-sum-dcards { display: inline-flex; gap: 2px; align-items: flex-start; }
+.gpt-sum-dnum { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.gpt-sum-dtot { font-weight: bold; }
+/* detail cards show only their top half (the rank/suit corner) */
+.gpt-sum-detail .gpt-card-img { width: 22px; height: 15px; border-radius: 3px 3px 0 0; overflow: hidden; vertical-align: top; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); }
+.gpt-sum-detail img.gpt-card-img { object-fit: cover; object-position: top; }
+.gpt-sum-detail .gpt-text-card { align-items: flex-start; font-size: 11px; line-height: 14px; }
+
+/* ---------- bet readout ---------- */
+.gpt-bet-readout {
+    font-size: 10px;
+    line-height: 1.2;
+    padding: 1px 4px;
+    white-space: nowrap;
+    color: #fff;
+    background: rgba(0, 0, 0, .55);
+    border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- shim-only containers ---------- */
+/* Under the real host these sit inside ui2's own frames. */
+/* The player panel clips its overflow, so the badge rides its bottom edge. */
+.gpt-seat-badge { position: absolute; left: 0; right: 0; bottom: 2px; display: flex; justify-content: center; pointer-events: none; z-index: 3; }
+
+/* ---------- quick chat ---------- */
+.gpt-chat-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 5px 4px; }
+.gpt-chat-toolbar > .gpt-slot { display: contents; }
+.gpt-chat-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.gpt-chat-btn {
+    font: 12px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 3px 9px;
+    border: 1px solid var(--gpt-line);
+    border-radius: 12px;
+    background: transparent;
+    color: var(--gpt-fg);
+    cursor: pointer;
+}
+.gpt-chat-btn:hover { background: rgba(127, 127, 127, .18); }
+.gpt-chat-edit { color: var(--gpt-dim); padding: 3px 7px; }
+
+/* ---------- list editor modal ---------- */
+.gpt-modal-backdrop {
+    position: fixed; inset: 0; z-index: 2147483646;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, .45);
+}
+.gpt-modal {
+    width: 320px; max-width: 92vw; padding: 14px;
+    border-radius: 10px;
+    background: var(--gpt-bg); color: var(--gpt-fg);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, .35);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.gpt-modal-head { display: flex; align-items: center; font-weight: 600; margin-bottom: 8px; }
+.gpt-modal-head button { margin-left: auto; border: 0; background: none; color: var(--gpt-dim); font-size: 15px; line-height: 1; cursor: pointer; }
+.gpt-erow { display: flex; gap: 5px; align-items: center; margin: 4px 0; }
+.gpt-erow.is-dragging { opacity: .45; }
+.gpt-erow.is-dragover { box-shadow: 0 -2px 0 0 #4c9aff; }
+.gpt-drag { cursor: grab; color: var(--gpt-dim); user-select: none; font-size: 12px; }
+.gpt-erow input, .gpt-erow select {
+    box-sizing: border-box; padding: 3px 5px;
+    border: 1px solid var(--gpt-line); border-radius: 4px;
+    background: transparent; color: inherit; font: inherit;
+}
+.gpt-erow .gpt-chat-name { width: 64px; }
+.gpt-erow .gpt-chat-text { flex: 1; min-width: 0; }
+.gpt-erow input[type=number] { width: 56px; }
+.gpt-erow select { flex: 1; }
+.gpt-del { border: 0; background: none; color: var(--gpt-red); cursor: pointer; font-size: 13px; padding: 0 3px; }
+.gpt-modal-add {
+    width: 100%; margin-top: 6px; padding: 5px 0;
+    border: 1px solid var(--gpt-line); border-radius: 6px;
+    background: transparent; color: inherit; cursor: pointer; font: 12px system-ui, sans-serif;
+}
+.gpt-modal-add:hover { background: rgba(127, 127, 127, .15); }
+.gpt-modal-hint { font-size: 11px; color: var(--gpt-dim); margin-top: 8px; }
+
+/* ---------- bet buttons ---------- */
+/* As on the classic table: blind buttons stacked over the bet control with a
+   rounded top, pot fractions under it with a rounded bottom, the control's
+   width, see-through until hovered so nothing under them is lost. */
+.gpt-bet-col {
+    position: fixed;
+    z-index: 99997;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+    opacity: .75;
+    transition: opacity 120ms ease;
+}
+.gpt-bet-col[hidden] { display: none; }
+.gpt-bet-col:hover { opacity: 1; }
+.gpt-bet-col-top { border-radius: 8px 8px 0 0; }
+.gpt-bet-col-bottom { border-radius: 0 0 8px 8px; }
+.gpt-bet-col button {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font: bold 12px/1 Arial, sans-serif;
+    width: 100%;
+    padding: 3px 0;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    color: #222;
+}
+.gpt-bet-col button:not(:first-child) { border-top: none; }
+.gpt-bet-col button:hover { background: #f0f0f0; }
+body.dark-mode .gpt-bet-col button { background: #2a3342; color: #d2d8e2; border-color: #45526b; }
+body.dark-mode .gpt-bet-col button:hover { background: #344056; }
+
+
+/* ---------- share hand ---------- */
+.gpt-share, .gpt-chat-toolbar > .gpt-share { display: inline-grid; align-items: center; }
+/* the box and the button take turns in one cell, so the row never shifts */
+.gpt-share > * { grid-area: 1 / 1; }
+.gpt-share > [hidden] { display: inline-flex !important; visibility: hidden; }
+.gpt-share-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--gpt-dim); cursor: pointer; white-space: nowrap; }
+.gpt-share-last:disabled { opacity: .6; cursor: default; }
+
+/* a shared hand over its owner's seat */
+.gpt-hand-wrap {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    display: flex;
+    gap: 3px;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 60;
+    transition: opacity 150ms ease;
+}
+.gpt-hand-wrap.is-shown { opacity: 1; }
+.gpt-hand-wrap .gpt-card-img { width: 40px; height: 52px; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+.gpt-hand-label {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    margin-top: 4px; padding: 3px 7px; white-space: nowrap;
+    font: bold 11px/1.2 Arial, sans-serif; color: #fff;
+    background: rgba(0, 0, 0, .74); border-radius: 6px; box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+}
+
+/* ---------- thrown props and celebrations ---------- */
+/* The throw button: a little chip on the corner of each other player's avatar. */
+.gpt-interact-btn {
+    all: unset;
+    position: fixed;
+    z-index: 9;
+    box-sizing: border-box;
+    transform: translate(-50%, -50%);
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    overflow: hidden;
+    cursor: pointer;
+    user-select: none;
+    background:
+        radial-gradient(circle at 50% 50%, #f4f4f4 0 40%, transparent 40%),
+        repeating-conic-gradient(#f8f8f8 0deg 24deg, #8a8a8a 24deg 60deg),
+        #8a8a8a;
+    border: 1px solid rgba(0, 0, 0, .55);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .55), 0 1px 4px rgba(0, 0, 0, .65);
+    opacity: .95;
+    transition: opacity .12s ease, transform .12s ease;
+}
+.gpt-interact-btn:hover { opacity: 1; transform: translate(-50%, -50%) scale(1.25); }
+.gpt-interact-btn:active { transform: translate(-50%, -50%) scale(.92); }
+
+.gpt-personal-btn {
+    all: unset;
+    position: fixed;
+    z-index: 9;
+    box-sizing: border-box;
+    transform: translate(-50%, -50%);
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 2px 5px;
+    font-size: 12px; line-height: 1;
+    border: 1px solid #c9c9c9; border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+}
+.gpt-personal-btn[hidden] { display: none; }
+.gpt-personal-btn:hover { background: #f0f0f0; }
+.gpt-personal-btn:disabled { opacity: .35; cursor: default; }
+body.dark-mode .gpt-personal-btn { background: #2a3342; border-color: #45526b; }
+body.dark-mode .gpt-personal-btn:hover:not(:disabled) { background: #344056; }
+
+.gpt-interact-panel {
+    position: fixed;
+    z-index: 99999;
+    display: none;
+    min-width: 108px;
+    padding: 5px;
+    border: 1px solid #cfcfcf;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, .22);
+}
+.gpt-interact-panel.is-open { display: block; }
+/* a collar, so the pointer can cross from the button to the panel */
+.gpt-interact-panel::before { content: ""; position: absolute; inset: -12px -10px -10px -10px; z-index: -1; }
+.gpt-interact-item {
+    all: unset;
+    box-sizing: border-box;
+    display: flex; align-items: center; gap: 7px;
+    width: 100%;
+    padding: 6px 9px;
+    border-radius: 6px;
+    font: 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #222;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.gpt-interact-item:hover { background: #f0f0f0; }
+.gpt-interact-item.is-cool { opacity: .4; cursor: default; }
+.gpt-interact-item.is-cool:hover { background: transparent; }
+body.dark-mode .gpt-interact-panel { background: #232c3a; border-color: #3c4a61; box-shadow: 0 6px 22px rgba(0, 0, 0, .5); }
+body.dark-mode .gpt-interact-item { color: #e6ebf2; }
+body.dark-mode .gpt-interact-item:hover { background: #344056; }
+body.dark-mode .gpt-interact-item.is-cool { color: #8a97ab; }
+body.dark-mode .gpt-interact-item.is-cool:hover { background: transparent; }
+
+/* the struck avatar recoils */
+img.iogc-PlayerPanel-avatar.gpt-hit { animation: gpt-hit .42s cubic-bezier(.36, .07, .19, .97); }
+@keyframes gpt-hit {
+    0% { transform: translate(0, 0) rotate(0); }
+    12% { transform: translate(-3px, 2px) rotate(-3deg); }
+    28% { transform: translate(3px, -1px) rotate(2.5deg); }
+    46% { transform: translate(-2px, 1px) rotate(-1.6deg); }
+    64% { transform: translate(2px, 0) rotate(1deg); }
+    82% { transform: translate(-1px, 0) rotate(-.4deg); }
+    100% { transform: translate(0, 0) rotate(0); }
+}
+
+/* an emote popping over a seat */
+.gpt-emote {
+    position: fixed;
+    z-index: 50;
+    width: 64px; height: 64px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 46px; line-height: 1;
+    pointer-events: none;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .92);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(.3);
+    transition: opacity 140ms ease, transform 140ms ease;
+}
+.gpt-emote.is-shown { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+body.dark-mode .gpt-emote { background: rgba(28, 34, 45, .92); box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
+
+/* an avatar clone off doing a stunt, and the seat it left */
+.gpt-stunt {
+    position: fixed;
+    left: 0; top: 0;
+    z-index: 9998;
+    pointer-events: none;
+    border-radius: 4px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, .45);
+    will-change: transform;
+}
+/* the clap's gloves draw on the 3D layer (z 9) in front of the chest */
+.gpt-stunt.is-under-props { z-index: 8; }
+[data-gpt-covered] { visibility: hidden !important; }
+
+/* The classic renderers' own layers (ids are theirs, from 3d/coin3d.js and
+   3d/chips3d.js): fixed, click-through, over the seats. The coin layer spans
+   the viewport because throws travel between unrelated parts of the page. */
+#gpe-coin-layer {
+    position: fixed;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    display: block;
+    pointer-events: none;
+    z-index: 9;
+}
+#gpe-chips-layer { position: fixed; pointer-events: none; z-index: 9; overflow: visible; }
+#gpe-chips-layer canvas { display: block; width: 100%; height: 100%; }
+
+/* ---------- 3D table ---------- */
+/* A clipped layer at the back of ui2's table area (which is made a stacking
+   context for it), holding the classic-sized frame table3d draws into. */
+.gpt-table3d-clip {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+.gpt-table3d-host { position: absolute; }
+
+/* ---------- floating editors (lib/panel.js) ---------- */
+/* Not a dimming modal: the table stays in view while a slider moves it. */
+.gpt-panel {
+    position: fixed;
+    z-index: 2147483000;
+    width: 320px;
+    max-height: calc(100vh - 16px);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--sh-line, rgba(127, 127, 127, .3));
+    border-radius: 12px;
+    background: var(--sh-panel-glass, var(--gpt-bg));
+    backdrop-filter: blur(12px);
+    color: var(--sh-ink, var(--gpt-fg));
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.gpt-panel-head {
+    display: flex; align-items: center;
+    padding: 10px 10px 8px 14px;
+    font-weight: 700; font-size: 14px;
+    border-bottom: 1px solid var(--sh-line, rgba(127, 127, 127, .3));
+    cursor: move;
+    user-select: none;
+}
+.gpt-panel-head span { flex: 1 1 auto; }
+.gpt-panel-head button { border: 0; background: none; color: inherit; opacity: .6; font-size: 15px; cursor: pointer; }
+.gpt-panel-head button:hover { opacity: 1; }
+.gpt-panel-body { overflow-y: auto; padding: 8px 14px 12px; }
+.gpt-panel-hint { font-size: 11px; color: var(--sh-body, var(--gpt-dim)); opacity: .85; margin: 8px 0 4px; }
+
+.gpt-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.gpt-row-label { flex: 0 0 96px; color: var(--sh-body, var(--gpt-dim)); }
+.gpt-row input[type=range] { flex: 1 1 auto; min-width: 0; accent-color: var(--sh-accent, #2fb344); }
+.gpt-row-val { flex: 0 0 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.gpt-check { cursor: pointer; }
+.gpt-check input { accent-color: var(--sh-accent, #2fb344); }
+.gpt-color { width: 44px; height: 24px; padding: 0; border: 1px solid var(--sh-line, #888); border-radius: 4px; background: none; }
+
+.gpt-chip-group { display: flex; flex-wrap: wrap; gap: 4px; }
+.gpt-chip-btn {
+    padding: 3px 9px;
+    border: 1px solid var(--sh-line, rgba(127, 127, 127, .4));
+    border-radius: 12px;
+    background: transparent;
+    color: inherit;
+    font: 12px/1.3 inherit;
+    cursor: pointer;
+}
+.gpt-chip-btn:hover { background: var(--sh-hover, rgba(127, 127, 127, .15)); }
+.gpt-chip-btn.is-on { background: var(--sh-accent, #2fb344); border-color: transparent; color: var(--sh-rail-fg-on, #fff); }
+.gpt-wide-btn { width: 100%; margin-top: 8px; padding: 6px; border-radius: 8px; border: 1px solid var(--sh-line, #888); background: transparent; color: inherit; cursor: pointer; }
+.gpt-wide-btn:hover { background: var(--sh-hover, rgba(127, 127, 127, .15)); }
+
+.gpt-section {
+    display: flex; align-items: baseline; gap: 6px;
+    margin: 12px 0 4px; padding-top: 8px;
+    border-top: 1px solid var(--sh-line, rgba(127, 127, 127, .3));
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--sh-body, var(--gpt-dim));
+    cursor: pointer; user-select: none;
+}
+.gpt-section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
+.gpt-section span:nth-child(2) { flex: 1 1 auto; }
+.gpt-caret { width: 10px; }
+.gpt-section-reset { border: 0; background: none; color: var(--sh-accent, #6a8fc7); font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; opacity: .8; }
+
+.gpt-select {
+    padding: 3px 4px;
+    border: 1px solid var(--sh-line, #888);
+    border-radius: 6px;
+    background: var(--sh-panel-bg, transparent);
+    color: inherit;
+    font: 12px inherit;
+    min-width: 0;
+}
+.gpt-select option { color: #111; }
+.gpt-steps { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; max-height: 260px; overflow-y: auto; }
+.gpt-step-n { width: 18px; text-align: right; color: var(--sh-body, var(--gpt-dim)); font-variant-numeric: tabular-nums; }
+.gpt-steps-foot { justify-content: flex-end; }
+.gpt-steps-status { flex: 1 1 auto; font-size: 11px; color: var(--sh-body, var(--gpt-dim)); }
+
+/* the editors as ui2's own host shows them: a side panel of buttons */
+.gpt-editors .gpt-row-label { flex-basis: 120px; }

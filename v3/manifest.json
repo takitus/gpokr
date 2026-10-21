@@ -1,0 +1,87 @@
+{
+    "id": "takitus-tools",
+    "name": "GPokr Tools",
+    "version": "3.1.0",
+    "author": "takitus",
+    "description": "Hand summary, bet readout by street, custom bet buttons, quick chat, thrown props and celebrations, and a 3D table.",
+    "docs": "https://github.com/takitus/gpokr",
+    "games": [
+        "gpokr"
+    ],
+    "surfaces": [
+        "table"
+    ],
+    "entry": "index.js",
+    "api": "^1.0.0",
+    "permissions": [
+        "actions:chat",
+        "actions:interact",
+        "actions:bet-amount",
+        "storage:account"
+    ],
+    "settings": [
+        {
+            "key": "handSummary",
+            "type": "switch",
+            "label": "Hand summary",
+            "hint": "Winner, board, each player's cards and bets by street, after every hand",
+            "default": true
+        },
+        {
+            "key": "betReadout",
+            "type": "switch",
+            "label": "Bets by street",
+            "hint": "What each player put in on each street, under their seat",
+            "default": true
+        },
+        {
+            "key": "betButtons",
+            "type": "switch",
+            "label": "Custom bet buttons",
+            "hint": "Multiplier × blind or pot buttons that fill the bet amount",
+            "default": true
+        },
+        {
+            "key": "quickChat",
+            "type": "switch",
+            "label": "Quick chat buttons",
+            "hint": "One-tap lines with [playername] and [lastwinner]",
+            "default": true
+        },
+        {
+            "key": "shareHand",
+            "type": "switch",
+            "label": "Share hand",
+            "hint": "\"share last hand\" and a one-hand \"share hand\" box in the chat bar; shared hands from others show over their seat",
+            "default": true
+        },
+        {
+            "key": "alwaysShare",
+            "type": "switch",
+            "label": "Always share my hand",
+            "hint": "Post your cards in chat at the end of every hand you play",
+            "default": false
+        },
+        {
+            "key": "interactions",
+            "type": "switch",
+            "label": "Thrown props",
+            "hint": "Throw a chip, beer, flower and more at a seat; everyone with the tools sees it",
+            "default": true
+        },
+        {
+            "key": "celebrations",
+            "type": "switch",
+            "label": "Celebrations",
+            "hint": "Confetti, clap, dance, rail slide and river from the 🥳 button, between hands",
+            "default": true
+        },
+        {
+            "key": "table3d",
+            "type": "switch",
+            "label": "3D table and chips",
+            "hint": "WebGL felt, rail and chips under the 2D pieces",
+            "default": false
+        }
+    ]
+}

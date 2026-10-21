@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    :root { color-scheme: light dark; --fg: #222; --dim: #777; --line: #ddd; --bg: #fff; }
+    @media (prefers-color-scheme: dark) { :root { --fg: #e6eaee; --dim: #93a0ab; --line: #333; --bg: #1c1f22; } }
+    body { width: 300px; margin: 0; padding: 12px; font: 13px/1.45 -apple-system, "Segoe UI", Arial, sans-serif; color: var(--fg); background: var(--bg); }
+    h1 { font-size: 14px; margin: 0 0 2px; }
+    .sub { color: var(--dim); font-size: 11px; margin-bottom: 10px; }
+    label { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; cursor: pointer; user-select: none; padding: 6px 0; border-top: 1px solid var(--line); }
+    label input { margin: 2px 0 0; }
+    label .hint { grid-column: 2; color: var(--dim); font-size: 11px; }
+</style>
+</head>
+<body>
+    <h1>GPokr Tools</h1>
+    <div class="sub" id="ver"></div>
+    <div id="settings"></div>
+    <script src="popup-v3.js"></script>
+</body>
+</html>
