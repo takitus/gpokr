@@ -14,6 +14,7 @@
 import { ensureCoin, classicFrame } from "../lib/legacy3d.js";
 import { findPixiApp, findFelt } from "../lib/pixi.js";
 import { startChips3d } from "./chips3d.js";
+import { startCards3d } from "./cards3d.js";
 
 function loadScript(url) {
     return new Promise((resolve, reject) => {
@@ -27,7 +28,7 @@ function loadScript(url) {
 
 const FIT = 1.045;
 
-export function startTable3d(ctx, look) {
+export function startTable3d(ctx, look, backStyle) {
     let stopped = false;
     let area = null;          // ui2's table area; the clip layer lives at its back
     let areaSaved = null;
@@ -105,13 +106,16 @@ export function startTable3d(ctx, look) {
             if (!T3D().enable()) { ctx.log("3D table did not start"); return; }
             look.apply();
             stopChips = startChips3d(ctx, look);
+            stopCards = startCards3d(ctx, look, backStyle);
         })
         .catch((e) => ctx.log("3D table unavailable:", e.message));
 
     let stopChips = null;
+    let stopCards = null;
     return () => {
         stopped = true;
         if (stopChips) stopChips();
+        if (stopCards) stopCards();
         cancelAnimationFrame(raf);
         if (T3D()) { T3D().disable(); T3D().setHost(null); }
         if (felt) felt.visible = true;

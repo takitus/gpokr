@@ -70,6 +70,28 @@ export function openLookEditor(ctx, look) {
                     "Moves the camera only. Rebuilds the table.",
             }, reg));
 
+            s = section(body, "cards", () => {
+                look.reset(["cards3d", "dealAnim", "seatCards3d", "cardThick"]);
+                refreshAll();
+            });
+            s.append(
+                checkRow("3D board cards", {
+                    get: () => look.get().cards3d, set: (v) => look.save({ cards3d: v }),
+                    hint: "the board's cards as real slabs on the felt, lit and shadowed by the table's lamp",
+                }, reg),
+                checkRow("dealing animation", {
+                    get: () => look.get().dealAnim, set: (v) => look.save({ dealAnim: v }),
+                    hint: "community cards fly in face down and turn over as they are dealt",
+                }, reg),
+                checkRow("3D cards at every seat", {
+                    get: () => look.get().seatCards3d, set: (v) => look.save({ seatCards3d: v }),
+                    hint: "lay the other players' face-down cards on the felt instead of standing them up flat",
+                }, reg),
+                lookSlider(look, "cardThick", "thickness", { min: 0, max: 24, step: 0.5,
+                    fmt: (n) => (n <= 0.2 ? "paper" : n.toFixed(1) + "px"),
+                    hint: "how thick a card is; a thick one is leaned slightly toward you so its edge shows" }, reg),
+            );
+
             s = section(body, "chips", () => {
                 look.reset(["chips3d", "chipDrop", "chipDiam", "chipThick", "chipRound"]);
                 refreshAll();

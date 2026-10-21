@@ -12,6 +12,8 @@ import { startBetButtons } from "./features/betButtons.js";
 import { startShareHand } from "./features/shareHand.js";
 import { startInteractions } from "./features/interactions.js";
 import { startTable3d } from "./features/table3d.js";
+import { startHotkeys } from "./features/hotkeys.js";
+import { startCardStyle, cardBackStyle } from "./features/cardStyle.js";
 import { openTable3dEditor, openLookEditor } from "./editors.js";
 import { createPrefs } from "./lib/prefs.js";
 import { createLook } from "./lib/look.js";
@@ -74,7 +76,11 @@ export default {
         offs.push(toggled(ctx, "betButtons", (c) => startBetButtons(c, prefs, editors)));
         // Celebrations ride the same wire as throws, so they live under its switch.
         offs.push(toggled(ctx, "interactions", (c) => startInteractions(c, tracker, editors)));
-        offs.push(toggled(ctx, "table3d", (c) => startTable3d(c, look)));
+        offs.push(toggled(ctx, "hotkeys", (c) => startHotkeys(c, prefs)));
+        offs.push(toggled(ctx, "cardStyle", (c) => startCardStyle(c, prefs, editors)));
+        // The 3D cards wear the chosen back when Card style is on.
+        const backStyle = () => (ctx.settings.get("cardStyle") !== false ? cardBackStyle(prefs) : "");
+        offs.push(toggled(ctx, "table3d", (c) => startTable3d(c, look, backStyle)));
         // The 3D editors work with the table off too, as they always did: set
         // it up, then switch it on.
         offs.push(editors.set("table3d", [

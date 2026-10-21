@@ -42,6 +42,13 @@
             "default": true
         },
         {
+            "key": "hotkeys",
+            "type": "switch",
+            "label": "Keyboard shortcuts",
+            "hint": "F fold · C check/call · Shift+1–9 your bet buttons · ↑/↓ or the wheel over Raise: ±1 big blind",
+            "default": true
+        },
+        {
             "key": "quickChat",
             "type": "switch",
             "label": "Quick chat buttons",
@@ -74,6 +81,13 @@
             "type": "switch",
             "label": "Celebrations",
             "hint": "Confetti, clap, dance, rail slide and river from the 🥳 button, between hands",
+            "default": true
+        },
+        {
+            "key": "cardStyle",
+            "type": "switch",
+            "label": "Card style",
+            "hint": "Four-colour deck (blue diamonds, green clubs) and the card back",
             "default": true
         },
         {

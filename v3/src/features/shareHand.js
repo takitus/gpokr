@@ -240,6 +240,7 @@ export function startShareHand(ctx, tracker) {
             const img = document.createElement("img");
             img.className = "gpt-card-img";
             img.alt = c;
+            img.dataset.gpeCard = c;   // the four-colour deck keys on this
             img.src = CARD_IMG + c + ".png";
             wrap.append(img);
         }

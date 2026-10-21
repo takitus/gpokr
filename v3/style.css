@@ -486,3 +486,11 @@ body.dark-mode .gpt-emote { background: rgba(28, 34, 45, .92); box-shadow: 0 2px
 
 /* the editors as ui2's own host shows them: a side panel of buttons */
 .gpt-editors .gpt-row-label { flex-basis: 120px; }
+
+/* ---------- four-colour deck on our own card images ---------- */
+/* ui2's cards are recoloured in their canvases (features/cardStyle.js); our
+   own <img> cards take the classic filters, keyed on data-gpe-card. */
+html.gpt-fourcolor img[data-gpe-card$="d"] { filter: url(#gpt-suit-diamond); }
+html.gpt-fourcolor img[data-gpe-card$="c"] { filter: url(#gpt-suit-club); }
+html.gpt-fourcolor .gpt-suit-d { color: #0000ff; }
+html.gpt-fourcolor .gpt-suit-c { color: #008000; }

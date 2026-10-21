@@ -15,6 +15,10 @@ export const LOOK_DEFAULTS = {
     backdrop: "",         // "" = no floor; grain, glow, carpet, clover, deco, wood
     seats: "",            // "" = none; stool, chair
     elev: 64,             // camera, degrees above the felt
+    cards3d: true,        // board cards as slabs on the felt
+    dealAnim: true,       // ...flying in and turning over as they are dealt
+    seatCards3d: true,    // other players' face-down cards lying on the felt
+    cardThick: 2,         // a card's thickness, CSS px
     chips3d: true,        // bets and pot as discs
     chipDrop: true,       // bets fall in, with a clink
     chipDiam: 26, chipThick: 4, chipRound: 0.5,
