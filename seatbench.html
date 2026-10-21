@@ -74,6 +74,10 @@
 <!-- Two chip stacks: a seat's bet and the pot. Built by __bet()/__pot() below,
      which follow the site's own widget exactly. -->
 <div class="gpokr-ChipStack" id="bet-a" style="left:420px;top:250px"><div class="gpokr-ChipStack-chips"></div></div>
+<div id="seatbacks"></div>
+<!-- gpokr writes the pot total here as well as into the pot stack's own label; it
+     is the only thing that tells the pot's chip stack apart from a bet's. -->
+<div class="gpokr-GameWindow-potLabel" style="position:absolute;left:4px;top:4px;color:#9fb">$0</div>
 <div class="gpokr-ChipStack" id="pot"   style="left:300px;top:200px"><div class="gpokr-ChipStack-chips"></div></div>
 </div>
 <table class="iogc-PlayerPanel-x"><tbody>
@@ -305,7 +309,9 @@
     }
     // __away(true/false), __turn(true/false)
     window.__away = (on) => { badgeEl("iogc-PlayerPanel-away", "away", "#101010").style.display = on === false ? "none" : "block"; };
-    window.__turn = (on) => { badgeEl("iogc-PlayerPanel-turn", "turn", "#0f5323").style.display = on === false ? "none" : "block"; };
+    // NOT __turn: that name already deals the turn card (see above). Shadowing it
+    // cost real time once — there was then no way to deal a turn at all.
+    window.__turnBadge = (on) => { badgeEl("iogc-PlayerPanel-turn", "turn", "#0f5323").style.display = on === false ? "none" : "block"; };
     // Is the site's badge buried, and is ours standing in for it?
     window.__badges = () => [...document.querySelectorAll(".iogc-PlayerPanel-away, .iogc-PlayerPanel-turn")]
       .map((e) => ({ cls: e.className, shown: getComputedStyle(e).display !== "none" }));
@@ -386,7 +392,30 @@
       box.appendChild(lab);
     }
 
-    const csBox = (id) => document.querySelector("#" + id + " .gpokr-ChipStack-chips");
+    // Opponents' face-down cards. src is absolute on purpose: OUR_BACK_RE wants a
+  // leading slash, which is also how the extension's own swapped-in backs look.
+  // The pot's total, as the site publishes it outside the stack.
+  window.__potLabel = (n) => {
+    document.querySelector(".gpokr-GameWindow-potLabel").textContent =
+      "$" + Number(n || 0).toLocaleString();
+    return n;
+  };
+
+  window.__seatBacks = (spots) => {
+    const host = document.getElementById("seatbacks");
+    host.innerHTML = "";
+    (spots || [[220,150],[420,120],[620,150],[520,250],[300,255]]).forEach(([x,y]) => {
+      const i = document.createElement("img");
+      i.src = "/assets/backs/rosette.png";
+      i.width = 23; i.height = 26;
+      i.style.cssText = "position:absolute;left:" + x + "px;top:" + y + "px";
+      host.appendChild(i);
+    });
+    return host.children.length;
+  };
+  window.__noSeatBacks = () => { document.getElementById("seatbacks").innerHTML = ""; };
+
+  const csBox = (id) => document.querySelector("#" + id + " .gpokr-ChipStack-chips");
     window.__bet = (amount) => { csFill(csBox("bet-a"), amount); return amount; };
     window.__pot = (amount) => { csFill(csBox("pot"), amount); return amount; };
     // What the extension has actually done to a stack: is each sprite covered,
@@ -404,6 +433,14 @@
 
     // Actors and textures the renderer is holding, for leak checks.
     window.__running = () => !!(window.GPE_COIN && GPE_COIN.isRunning());
+    // Who is drawing the cards, and is the table idle? The migration's core assertions.
+    window.__cards = () => {
+      const c = window.GPE_COIN && GPE_COIN._session && GPE_COIN._session();
+      const t = window.GPE_TABLE3D && GPE_TABLE3D.isOn() && GPE_TABLE3D._session();
+      return { coin: c && c.cards ? c.cards.size : 0, t3d: t && t.cards ? t.cards.size : 0,
+               casters: t && t.cardCasters ? t.cardCasters.children.length : null,
+               needsRender: t ? t.needsRender : null, shadowDirty: t ? t.shadowDirty : null };
+    };
 
     // The renderer on its own, bypassing content.js's detector and — the point —
     // its watchdog, which under a frozen clock reasonably concludes the animation

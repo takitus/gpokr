@@ -23,6 +23,9 @@
     let MUTE_CHAT = true;         // whether the mute list is enforced (the list itself persists)
     let testerPos = null;         // dragged position of the tester panel (persisted as settings.testerPos)
     let cardEditorPos = null;     // ...and of the cards/chips/light panel (settings.cardEditorPos)
+    // Which floating panel is docked down the left flank, by element id, or "".
+    // ONE at a time: they all want the same rail, and two in it would overlap.
+    let dockedPanel = "";
     let testerHeight = 0;         // dragged height, 0 = size to content (settings.testerHeight)
     let testerPause = 100;        // default gap after each new throw (settings.testerPause)
     let testerDock = false;       // docked to the left of the table, mirroring the right rail (settings.testerDock)
@@ -51,6 +54,17 @@
     let TABLE3D_BG_COLOR = "";
     let TABLE3D_BACKDROP = "";   // "" = no floor, just the flat surround color
     let TABLE3D_SEATS = "";      // "" = nothing around the table; "stool" or "chair"
+    // Which sections of the cards/chips/light panel are collapsed, by their label.
+    // Remembered so a panel folded down does not spring open on the next reload.
+    let cardPanelShut = new Set();
+
+
+    // Where the camera sits above the felt, in degrees. 90 is straight down.
+    // Moves the CAMERA only: the table's world geometry and its furniture are built
+    // at a fixed reference angle, so nothing changes dimensions as this moves.
+    const TABLE3D_ELEV_0 = 64;
+    let TABLE3D_ELEV = TABLE3D_ELEV_0;
+
     // Single source of truth for the 3D-table editor defaults (used by
     // applySettings' fallbacks and the "Reset to defaults" button).
     const TABLE3D_DEFAULTS = {
@@ -71,8 +85,14 @@
     // sizes both have always drawn at.
     // Replace the site's flat bet/pot chip sprites with real discs (opt-out).
     let TABLE_CHIPS = true;
+    let SEAT_CARDS_3D = true;    // other players' face-down cards, laid on the felt
+    let CHIP_DROP = true;        // bets fall into the stack, one chip at a time
     let CHIP_DIAM = 26;          // coin3d's 13px radius, doubled
     let CHIP_THICK = 4;          // chips3d's 0.17/0.55 proportion at that radius
+    // How much of a chip's edge is filleted, as a fraction of its half thickness.
+    // 0 is the square-edged disc; 1 is fully domed.
+    const CHIP_ROUND_0 = 0.5;
+    let CHIP_ROUND = CHIP_ROUND_0;
     const CHIP_DIAM_0 = 26, CHIP_THICK_0 = 4;
     // Where the light that throws the shadows hangs — cards, chips and the 3D
     // table all take their direction from this one place, so moving it moves
@@ -251,6 +271,8 @@
         CARD_FACE = (s && s.cardFace === "svg") ? "svg" : "";
         CARD_THICK = clampThick(s && s.cardThickness);
         TABLE_CHIPS = !(s && s.tableChips === false);  // opt-out
+        SEAT_CARDS_3D = !(s && s.seatCards3d === false);   // opt-out
+        CHIP_DROP = !(s && s.chipDrop === false);          // opt-out
         // The chips need coin3d's canvas exactly as the deal does, and a bet gives
         // no more notice than a card: ask for the renderer now.
         if (TABLE_CHIPS) ensureCoin3d();
@@ -260,6 +282,10 @@
             y: clampNum(s && s.holeNudgeY, HOLE_NUDGE_0.y, -HOLE_REACH, HOLE_REACH),
         };
         layoutHandCards();      // ...so a change lands without waiting for a poll
+        CHIP_ROUND = clampNum(s && s.chipRound, CHIP_ROUND_0, 0, 1);
+        if (window.GPE_TABLE3D && GPE_TABLE3D.setChipRound) {
+            try { GPE_TABLE3D.setChipRound(CHIP_ROUND); } catch (e) { /* not fatal */ }
+        }
         CHIP_DIAM = clampNum(s && s.chipDiameter, CHIP_DIAM_0, 8, 60);
         CHIP_THICK = clampNum(s && s.chipThickness, CHIP_THICK_0, 0.5, 20);
         const reach = (v, d) => clampNum(v, d, -LIGHT_REACH, LIGHT_REACH);
@@ -297,6 +323,11 @@
         document.documentElement.classList.toggle("gpe-fourcolor", FOUR_COLOR);
         sweepCardImgs(); // apply to whatever is already on screen, not just the next change
         TABLE_3D = !!(s && s.table3d); // opt-in
+        cardPanelShut = new Set(String((s && s.cardPanelShut) || "").split("|").filter(Boolean));
+        TABLE3D_ELEV = clampNum(s && s.table3dElev, TABLE3D_ELEV_0, 20, 90);
+        if (window.GPE_TABLE3D && GPE_TABLE3D.setElevation) {
+            try { GPE_TABLE3D.setElevation(TABLE3D_ELEV); } catch (e) { /* not fatal */ }
+        }
         TABLE3D_FELT_ZOOM = clampZoom(s && s.table3dFeltZoom, TABLE3D_DEFAULTS.table3dFeltZoom);
         TABLE3D_LEATHER_ZOOM = clampZoom(s && s.table3dLeatherZoom, TABLE3D_DEFAULTS.table3dLeatherZoom);
         TABLE3D_FELT_DEPTH = clampDepth(s && s.table3dFeltDepth, TABLE3D_DEFAULTS.table3dFeltDepth);
@@ -328,6 +359,8 @@
         const tpos = s && s.testerPos;
         testerPos = (tpos && typeof tpos.left === "number" && typeof tpos.top === "number")
             ? { left: tpos.left, top: tpos.top } : null;
+        dockedPanel = typeof (s && s.dockedPanel) === "string" ? s.dockedPanel : "";
+        syncPanelDocks();
         const cpos = s && s.cardEditorPos;
         cardEditorPos = (cpos && typeof cpos.left === "number" && typeof cpos.top === "number")
             ? { left: cpos.left, top: cpos.top } : null;
@@ -874,7 +907,9 @@
     const ASSET_SOUND_NAMES = ["hooray", "celebrate", "railslide", "golfclap"];   // warmed at boot, like SOUND_NAMES
     const assetSoundPool = Object.create(null);
     function assetAudioUrl(name) {
-        const path = "assets/audio/" + name + ".mp3";
+        // A name may carry its own extension — chip.m4a is AAC, not mp3 — and
+        // defaults to .mp3 so every existing caller is unchanged.
+        const path = "assets/audio/" + (/\.[a-z0-9]+$/i.test(name) ? name : name + ".mp3");
         if (SELF_SRC) return SELF_SRC.replace(/[^/]*$/, "") + path;
         try { return chrome.runtime.getURL(path); } catch (e) { return null; }
     }
@@ -885,19 +920,23 @@
     // A voice pool for our own audio, mirroring soundVoices (preload + rewind so a
     // cue fires on time; several voices so overlapping plays don't cut each other
     // off).
-    function assetVoices(name) {
+    function assetVoices(name, voices) {
         let pool = assetSoundPool[name];
         if (!pool) {
             const url = assetAudioUrl(name);
             const els = [];
-            for (let i = 0; i < SOUND_VOICES; i++) {
+            pool = assetSoundPool[name] = { els: els, next: 0, broken: false };
+            for (let i = 0; i < (voices || SOUND_VOICES); i++) {
                 const el = new Audio(url || "");
                 el.preload = "auto";
                 el.volume = ASSET_VOLUME;
+                // A missing or undecodable file does not throw at play time — the
+                // play() promise just rejects, quietly. Recording it here is what
+                // lets a caller with a fallback know to use it.
+                el.addEventListener("error", () => { pool.broken = true; }, { once: true });
                 try { el.load(); } catch (e) {}
                 els.push(el);
             }
-            pool = assetSoundPool[name] = { els: els, next: 0 };
         }
         return pool;
     }
@@ -944,10 +983,93 @@
         } catch (e) {}
     }
 
+    // ---------- the chip clink ----------
+    //
+    // Synthesised, not sampled, and deliberately so: a bet can land twenty chips in
+    // half a second, and twenty copies of one recording is a machine gun where
+    // twenty slightly different clinks is a pile of chips. Every landing gets its
+    // own pitch, so the cascade has texture instead of a stutter.
+    //
+    // Three inharmonic partials with a fast exponential decay. Clay chips are dull
+    // and tuneless — a harmonic series would ring like a bell — and there is no
+    // bounce or tail because a chip landing flat on cloth has neither.
+    let clinkCtx = null;
+    function clinkAudio() {
+        if (clinkCtx !== null) return clinkCtx;
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) { clinkCtx = false; return false; }
+        try { clinkCtx = new AC(); } catch (e) { clinkCtx = false; }
+        return clinkCtx;
+    }
+
+    // A floor between clinks. A twenty-chip bet is compressed into the same span as
+    // a two-chip one, so at the top end the landings come faster than the ear reads
+    // as separate events — past that they merge into one noise anyway, and skipping
+    // is cheaper and cleaner than layering them.
+    const CLINK_MIN_MS = 38;
+    let lastClinkAt = 0;
+
+    // The recording. 0.32s, so eight can be in the air at once at the tightest
+    // spacing the throttle allows — hence a deeper pool than the four voices a
+    // one-shot cheer needs.
+    const CLINK_SOUND = "chip.m4a";
+    const CLINK_VOICES = 8;
+    const CLINK_VOLUME = 0.5;
+
+    function playChipClink() {
+        const now = Date.now();
+        if (now - lastClinkAt < CLINK_MIN_MS) return;
+        lastClinkAt = now;
+        try {
+            const pool = assetVoices(CLINK_SOUND, CLINK_VOICES);
+            if (pool.broken) { synthClink(); return; }
+            const el = pool.els[pool.next];
+            pool.next = (pool.next + 1) % pool.els.length;
+            // One recording played twenty times in half a second is a stutter. A few
+            // percent of pitch and level per landing is what makes it read as twenty
+            // chips rather than one sound repeating — the same reason the synthesised
+            // fallback below jitters its partials.
+            el.playbackRate = 0.94 + Math.random() * 0.13;
+            el.volume = CLINK_VOLUME * (0.85 + Math.random() * 0.3);
+            el.currentTime = 0;
+            const p = el.play();
+            if (p && p.catch) p.catch(() => {});
+            return;
+        } catch (e) { /* fall through to the synth */ }
+        synthClink();
+    }
+
+    // Kept as the fallback for when the file cannot be decoded or fetched — an
+    // offline reload, or the site build without the bundled assets beside it.
+    function synthClink(vol) {
+        const ctx = clinkAudio();
+        if (!ctx) return;
+        if (ctx.state === "suspended") { try { ctx.resume(); } catch (e) {} }
+        try {
+            const t0 = ctx.currentTime;
+            const out = ctx.createGain();
+            const v = Math.max(0.01, Math.min(0.5, vol == null ? 0.13 : vol));
+            out.gain.setValueAtTime(v, t0);
+            out.gain.exponentialRampToValueAtTime(0.0006, t0 + 0.055);
+            out.connect(ctx.destination);
+            const base = 2050 * (0.88 + Math.random() * 0.24);
+            for (const part of [[1, 1], [1.47, 0.45], [2.63, 0.2]]) {
+                const osc = ctx.createOscillator();
+                osc.type = "triangle";
+                osc.frequency.setValueAtTime(base * part[0], t0);
+                const g = ctx.createGain();
+                g.gain.value = part[1];
+                osc.connect(g); g.connect(out);
+                osc.start(t0); osc.stop(t0 + 0.06);
+            }
+        } catch (e) {}
+    }
+
     // Decode them up front so the first throw of a session isn't the slow one.
     function warmSounds() {
         for (const n of SOUND_NAMES) { try { soundVoices(n); } catch (e) {} }
         for (const n of ASSET_SOUND_NAMES) { try { assetVoices(n); } catch (e) {} }
+        try { assetVoices(CLINK_SOUND, CLINK_VOICES); } catch (e) {}
     }
 
     // Everything is re-resolved at throw time rather than captured earlier: seats
@@ -1616,6 +1738,7 @@
         handle.addEventListener("mousedown", (e) => {
             if (e.button !== 0) return;
             if (el.classList.contains("gpe-tester-docked")) return; // a rail doesn't move
+            if (el.classList.contains("gpe-docked")) return;        // ...nor does a docked panel
             // A drag starts on the header's empty space, not on its buttons.
             if (e.target.closest("button, input, select, textarea")) return;
             const r = el.getBoundingClientRect();
@@ -1831,6 +1954,70 @@
 
     // The class carries the look; the geometry is inline because it tracks a live
     // element. Kept together so the two can't disagree.
+    // Docking, generalised off the tester's. Any .gpe-float-panel can take the
+    // left rail; the difference from the tester is only that the geometry comes
+    // from dockTarget rather than from the panel's own dragged position.
+    function applyPanelDock(panel) {
+        if (!panel) return false;
+        const on = dockedPanel === panel.id;
+        const d = on ? dockTarget() : null;
+        panel.classList.toggle("gpe-docked", !!d);
+        if (d) {
+            applyDockShift(d.width);
+            panel.style.left = d.left + "px";
+            panel.style.top = d.top + "px";
+            panel.style.width = d.width + "px";
+            panel.style.height = d.height + "px";
+        } else {
+            panel.style.width = "";
+            panel.style.height = "";
+            // Deliberately not re-placed here — the caller owns floating geometry,
+            // the same split applyTesterDock uses to avoid recursing.
+        }
+        const btn = panel.querySelector(".gpe-panel-dock");
+        if (btn) {
+            btn.textContent = d ? "\u21e5" : "\u21e4";
+            btn.title = d ? "undock (float the panel)" : "dock to the left of the table";
+            btn.classList.toggle("gpe-active", !!d);
+        }
+        return !!d;
+    }
+
+    // Every dockable panel, re-evaluated. Called when the setting changes, and on
+    // the poll so a docked panel follows the table as the page reflows.
+    function syncPanelDocks() {
+        let anyDocked = false;
+        for (const id of ["gpe-card-editor", "gpe-table3d-editor"]) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            if (applyPanelDock(el)) anyDocked = true;
+            else if (id === "gpe-card-editor") placeCardEditor(el);
+        }
+        // The rail is shared with the tester; if nothing of ours is in it, give the
+        // page's centring back unless the tester is holding it.
+        if (!anyDocked && !testerDock) applyDockShift(0);
+    }
+
+    // The ⇤ button, for any float panel's header.
+    function addDockButton(panel, head) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "gpe-panel-dock";
+        b.textContent = "\u21e4";
+        b.title = "dock to the left of the table";
+        b.addEventListener("click", (e) => {
+            e.preventDefault(); e.stopPropagation();   // the header is also a drag handle
+            const next = dockedPanel === panel.id ? "" : panel.id;
+            dockedPanel = next;
+            saveSetting("dockedPanel", next);
+            // The tester wants the same rail; it cannot keep it and give it away.
+            if (next && testerDock) saveSetting("testerDock", false);
+            syncPanelDocks();
+        });
+        head.appendChild(b);
+        return b;
+    }
+
     function applyTesterDock(panel) {
         const d = testerDock ? dockTarget() : null;
         panel.classList.toggle("gpe-tester-docked", !!d);
@@ -2974,8 +3161,123 @@
         if (rec.timer) clearTimeout(rec.timer);
         if (rec.handle) { try { rec.handle.remove(); } catch (e) {} }
         coverRelease(img);
-        syncCardCasters();   // ...and take its shadow with it
     }
+
+    // A dump of what we think is on screen, for when a card is somewhere it should
+    // not be. Reports every parked card against the site's own slot, plus the count
+    // of meshes each renderer is holding — meshes exceeding records is the signature
+    // of an orphan, which is the one failure that cannot correct itself.
+    window.GPE_HANDDUMP = function () {
+        const rows = [];
+        for (const [img, rec] of dealtCards) {
+            const live = liveRect(img);
+            rows.push({
+                card: img.dataset.gpeCard || null,
+                role: rec.role,
+                renderer: rec.api === window.GPE_TABLE3D ? "table3d"
+                    : (rec.api === window.GPE_COIN ? "coin3d" : String(rec.api)),
+                drawnAt: rec.at && [Math.round(rec.at.left), Math.round(rec.at.top)],
+                siteSlot: live && [Math.round(live.left), Math.round(live.top)],
+                agrees: !!(live && rec.at && Math.abs(live.left - rec.at.left) < 1 &&
+                    Math.abs(live.top - rec.at.top) < 1),
+                covered: img.getAttribute("data-gpe-covered"),
+                gone: !!(rec.handle && rec.handle.isGone && rec.handle.isGone()),
+            });
+        }
+        // Hand cards specifically: what the site asked for, what we levelled it to,
+        // and which seat panels the slot laps — the three things that decide whether
+        // a card looks like it fell onto a seat.
+        const hand = [];
+        for (const [img, rec] of dealtCards) {
+            if (rec.role !== "hand") continue;
+            const live = liveRect(img);
+            const laps = [];
+            for (const p of document.querySelectorAll('table[class*="iogc-PlayerPanel"]')) {
+                const q = p.getBoundingClientRect();
+                if (live && !(q.right < live.left || q.left > live.left + live.width ||
+                    q.bottom < live.top || q.top > live.top + live.height)) {
+                    laps.push((p.className || "").toString().slice(0, 28));
+                }
+            }
+            hand.push({ card: img.dataset.gpeCard || null,
+                stackLevel: rec.level == null ? "?" : rec.level,
+                siteSlotTop: live && Math.round(live.top),
+                siteSlotLeft: live && Math.round(live.left),
+                // The RECORD's rect, which tracks the site. What is actually drawn is
+                // levelled to the highest slot and then offset by holeNudge, so this
+                // differing between the two cards is the site fanning them, not us.
+                recordTop: rec.at && Math.round(rec.at.top),
+                lapsPanels: laps });
+        }
+        const coin = window.GPE_COIN && GPE_COIN._session && GPE_COIN._session();
+        const t3d = window.GPE_TABLE3D && GPE_TABLE3D.isOn() && GPE_TABLE3D._session();
+        return {
+            cards: rows,
+            hand: hand,
+            holeNudge: { x: HOLE_NUDGE.x, y: HOLE_NUDGE.y },
+            records: rows.length,
+            coin3dMeshes: coin && coin.cards ? coin.cards.size : 0,
+            table3dMeshes: t3d && t3d.cards ? t3d.cards.size : 0,
+            seatCardPairs: seatCards.size,
+            note: "table3dMeshes counts 2 per seat pair; orphans show as meshes > " +
+                "(records + seatCardPairs * 2)",
+        };
+    };
+
+    // ---------- click a card to send it round again ----------
+    //
+    // A card that landed wrong has no way back: the animation is fire-and-forget and
+    // the site's image behind it never changes, so nothing re-triggers. Clicking it
+    // re-deals it — the same flight, flip and spin, ending at the rect the site says
+    // it belongs at, which is exactly the correction wanted.
+    //
+    // Hit-tested against the rects we parked rather than by event target: the site's
+    // own <img> is covered with visibility:hidden, and an invisible element takes no
+    // pointer events. Capture phase and no preventDefault, so gpokr still gets the
+    // click it would have got anyway.
+    function cardAtPoint(x, y) {
+        const in_ = (r) => r && r.width && x >= r.left && x <= r.left + r.width &&
+            y >= r.top && y <= r.top + r.height;
+        let hit = null;
+        for (const [img, rec] of dealtCards) {
+            // Two hit regions, on purpose: where we DREW it, and where the site says
+            // its slot is. A card that landed wrong is exactly the case where those
+            // two disagree, and it is the one you want to be able to click.
+            if (in_(rec.at) || in_(liveRect(img))) hit = img;   // last wins: drawn last, on top
+        }
+        return hit;
+    }
+
+    function replayCard(img) {
+        const rec = dealtCards.get(img);
+        if (!rec) return false;
+        if (rec.role !== "hand") {
+            unparkCard(img);
+            dealCardIn(img, rec.role, false, true);
+            return true;
+        }
+        // A hand is a PAIR, and to the eye it is one object. Re-dealing only the card
+        // clicked would leave the other wherever it was — including wherever it
+        // wrongly was, which is the whole reason for clicking. So both go round again
+        // and both re-derive their landing from the site's own slots.
+        const pair = Array.from(dealtCards.keys()).filter((i) => {
+            const r = dealtCards.get(i);
+            return r && r.role === "hand";
+        });
+        for (const i of pair) unparkCard(i);
+        for (const i of pair) dealCardIn(i, "hand", false, true);
+        // Which card is on top, and by how much, is decided here rather than by the
+        // order they happened to be dealt in — so the pair lands stacked the way the
+        // hole-card setting says, not the way the last re-render left it.
+        layoutHandCards();
+        return true;
+    }
+
+    document.addEventListener("click", (e) => {
+        if (!DEAL_ANIM || e.button) return;
+        const img = cardAtPoint(e.clientX, e.clientY);
+        if (img) replayCard(img);
+    }, true);
 
     function unparkAllCards() {
         for (const img of Array.from(dealtCards.keys())) unparkCard(img);
@@ -3054,42 +3356,40 @@
         }
         if (!hands.length) return;
         hands.sort((a, b) => a.r.left - b.r.left);
+        // THE STACK LEVEL, not the array index — and this is the fix for a card
+        // that "fell".
+        //
+        // coin3d multiplies the level: the offset is stackIx * nudge, stackIx *
+        // thickness. A held pair has exactly two levels, but this used to pass the
+        // position in the array, so a THIRD parked card meant the last one — the
+        // back card — got level 2 and was pushed twice as far down the page. Which
+        // is what a dropped card is.
+        //
+        // A third one is not hypothetical: cardRole calls any image the log lists as
+        // a pocket card a "hand" card, and it does not check that the image is one
+        // of the two hole-card slots. Anywhere the site shows your cards again puts a
+        // duplicate in this list. Rare, but deterministic while it is on screen —
+        // which is why re-dealing dropped it again in exactly the same place.
+        //
+        // So: level up only for a card that actually OVERLAPS its neighbour (that is
+        // what stacking means; a card elsewhere on the page is its own pile), and cap
+        // at 1, because there is no third level in a pair.
+        let level = 0;
         hands.forEach((c, i) => {
+            if (i > 0) {
+                const prev = hands[i - 1];
+                const overlaps = c.r.left < prev.r.left + prev.r.width &&
+                    Math.abs(c.r.top - prev.r.top) < prev.r.height;
+                level = overlaps ? Math.min(level + 1, 1) : 0;
+            }
+            c.rec.level = level;                        // reported by GPE_HANDDUMP
             c.rec.handle.move(c.r);                     // its own slot, untouched
-            // The INDEX, not a distance: how far apart two stacked cards have to
+            // The LEVEL, not a distance: how far apart two stacked cards have to
             // sit depends on the lean as well as the thickness, and coin3d is the
             // only place that knows either.
-            if (c.rec.handle.setDepth) c.rec.handle.setDepth(i);
+            if (c.rec.handle.setDepth) c.rec.handle.setDepth(level);
             if (c.rec.handle.setStackNudge) c.rec.handle.setStackNudge(HOLE_NUDGE.x, HOLE_NUDGE.y);
         });
-    }
-
-    // Tell the 3D table which cards are lying on it, so its felt can show their
-    // shadows — real ones, from the same lamp that lights the rail and the seats,
-    // rather than the stand-in surface coin3d has to invent (its cardCatcher).
-    //
-    // Only PARKED cards. A card still in the air is above the table and a shadow
-    // tracking it would be a distraction — and leaving flight out means this never
-    // has to run per frame, only when the set on the table changes.
-    //
-    // Whichever system is carrying the shadows, only one of them is: handing the
-    // job to the felt switches coin3d's catcher off, and taking it back switches
-    // it on. Two shadows under one card is worse than either.
-    function syncCardCasters() {
-        const t3d = window.GPE_TABLE3D;
-        const on = !!(t3d && typeof t3d.setCardCasters === "function" && t3d.isOn());
-        if (window.GPE_COIN && GPE_COIN.setShadowCatcher) GPE_COIN.setShadowCatcher(!on);
-        if (!on) return;
-        const list = [];
-        for (const img of dealtCards.keys()) {
-            const rec = dealtCards.get(img);
-            if (!rec || !rec.handle || !rec.handle.isParked || !rec.handle.isParked()) continue;
-            const r = rec.at;
-            if (!r) continue;
-            list.push({ left: r.left, top: r.top, width: r.width, height: r.height,
-                thick: CARD_THICK });
-        }
-        t3d.setCardCasters(list);
     }
 
     // ---------- the table's own chips, in 3D ----------
@@ -3127,7 +3427,7 @@
     // where the stack geometry comes from: the column gives the spot on the felt
     // and the row gives the height, so ours rises by its own thickness where the
     // site's rose by a flat 2px.
-    function planChipStack(box) {
+    function planChipStack(box, api) {
         const els = box.querySelectorAll("[class*='cs-pos']");
         if (!els.length) return null;
         const label = box.querySelector(".gpokr-ChipStack-label");
@@ -3148,7 +3448,132 @@
             rows.push({ el: els[i], denom: denoms[i], col: col, row: row, own: r });
         }
         for (const p of rows) p.at = base.get(p.col) || p.own;
+        // The stack's CONTACT PATCH, from the sprites themselves rather than the box:
+        // gpokr's .gpokr-ChipStack-chips is a fixed 80x55 whatever is in it, so a
+        // one-chip bet would get a plate sized for twenty-eight.
+        //
+        // Base rects only (p.at is each chip's COLUMN base), never the sprites above
+        // them. The plate is a coaster on the felt, so it belongs where the chips
+        // MEET the felt; measuring the whole sprite tower instead centres it halfway
+        // up the stack, and the chips then sit low in their own outline.
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const p of rows) {
+            x0 = Math.min(x0, p.at.left); x1 = Math.max(x1, p.at.left + p.at.width);
+            y0 = Math.min(y0, p.at.top);  y1 = Math.max(y1, p.at.top + p.at.height);
+        }
+        rows.foot = { left: x0, top: y0, width: x1 - x0, height: y1 - y0 };
+        rows.amount = amount;
+
+        // Keep the footprint on the cloth. The site sizes its bets for 24px sprites
+        // and parks them right against the felt's edge; ours are wider than that and
+        // ringed by a silhouette besides, so at the edge they lap onto the rail. The
+        // renderer works out the nudge — one for the whole stack, applied to the
+        // chips and the plate alike so nothing separates.
+        if (api && typeof api.feltFit === "function") {
+            const n = api.feltFit(rows.foot, Math.max(0, (CHIP_DIAM - 24) / 2));
+            if (n && (n.dx || n.dy)) {
+                const shift = (r) => ({ left: r.left + n.dx, top: r.top + n.dy,
+                    width: r.width, height: r.height });
+                rows.foot = shift(rows.foot);
+                for (const q of rows) q.at = shift(q.at);
+            }
+        }
         return rows;
+    }
+
+    // Cards on the felt: the elements, with their rects. Two jobs — the value plate
+    // has to keep out from under them (it is a coaster, so ANY card over it hides
+    // the value outright), and the face-down ones get laid down in 3D.
+    //
+    // A face-down card is identified the way styleCardBack identifies it: by the
+    // CONTENT HASH of gpokr's own back, or by our own swapped-in asset. Not by
+    // shape — gpokr's back asset is 23x26, nearly square, so a card-shaped test
+    // would miss every one of them.
+    //
+    // A face-up one is identified by shape, which is only ever used to decide what
+    // the value must dodge. A false positive there costs nothing; a missed card
+    // costs a hidden value.
+    function isCardBackImg(img) {
+        const src = img.getAttribute("src") || "";
+        if (OUR_BACK_RE.test(src)) return true;      // already ours
+        if (img._gpeSiteBack) return true;           // recognised by styleCardBack
+        const m = DATA_URI_B64.exec(src);
+        return !!m && fnv1a32(m[1]) === SITE_BACK_HASH;
+    }
+
+    // k widens the felt test: the plate only ever sits ON the cloth, but a card
+    // whose centre is just off it can still overlap the value.
+    function feltCards(k) {
+        const out = [];
+        const host = document.querySelector(".iogc-GameWindow-container");
+        if (!host) return out;
+        const t3d = window.GPE_TABLE3D;
+        const canAsk = t3d && t3d.isOn() && typeof t3d.feltHas === "function";
+        for (const img of host.querySelectorAll("img")) {
+            if (img.className && /\bcs-pos\d/.test(img.className)) continue;   // a chip
+            if (img.className && /gpe-/.test(img.className)) continue;          // ours
+            const r = img.getBoundingClientRect();
+            if (!r.width || !r.height) continue;
+            const back = isCardBackImg(img);
+            if (!back) {
+                if (img.closest('table[class*="iogc-PlayerPanel"]')) continue;  // in a seat
+                if (r.width < 12 || r.width > 90) continue;
+                const aspect = r.height / r.width;
+                if (aspect < 1.1 || aspect > 1.9) continue;                     // card-shaped
+            }
+            // On the cloth, or near enough. Without the 3D table there is no cloth
+            // to ask about and no plate to protect, so everything qualifies.
+            if (canAsk && !t3d.feltHas(r.left + r.width / 2, r.top + r.height / 2, k)) continue;
+            out.push({ el: img, back: back,
+                rect: { left: r.left, top: r.top, width: r.width, height: r.height } });
+        }
+        return out;
+    }
+    // Padded: what the value has to dodge is the card we DREW, and a slab sitting
+    // above the felt projects a little larger and a little up-screen than the flat
+    // tile whose rect we measured. Unpadded, a value tucked right against a card
+    // came out underneath it — which is how "$6,3..." ended up half hidden.
+    const AVOID_PAD = 5;
+    const feltCardRects = () => feltCards(1.08).map((c) => ({
+        left: c.rect.left - AVOID_PAD, top: c.rect.top - AVOID_PAD,
+        width: c.rect.width + AVOID_PAD * 2, height: c.rect.height + AVOID_PAD * 2 }));
+
+    // What each stack was worth last sweep, so a CHANGE can be told from a re-park.
+    //
+    // Keyed by WHERE the stack is, not by which element it is. GWT replaces these
+    // elements wholesale on any re-render, so an element-keyed memory would forget
+    // every amount and read the whole table as fresh money — the entire felt raining
+    // down with a clink per chip, every re-render. A bet's position is fixed by its
+    // seat, so a 4px-quantised rect is stable exactly where identity is not.
+    const stackAmounts = new Map();       // "left:top" -> amount
+    const stackKey = (box) => {
+        const r = box.getBoundingClientRect();
+        return Math.round(r.left / 4) + ":" + Math.round(r.top / 4);
+    };
+    // The cascade: nominal gap between landings, and the longest the whole thing may
+    // take. A twenty-chip bet compresses into the span rather than running for one
+    // and a half seconds, because the next street should not have to wait for it.
+    const CHIP_DROP_GAP = 0.075;          // s between chips
+    const CHIP_DROP_SPAN = 0.55;          // s for the whole stack, however many
+
+    // One silhouette-and-value plate per stack, keyed by the site's own box.
+    const stackPlates = new Map();
+
+    function dropStackPlate(box) {
+        const rec = stackPlates.get(box);
+        if (!rec) return;
+        stackPlates.delete(box);
+        if (rec.handle) { try { rec.handle.remove(); } catch (e) {} }
+    }
+
+    function dropAllStackPlates() {
+        for (const box of Array.from(stackPlates.keys())) dropStackPlate(box);
+    }
+
+    // Give the site its own labels back. Every path out of syncTableChips that is
+    // not drawing plates has to call this, or the values vanish entirely.
+    function noChipPlates() {
+        document.documentElement.classList.remove("gpe-chip-plates");
     }
 
     function unparkTableChip(el) {
@@ -3166,6 +3591,35 @@
     const sameRect = (a, b) => !!a && !!b &&
         Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5 &&
         Math.abs(a.width - b.width) < 0.5;
+
+    // Which renderer draws a card. Step 3 of the one-layer migration: BOARD cards
+    // only — real slabs on the real felt, lit and shadowed by the table's own
+    // lamp. Hole cards stay on coin3d until the canvas grows to reach them.
+    // Flip to false to put the board back on coin3d.
+    //
+    // Honest about the fallback: false restores coin3d board cards with COIN3D's
+    // catcher shadow, not the felt shadow — setCardCasters is the fake object this
+    // step deletes and cannot also be the thing we fall back to.
+    const T3D_CARDS = true;
+    function cardRenderer(role) {
+        if (role === "board" && T3D_CARDS && window.GPE_TABLE3D && GPE_TABLE3D.isOn() &&
+            typeof GPE_TABLE3D.dealCard === "function") return GPE_TABLE3D;
+        if (window.GPE_COIN && typeof GPE_COIN.dealCard === "function") return GPE_COIN;
+        return null;
+    }
+    // Has the renderer this card was parked on gone out from under it — or is it
+    // simply no longer the one we would pick? The second half is what carries a
+    // board back onto the felt when the 3D table is switched on mid-hand, and it
+    // is the same test chipsStale makes.
+    function cardStale(rec) {
+        const api = rec.api;
+        if (!api) return true;
+        if (api !== cardRenderer(rec.role)) return true;
+        if (api === window.GPE_TABLE3D) {
+            return !api.isOn() || (typeof api.epoch === "function" && api.epoch() !== rec.epoch);
+        }
+        return !window.GPE_COIN || typeof GPE_COIN.hasCanvas !== "function" || !GPE_COIN.hasCanvas();
+    }
 
     // Which renderer draws the chips. Step 2 of the one-layer migration: when the
     // 3D table is on they are real discs IN its scene, lit by its lamp and casting
@@ -3194,19 +3648,106 @@
     // vanished is handled by the same pass.
     function syncTableChips() {
         const api = TABLE_CHIPS ? chipRenderer() : null;
-        if (!api) { unparkAllTableChips(); return; }
+        if (!api) { unparkAllTableChips(); dropAllStackPlates(); noChipPlates(); return; }
         // A teardown test, not an entry condition: the session is built lazily by
         // the first parkChip, so demanding one up front would mean never asking for
         // one. What must not persist is the other way round — chips parked on a
         // renderer that has since gone, with the site's own sprites still hidden
         // behind discs nobody can see.
-        if (chipsStale(api)) { unparkAllTableChips(); return; }
+        if (chipsStale(api)) { unparkAllTableChips(); dropAllStackPlates(); noChipPlates(); return; }
         if (api === window.GPE_TABLE3D) chipEpoch = api.epoch();
         const size = { diameter: CHIP_DIAM, thickness: CHIP_THICK };
         const seen = new Set();
+        const platesOn = api === window.GPE_TABLE3D && typeof api.parkStackPlate === "function";
+        // gpokr's own "$N" box is hidden by a ROOT CLASS, not per label.
+        //
+        // Covering each label as its plate was parked left a hole: any sweep that
+        // dropped a plate — a stack the greedy expansion could not account for, a
+        // renderer swap, one poll's worth of lag while a bet changed — uncovered the
+        // label and the black box flashed back. The class has no such window: while
+        // we are the ones drawing values, the site's are simply not drawn.
+        document.documentElement.classList.toggle("gpe-chip-plates", platesOn);
+        const boxesSeen = new Set();
+        // Once per sweep, not once per stack: every plate avoids the same cards.
+        const cardRects = platesOn ? feltCardRects() : [];
+        // Plan every stack BEFORE parking any of it, because a value has to dodge
+        // the other stacks' chips as well as the cards. Without this a bet's value
+        // lands under its neighbour's pile — which is most of what reads as mess on
+        // a busy table, since gpokr packs bets closer together than cards.
+        const plans = [];
+        // Which stacks are NEW money. A chip only falls in when the amount changed:
+        // re-parking after a re-render, a renderer swap or a size-slider tweak
+        // rebuilds every chip too, and raining the whole table down every time the
+        // session churns would be a bug you could hear.
+        const dropSpans = new Map();
+        // Only a BET or RAISE drops in. Chips going to the pot at the end of a street,
+        // or out of it to the winner, simply appear where they now are: a dealer
+        // sweeping a pile is not chips being placed one at a time.
+        //
+        // The pot is identified by its total: gpokr writes the same figure into the
+        // pot label as into the stack's own label, and there is only one of it. A bet
+        // that happens to equal the pot exactly would be misread, which costs a
+        // cascade rather than correctness — cheap enough for a test with no DOM
+        // marker to rely on. (Everything else here keys off the site's own classes;
+        // gpokr gives the pot's chip stack nothing to tell it apart by.)
+        const potEl = document.querySelector(".gpokr-GameWindow-potLabel");
+        const potTotal = potEl ? parseMoney(potEl.textContent) : 0;
+        const keysSeen = new Set();
         for (const box of document.querySelectorAll(".gpokr-ChipStack-chips")) {
-            const plan = planChipStack(box);
-            if (!plan) continue;
+            const plan = planChipStack(box, api);
+            // No chips in it any more: the bet went to the pot, or the hand ended.
+            // Forget what it was worth, so its next appearance is new money and falls
+            // in again — but ONLY here and in the sweep-out below, never on a path
+            // that merely stops drawing plates.
+            // No chips in it any more. Not recorded as seen, so the sweep-out below
+            // treats it the same as a stack whose element went away entirely.
+            if (!plan) { dropStackPlate(box); continue; }
+            plans.push([box, plan]);
+            const key = stackKey(box);
+            keysSeen.add(key);
+            const was = stackAmounts.get(key);
+            // Hidden tab: park it, do not perform it. Same reasoning as renderThrow —
+            // rAF is paused, so the cascade would queue up and all play at once on
+            // return, with the sound arriving for a bet made minutes ago.
+            if (CHIP_DROP && !document.hidden && was !== plan.amount) {
+                const isPot = potTotal > 0 && Math.abs(plan.amount - potTotal) < 0.5;
+                // The pot changing, or a bet shrinking, is chips being moved rather
+                // than placed — nothing falls.
+                if (!isPot && (was == null || plan.amount > was)) {
+                    // Bottom row first, then left to right: a stack builds upward, and
+                    // a chip landing on nothing reads as wrong even when it is only
+                    // 3px.
+                    const order = plan.slice().sort((a, b) => a.row - b.row || a.col - b.col);
+                    const gap = Math.min(CHIP_DROP_GAP, CHIP_DROP_SPAN / Math.max(1, order.length));
+                    const ix = new Map();
+                    order.forEach((q, i) => ix.set(q.el, i * gap));
+                    dropSpans.set(box, ix);
+                }
+            }
+            stackAmounts.set(key, plan.amount);
+        }
+        const pad = (r) => ({ left: r.left - AVOID_PAD, top: r.top - AVOID_PAD,
+            width: r.width + AVOID_PAD * 2, height: r.height + AVOID_PAD * 2 });
+        for (const [box, plan] of plans) {
+            // Our own silhouette + value, in place of the site's black label box.
+            if (platesOn) {
+                boxesSeen.add(box);
+                let prec = stackPlates.get(box);
+                if (prec && (prec.handle.isGone() || prec.api !== api)) { dropStackPlate(box); prec = null; }
+                // Everything on the cloth this value must not end up under: the
+                // cards, and every stack's chips except the ones it belongs to.
+                const avoid = cardRects.concat(
+                    plans.filter((q) => q[0] !== box).map((q) => pad(q[1].foot)));
+                if (prec) {
+                    prec.handle.move(plan.foot, plan.amount, CHIP_DIAM, avoid);
+                } else {
+                    const h = api.parkStackPlate(plan.foot, plan.amount,
+                        { diameter: CHIP_DIAM, avoid: avoid });
+                    if (h) stackPlates.set(box, { handle: h, api: api });
+                }
+            } else {
+                dropStackPlate(box);
+            }
             for (const p of plan) {
                 seen.add(p.el);
                 const rec = tableChips.get(p.el);
@@ -3222,8 +3763,12 @@
                     continue;
                 }
                 if (rec) unparkTableChip(p.el);
+                const when = dropSpans.get(box);
+                const delay = when ? when.get(p.el) : null;
                 const handle = api.parkChip(p.at, p.denom, {
-                    row: p.row, diameter: CHIP_DIAM, thickness: CHIP_THICK });
+                    row: p.row, diameter: CHIP_DIAM, thickness: CHIP_THICK,
+                    drop: delay == null ? null
+                        : { delay: delay, onLand: () => playChipClink() } });
                 if (!handle) continue;               // no renderer: leave the sprite showing
                 coverHold(p.el);
                 tableChips.set(p.el, { handle: handle, api: api, denom: p.denom,
@@ -3232,6 +3777,102 @@
         }
         for (const el of Array.from(tableChips.keys())) {
             if (!seen.has(el) || !el.isConnected) unparkTableChip(el);
+        }
+        for (const box of Array.from(stackPlates.keys())) {
+            if (!boxesSeen.has(box) || !box.isConnected) dropStackPlate(box);
+        }
+        // A stack that was there and is not any more: forget it, so that when money
+        // next appears in that spot it counts as a bet and falls in.
+        for (const k of Array.from(stackAmounts.keys())) {
+            if (!keysSeen.has(k)) stackAmounts.delete(k);
+        }
+    }
+
+    // ---------- the other players' cards, lying on the felt ----------
+    //
+    // These are the last flat thing left on the cloth: gpokr draws each opponent's
+    // hole cards as a small upright tile, which at a table you are looking DOWN at
+    // is the one object not sharing the perspective. Laid down as real slabs they
+    // pick up the table's own lamp and drop into its shadow map like everything
+    // else, for no new lighting and no new rig.
+    //
+    // Reconciled from the DOM every poll, exactly as the chips are: park what is
+    // there, move what moved, drop what left. Cheaper than it looks — move() is a
+    // no-op unless the rect actually changed.
+    const seatCards = new Map();      // the site's back <img> -> { handle, api, at, ... }
+
+    function unparkSeatCard(el) {
+        const rec = seatCards.get(el);
+        if (!rec) return;
+        seatCards.delete(el);
+        if (rec.handle) { try { rec.handle.remove(); } catch (e) {} }
+        coverRelease(el);
+    }
+
+    function unparkAllSeatCards() {
+        for (const el of Array.from(seatCards.keys())) unparkSeatCard(el);
+    }
+
+    function syncSeatCards() {
+        const api = (SEAT_CARDS_3D && DEAL_ANIM && window.GPE_TABLE3D &&
+            GPE_TABLE3D.isOn() && typeof GPE_TABLE3D.parkCardBack === "function")
+            ? GPE_TABLE3D : null;
+        if (!api) { unparkAllSeatCards(); return; }
+        const ep = typeof api.epoch === "function" ? api.epoch() : 0;
+        const seen = new Set();
+        // 1.1, not 1: a seat card the site parks a whisker onto the rail is still a
+        // card at a seat, and one flat tile left among five laid-down pairs looks
+        // more wrong than a card slightly over the edge.
+        for (const c of feltCards(1.1)) {
+            if (!c.back) continue;                 // face-up cards are dealt, not parked
+            if (dealtCards.has(c.el)) continue;    // ...and one already ours stays ours
+            seen.add(c.el);
+            let rec = seatCards.get(c.el);
+            // The session was torn down and rebuilt under us, which syncTable3d does
+            // on any GWT re-render and which leaves the canvas in place.
+            if (rec && (rec.epoch !== ep || rec.api !== api || rec.handle.isGone())) {
+                unparkSeatCard(c.el);
+                rec = null;
+            }
+            if (rec) {
+                // Compare against the SITE's rect, not the nudged one: the nudge is a
+                // pure function of it, so re-deriving on a change is enough and the
+                // record stays comparable to what the DOM says.
+                if (!sameRect(rec.raw, c.rect) || rec.thick !== CARD_THICK) {
+                    rec.raw = c.rect;
+                    rec.thick = CARD_THICK;
+                    let m = c.rect;
+                    if (typeof api.feltFit === "function") {
+                        const n = api.feltFit(m, 0);
+                        if (n && (n.dx || n.dy)) {
+                            m = { left: m.left + n.dx, top: m.top + n.dy,
+                                width: m.width, height: m.height };
+                        }
+                    }
+                    rec.at = m;
+                    rec.handle.move(m, CARD_THICK);
+                }
+                continue;
+            }
+            // Keep it on the cloth. The rail is real geometry in this scene, so a card
+            // the site parked at the very end of the felt is not merely untidy — it is
+            // half eaten by the rail. Same nudge the chips use.
+            let r = c.rect;
+            if (typeof api.feltFit === "function") {
+                const n = api.feltFit(r, 0);
+                if (n && (n.dx || n.dy)) {
+                    r = { left: r.left + n.dx, top: r.top + n.dy,
+                        width: r.width, height: r.height };
+                }
+            }
+            const h = api.parkCardBack(r, { thickness: CARD_THICK, backStyle: CARD_BACK });
+            if (!h) continue;
+            coverHold(c.el);
+            seatCards.set(c.el, { handle: h, api: api, at: r, raw: c.rect, epoch: ep,
+                thick: CARD_THICK });
+        }
+        for (const el of Array.from(seatCards.keys())) {
+            if (!seen.has(el) || !el.isConnected) unparkSeatCard(el);
         }
     }
 
@@ -3309,6 +3950,39 @@
         }
     }
 
+    // The board should always show what the log says is on it, whoever is drawing.
+    //
+    // A card only ever gets parked when its <img> CHANGES (onCardChanged), which
+    // leaves a hole: switch the 3D table off and on, or arrive mid-hand, and the
+    // board is sitting there stamped and unparked with nobody about to touch it.
+    // The re-park inside syncDealtCards only covers records we still hold; this
+    // covers the ones we let go of.
+    //
+    // Silent — instant, no flight. These cards were already face-up; flying them
+    // in again would be a lie about what just happened.
+    // BOTH roles, not just the board. A card is parked off its src CHANGING, and
+    // that moment can pass unusably: the log's pocket line may not have arrived yet
+    // (so cardRole says null), the renderer may not be ready, or the observer and
+    // the poll sweep may race and net out to no change. The board had this sweep to
+    // catch it; a hand card did not, so it stayed flat for the rest of the hand
+    // while its partner was ours.
+    //
+    // That asymmetry is visible, not cosmetic: our card is drawn on a canvas ABOVE
+    // the seat panels and the site's own image sits behind them, so a half-adopted
+    // pair reads as one card lying on the seat and one tucked under it.
+    function adoptDealtCards() {
+        if (!DEAL_ANIM || !dealArmed) return;
+        for (const img of document.querySelectorAll("img[data-gpe-card]")) {
+            if (dealtCards.has(img)) continue;
+            const card = img.dataset.gpeCard;
+            if (!card) continue;
+            const role = cardRole(img, card);
+            if (role !== "board" && role !== "hand") continue;
+            if (!cardRenderer(role)) continue;
+            dealCardIn(img, role, true);   // silent: put it where it belongs, no flight
+        }
+    }
+
     // Parked cards ARE the board, so they have to be kept honest: followed when
     // the layout moves under them, and dropped when the slot they stand for goes
     // away without its src changing (a re-render, the table being rebuilt).
@@ -3316,14 +3990,30 @@
     function syncDealtCards() {
         if (!dealtCards.size) return;
         let handMoved = false;
-        // The one state that must not persist: no canvas to draw on, with the
-        // site's own cards still hidden behind cards nobody can see.
-        if (!window.GPE_COIN || typeof GPE_COIN.hasCanvas !== "function" || !GPE_COIN.hasCanvas()) {
-            unparkAllCards();
-            return;
-        }
         for (const img of Array.from(dealtCards.keys())) {
             const rec = dealtCards.get(img);
+            // The one state that must not persist: no renderer, with the site's own
+            // cards still hidden behind cards nobody can see.
+            //
+            // PER RECORD, not globally. The board can be on table3d while coin3d
+            // has no session at all — no chips, no props, no badges out — and the
+            // old global `if (!GPE_COIN.hasCanvas()) unparkAll()` would then drop
+            // every board card on the very first poll.
+            if (cardStale(rec)) {
+                const card = img.dataset.gpeCard;
+                const wasBoard = rec.role === "board";
+                unparkCard(img);
+                // A GWT re-render tears the table3d session down and builds a new
+                // one, which destroys every parked card. Chips survive because
+                // syncTableChips re-parks from the DOM every poll; cards do not,
+                // because onCardChanged only fires on an src CHANGE. Without this
+                // the board silently reverts to flat images mid-hand.
+                if (wasBoard && card && DEAL_ANIM && dealArmed && boardHasCard(card) &&
+                    img.isConnected && cardRenderer("board")) {
+                    dealCardIn(img, "board", true);   // silent: no flight, just put it back
+                }
+                continue;
+            }
             // Cheap: cardTexKey has to differ before anything is loaded, so this
             // is a string compare per parked card per poll.
             sharpenCard(img, rec);
@@ -3350,6 +4040,10 @@
             if (rec.handle && rec.handle.isGone && rec.handle.isGone()) { unparkCard(img); continue; }
             const r = liveRect(img);
             if (!r) { unparkCard(img); continue; }
+            // Same rule after the fact: a board card whose slot is no longer over the
+            // cloth is not the board, whatever put it there.
+            if (rec.role === "board" && rec.api === window.GPE_TABLE3D &&
+                !boardSlotOnFelt(r)) { unparkCard(img); continue; }
             const at = rec.at;
             const moved = !at || Math.abs(at.left - r.left) > 0.5 || Math.abs(at.top - r.top) > 0.5 ||
                 Math.abs(at.width - r.width) > 0.5 || Math.abs(at.height - r.height) > 0.5;
@@ -3362,7 +4056,6 @@
         // Once, after the sweep: a pair has to be arranged together, and both of
         // its slots moving is still one re-arrangement.
         if (handMoved) layoutHandCards();
-        syncCardCasters();
     }
 
     // What is on the board, from the game log, which is the only thing that
@@ -3460,18 +4153,46 @@
 
     function onCardShown(img, card) {
         if (!DEAL_ANIM || !dealArmed) return;
-        if (!window.GPE_COIN || typeof GPE_COIN.dealCard !== "function") return;
         const role = cardRole(img, card);
         if (!role) return;
+        if (!cardRenderer(role)) return;   // AFTER the role: which renderer depends on it
         // A hand card is placed, not dealt: its face is already on screen and
         // covering it to fly it back in would hide the two cards the player is
         // deciding on, every hand. The board is a reveal; a hand is not.
-        dealCardIn(img, role === "hand");
+        dealCardIn(img, role);
     }
 
-    function dealCardIn(img, instant) {
+    // A board card lives ON THE FELT. table3d draws one by mapping its slot onto the
+    // felt PLANE, so a slot that is not over the cloth maps to the floor in front of
+    // the rail — which is where the stools are, and why a stray card appeared to be
+    // lying on one. A flat card out there also projects sheared under a perspective
+    // camera, which reads as a card that fell over.
+    //
+    // The site shows board cards in more than one place: the hand-summary panel
+    // draws the real board, and those images match the log exactly, so cardRole
+    // calls them "board" as readily as the felt's own. There is nothing wrong with
+    // the log parse — it only ever reads "Dealing flop/turn/river" lines — the
+    // ambiguity is that a card CODE does not say which copy of it you are looking
+    // at. Position does.
+    //
+    // Generous by a few percent: a genuine board slot sits inside the cloth, but the
+    // felt test is against painted art and the slot is a rect, so exactness here
+    // would cost real cards at the ends of the board.
+    function boardSlotOnFelt(rect) {
+        const t3d = window.GPE_TABLE3D;
+        if (!t3d || !t3d.isOn() || typeof t3d.feltHas !== "function") return true;
+        return t3d.feltHas(rect.left + rect.width / 2, rect.top + rect.height / 2, 1.06);
+    }
+
+    function dealCardIn(img, role, silent, replay) {
+        // A hand card is normally placed rather than dealt (see below), but a REPLAY
+        // is a request for the animation itself, so it overrides that.
+        const instant = !replay && (role === "hand" || !!silent);
         const rect = liveRect(img);
         if (!rect) return;
+        // Not on the cloth, so not the board: leave the site's own image showing.
+        if (role === "board" && cardRenderer("board") === window.GPE_TABLE3D &&
+            !boardSlotOnFelt(rect)) return;
         // The flop is three images changing in one tick, so they queue rather than
         // landing on top of each other. A gap longer than DEAL_BATCH_MS is a new
         // street and starts the count again.
@@ -3483,10 +4204,24 @@
             delay = (dealBatchN++) * DEAL_STAGGER_MS / 1000;
         }
 
+        // Whatever was on this image before is not ours to leave behind. Without
+        // this, a second deal for the same <img> orphans the first: its handle is
+        // dropped on the floor, so nothing can ever move it again — the mesh stays
+        // in the scene at the position it had when it was abandoned, while the
+        // layout goes on arranging the card that replaced it. That is precisely
+        // "one hole card stuck off on its own". It also double-counts the cover, so
+        // one release later leaves the site's own image hidden behind a card nobody
+        // owns.
+        //
+        // The known way in is a re-deal that skips onCardChanged's unpark — a replay,
+        // a re-render adopting a card, or the observer and the sweep both firing —
+        // but the guard is cheap and does not care which.
+        if (dealtCards.has(img)) unparkCard(img);
+
         coverHold(img);
         const rec = {
             handle: null,
-            role: instant ? "hand" : "board",
+            role: role,
             at: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
             // The animation's own deadline, cleared once it reports landing. It
             // does NOT expire the parked card — that stays until the board says
@@ -3500,14 +4235,17 @@
 
         const fly = () => {
             if (dealtCards.get(img) !== rec) return;   // superseded, or already undone
-            rec.handle = GPE_COIN.dealCard(rect, img, {
+            const api = cardRenderer(role);
+            if (!api) { unparkCard(img); return; }
+            rec.api = api;
+            rec.epoch = (typeof api.epoch === "function") ? api.epoch() : 0;
+            rec.handle = api.dealCard(rect, img, {
                 delay: instant ? 0 : delay,
                 instant: !!instant,
                 backStyle: CARD_BACK,
                 thickness: CARD_THICK,
                 onFaceUp: () => {
                     if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; }
-                    syncCardCasters();   // it is on the table now; give it a shadow
                 },
             });
             if (!rec.handle) unparkCard(img);          // nothing to show: give the real one back
@@ -6875,6 +7613,7 @@
         const close = document.createElement("button");
         close.type = "button"; close.textContent = "✕"; close.title = "close";
         close.addEventListener("click", closeCardEditor);
+        addDockButton(modal, head);
         head.appendChild(close);
         // The header is the grip, same as the odds HUD and the tester: the panel
         // has grown tall enough to cover the felt it is meant to be judged
@@ -6885,95 +7624,14 @@
         // Rows go straight on the modal, as the other panels do — there is no
         // body wrapper in overlay.css and this does not need one.
         const body = document.createDocumentFragment();
-
-        const selectRow = (label, options, get, key, hint) => {
-            const row = document.createElement("div");
-            row.className = "gpe-slider-row";
-            const lab = document.createElement("span");
-            lab.className = "gpe-slider-label";
-            lab.textContent = label;
-            if (hint) lab.title = hint;
-            const sel = document.createElement("select");
-            sel.className = "gpe-side-select";
-            for (const [value, text] of options) {
-                const opt = document.createElement("option");
-                opt.value = value; opt.textContent = text;
-                sel.appendChild(opt);
-            }
-            sel.value = get();
-            sel.addEventListener("change", () => saveSetting(key, sel.value));
-            refreshers.push(() => { if (document.activeElement !== sel) sel.value = get(); });
-            row.append(lab, sel);
-            return row;
-        };
-
-        const checkRow = (label, get, key, hint) => {
-            const row = document.createElement("label");
-            row.className = "gpe-side-option";
-            const box = document.createElement("input");
-            box.type = "checkbox";
-            box.checked = get();
-            box.addEventListener("change", () => saveSetting(key, box.checked));
-            refreshers.push(() => { box.checked = get(); });
-            row.append(box, document.createTextNode(" " + label));
-            if (hint) row.title = hint;
-            return row;
-        };
-
-        body.appendChild(selectRow("face", [["", "classic (site)"], ["svg", "vector"]],
-            () => CARD_FACE, "cardFace",
-            "vector draws every card as SVG instead of using the site's images"));
-        body.appendChild(selectRow("back",
-            [""].concat(CARD_BACK_STYLES).map((v) => [v, CARD_BACK_LABELS[v] || v]),
-            () => CARD_BACK, "cardBack", "the face-down cards at every seat"));
-        body.appendChild(checkRow("four-colour deck", () => FOUR_COLOR, "fourColor",
-            "blue diamonds and green clubs"));
-        body.appendChild(checkRow("dealing animation", () => DEAL_ANIM, "dealAnimation",
-            "community cards slide in and turn over as they are dealt"));
-
-        // Thickness. Live on drag, persisted on release — the same contract the
-        // 3D table's sliders use, so dragging never writes to storage per frame.
-        const thickRow = (() => {
-            const row = document.createElement("div");
-            row.className = "gpe-slider-row";
-            const lab = document.createElement("span");
-            lab.className = "gpe-slider-label";
-            lab.textContent = "thickness";
-            lab.title = "how thick a dealt card is. Under this camera a flat card " +
-                "shows no edge at all, so a thick one is leaned slightly toward you.";
-            const sl = document.createElement("input");
-            sl.type = "range"; sl.min = "0"; sl.max = String(CARD_THICK_MAX); sl.step = "0.5";
-            sl.value = String(CARD_THICK);
-            const val = document.createElement("span");
-            val.className = "gpe-slider-val";
-            const fmt = (n) => (n <= 0.2 ? "paper" : n.toFixed(1) + "px");
-            val.textContent = fmt(CARD_THICK);
-            sl.addEventListener("input", () => {
-                const n = clampThick(sl.value);
-                val.textContent = fmt(n);
-                CARD_THICK = n;                      // live, before it is saved
-                for (const rec of dealtCards.values()) {
-                    if (rec.handle && rec.handle.setThickness) rec.handle.setThickness(n);
-                }
-                syncCardCasters();                   // a thicker card, a bigger shadow
-            });
-            sl.addEventListener("change", () => saveSetting("cardThickness", clampThick(sl.value)));
-            refreshers.push(() => {
-                if (document.activeElement === sl) return;
-                sl.value = String(CARD_THICK);
-                val.textContent = fmt(CARD_THICK);
-            });
-            row.append(lab, sl, val);
-            return row;
-        })();
-        body.appendChild(thickRow);
-
-        const note = document.createElement("div");
-        note.className = "gpe-modal-hint";
-        note.textContent = "Thickness applies to cards as they are dealt, which is " +
-            "the board with the dealing animation on — a card the site drew is a " +
-            "flat image and has no edge to give it.";
-        body.appendChild(note);
+        // Sections collapse. The panel has grown to six of them and nobody is
+        // tuning the light rig and the chip size in the same sitting.
+        //
+        // `cur` is where rows land: the fragment root until a section opens one,
+        // then that section's body. Headers always go on the root so the bodies
+        // stay siblings rather than nesting.
+        let cur = body;
+        const add = (el) => { cur.appendChild(el); return el; };
 
         // Same live-on-drag / persist-on-release contract as the thickness slider
         // above: `set` runs on every frame of the drag, storage is written once on
@@ -7014,7 +7672,11 @@
         // not cost you the other two.
         const sectionRow = (text, onReset) => {
             const d = document.createElement("div");
-            d.className = "gpe-modal-section";
+            d.className = "gpe-modal-section gpe-sec-head";
+            const caret = document.createElement("span");
+            caret.className = "gpe-sec-caret";
+            caret.textContent = "\u25be";
+            d.appendChild(caret);
             d.appendChild(document.createTextNode(text));
             if (onReset) {
                 const b = document.createElement("button");
@@ -7031,6 +7693,26 @@
                 });
                 d.appendChild(b);
             }
+            // The body this header owns, and the open/closed state, which is
+            // remembered so a panel does not spring back open every reload.
+            const wrap = document.createElement("div");
+            wrap.className = "gpe-sec-body";
+            const apply = () => {
+                const shut = cardPanelShut.has(text);
+                d.classList.toggle("gpe-sec-closed", shut);
+                wrap.style.display = shut ? "none" : "";
+            };
+            d.addEventListener("click", (e) => {
+                if (e.target.closest("button")) return;   // reset is not a toggle
+                if (cardPanelShut.has(text)) cardPanelShut.delete(text);
+                else cardPanelShut.add(text);
+                apply();
+                saveSetting("cardPanelShut", Array.from(cardPanelShut).join("|"));
+            });
+            apply();
+            body.appendChild(d);
+            body.appendChild(wrap);
+            cur = wrap;
             return d;
         };
 
@@ -7039,21 +7721,109 @@
         // undone by the next settings sweep.
         const resetTo = (pairs) => { for (const [k, v] of pairs) saveSetting(k, v); };
 
+        const selectRow = (label, options, get, key, hint) => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label";
+            lab.textContent = label;
+            if (hint) lab.title = hint;
+            const sel = document.createElement("select");
+            sel.className = "gpe-side-select";
+            for (const [value, text] of options) {
+                const opt = document.createElement("option");
+                opt.value = value; opt.textContent = text;
+                sel.appendChild(opt);
+            }
+            sel.value = get();
+            sel.addEventListener("change", () => saveSetting(key, sel.value));
+            refreshers.push(() => { if (document.activeElement !== sel) sel.value = get(); });
+            row.append(lab, sel);
+            return row;
+        };
+
+        const checkRow = (label, get, key, hint) => {
+            const row = document.createElement("label");
+            row.className = "gpe-side-option";
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.checked = get();
+            box.addEventListener("change", () => saveSetting(key, box.checked));
+            refreshers.push(() => { box.checked = get(); });
+            row.append(box, document.createTextNode(" " + label));
+            if (hint) row.title = hint;
+            return row;
+        };
+
+        add(selectRow("face", [["", "classic (site)"], ["svg", "vector"]],
+            () => CARD_FACE, "cardFace",
+            "vector draws every card as SVG instead of using the site's images"));
+        add(selectRow("back",
+            [""].concat(CARD_BACK_STYLES).map((v) => [v, CARD_BACK_LABELS[v] || v]),
+            () => CARD_BACK, "cardBack", "the face-down cards at every seat"));
+        add(checkRow("four-colour deck", () => FOUR_COLOR, "fourColor",
+            "blue diamonds and green clubs"));
+        add(checkRow("dealing animation", () => DEAL_ANIM, "dealAnimation",
+            "community cards slide in and turn over as they are dealt"));
+
+        // Thickness. Live on drag, persisted on release — the same contract the
+        // 3D table's sliders use, so dragging never writes to storage per frame.
+        const thickRow = (() => {
+            const row = document.createElement("div");
+            row.className = "gpe-slider-row";
+            const lab = document.createElement("span");
+            lab.className = "gpe-slider-label";
+            lab.textContent = "thickness";
+            lab.title = "how thick a dealt card is. Under this camera a flat card " +
+                "shows no edge at all, so a thick one is leaned slightly toward you.";
+            const sl = document.createElement("input");
+            sl.type = "range"; sl.min = "0"; sl.max = String(CARD_THICK_MAX); sl.step = "0.5";
+            sl.value = String(CARD_THICK);
+            const val = document.createElement("span");
+            val.className = "gpe-slider-val";
+            const fmt = (n) => (n <= 0.2 ? "paper" : n.toFixed(1) + "px");
+            val.textContent = fmt(CARD_THICK);
+            sl.addEventListener("input", () => {
+                const n = clampThick(sl.value);
+                val.textContent = fmt(n);
+                CARD_THICK = n;                      // live, before it is saved
+                for (const rec of dealtCards.values()) {
+                    if (rec.handle && rec.handle.setThickness) rec.handle.setThickness(n);
+                }
+            });
+            sl.addEventListener("change", () => saveSetting("cardThickness", clampThick(sl.value)));
+            refreshers.push(() => {
+                if (document.activeElement === sl) return;
+                sl.value = String(CARD_THICK);
+                val.textContent = fmt(CARD_THICK);
+            });
+            row.append(lab, sl, val);
+            return row;
+        })();
+        add(thickRow);
+
+        const note = document.createElement("div");
+        note.className = "gpe-modal-hint";
+        note.textContent = "Thickness applies to cards as they are dealt, which is " +
+            "the board with the dealing animation on — a card the site drew is a " +
+            "flat image and has no edge to give it.";
+        add(note);
+
         const px = (n) => n.toFixed(1) + "px";
 
         // Where the top card of your own pair sits. Offered because square-on-top
         // is only one of the ways two held cards can look right, and the answer is
         // a matter of taste rather than geometry.
-        body.appendChild(sectionRow("hole cards", () => {
+        sectionRow("hole cards", () => {
             HOLE_NUDGE = Object.assign({}, HOLE_NUDGE_0);
             resetTo([["holeNudgeX", HOLE_NUDGE_0.x], ["holeNudgeY", HOLE_NUDGE_0.y]]);
             layoutHandCards();
-        }));
+        });
         const holeHint = "moves the card on TOP of your pair, relative to where the " +
             "site put it. Right and down are positive. 0,0 sits it square on the " +
             "lower card.";
         for (const axis of ["x", "y"]) {
-            body.appendChild(sliderRow("top card " + axis, {
+            add(sliderRow("top card " + axis, {
                 min: -HOLE_REACH, max: HOLE_REACH, step: 1,
                 key: "holeNudge" + axis.toUpperCase(), fmt: px, hint: holeHint,
                 get: () => HOLE_NUDGE[axis],
@@ -7061,17 +7831,57 @@
             }));
         }
 
-        body.appendChild(sectionRow("chips"));
-        body.appendChild(checkRow("3D bets and pot", () => TABLE_CHIPS, "tableChips",
+        // Not a card control — where the camera sits. It moves the camera and nothing
+        // else: the table's geometry and furniture are built at a fixed reference
+        // angle, so the table keeps one set of dimensions at every setting.
+        sectionRow("table", () => {
+            TABLE3D_ELEV = TABLE3D_ELEV_0;
+            saveSetting("table3dElev", TABLE3D_ELEV_0);
+            if (window.GPE_TABLE3D && GPE_TABLE3D.setElevation) GPE_TABLE3D.setElevation(TABLE3D_ELEV);
+        });
+        add(sliderRow("view angle", {
+            min: 25, max: 90, step: 1, key: "table3dElev",
+            fmt: (n) => n.toFixed(0) + "\u00b0",
+            hint: "where the camera sits, in degrees above the felt. 90 is straight " +
+                "down. It moves the CAMERA only — the table and its furniture keep the " +
+                "same dimensions at every angle. Rebuilds the table.",
+            get: () => TABLE3D_ELEV,
+            set: (n) => {
+                TABLE3D_ELEV = n;
+                if (window.GPE_TABLE3D && GPE_TABLE3D.setElevation) GPE_TABLE3D.setElevation(n);
+            },
+        }));
+
+        add(checkRow("3D cards at every seat", () => SEAT_CARDS_3D, "seatCards3d",
+            "lay the other players' face-down cards on the felt instead of standing " +
+            "them up flat against it"));
+
+        sectionRow("chips");
+        add(checkRow("3D bets and pot", () => TABLE_CHIPS, "tableChips",
             "draw the table's own bet and pot chips as discs instead of the site's flat sprites"));
-        body.appendChild(sliderRow("diameter", {
+        add(checkRow("chips fall in, with a clink", () => CHIP_DROP, "chipDrop",
+            "a bet drops onto the felt a chip at a time, each one sounding as it lands"));
+        add(sliderRow("diameter", {
             min: 8, max: 60, step: 1, key: "chipDiameter", fmt: px,
             hint: "how wide a chip is — the one thrown at a seat, and the ones the " +
                 "chip portal drops, which follow the same proportion",
             get: () => CHIP_DIAM,
             set: (n) => { CHIP_DIAM = n; applyChipSize(); },
         }));
-        body.appendChild(sliderRow("thickness", {
+        add(sliderRow("edge round", {
+            min: 0, max: 1, step: 0.02, key: "chipRound",
+            fmt: (n) => (n <= 0.005 ? "square" : Math.round(n * 100) + "%"),
+            hint: "how far a chip's edge is rounded off, as a fraction of its half " +
+                "thickness. The chip keeps its diameter either way — the rim bulges " +
+                "out to the full radius at mid-height, so rounding does not shrink it. " +
+                "Needs the 3D table on.",
+            get: () => CHIP_ROUND,
+            set: (n) => {
+                CHIP_ROUND = n;
+                if (window.GPE_TABLE3D && GPE_TABLE3D.setChipRound) GPE_TABLE3D.setChipRound(n);
+            },
+        }));
+        add(sliderRow("thickness", {
             min: 0.5, max: 20, step: 0.5, key: "chipThickness", fmt: px,
             hint: "how thick a chip is. The default is a real chip's ratio; past " +
                 "about 8px it is a hockey puck.",
@@ -7095,49 +7905,49 @@
             set: (n) => { o.pos()[axis] = n; applyLightPos(); },
         });
 
-        body.appendChild(sectionRow("key light", () => {
+        sectionRow("key light", () => {
             LIGHT_POS = Object.assign({}, LIGHT_POS_0);
             LIGHT_LVL.key = LIGHT_LVL_0.key;
             resetTo([["lightX", LIGHT_POS_0.x], ["lightY", LIGHT_POS_0.y],
                 ["lightZ", LIGHT_POS_0.z], ["lightKeyBright", LIGHT_LVL_0.key]]);
             applyLightPos(); applyLightLevels();
-        }));
+        });
         const keyHint = "the lamp that throws the shadows — cards, chips and the 3D " +
             "table all take their direction from it. Low and to the side gives long " +
             "shadows; high overhead tucks them under.";
-        for (const a of axes) body.appendChild(axisRow(a, { pos: () => LIGHT_POS, hint: keyHint,
+        for (const a of axes) add(axisRow(a, { pos: () => LIGHT_POS, hint: keyHint,
             key: (k) => "light" + k.toUpperCase() }));
-        body.appendChild(sliderRow("brightness", {
+        add(sliderRow("brightness", {
             min: 0, max: 3, step: 0.05, key: "lightKeyBright", fmt: bright, hint: keyHint,
             get: () => LIGHT_LVL.key,
             set: (n) => { LIGHT_LVL.key = n; applyLightLevels(); },
         }));
 
-        body.appendChild(sectionRow("fill light", () => {
+        sectionRow("fill light", () => {
             FILL_POS = Object.assign({}, FILL_POS_0);
             LIGHT_LVL.fill = LIGHT_LVL_0.fill;
             resetTo([["fillX", FILL_POS_0.x], ["fillY", FILL_POS_0.y],
                 ["fillZ", FILL_POS_0.z], ["lightFillBright", LIGHT_LVL_0.fill]]);
             applyLightPos(); applyLightLevels();
-        }));
+        });
         const fillHint = "the second lamp, opposite the key: it opens up whatever the " +
             "key leaves dark and casts nothing of its own. Position applies to the " +
             "3D table.";
-        for (const a of axes) body.appendChild(axisRow(a, { pos: () => FILL_POS, hint: fillHint,
+        for (const a of axes) add(axisRow(a, { pos: () => FILL_POS, hint: fillHint,
             key: (k) => "fill" + k.toUpperCase() }));
-        body.appendChild(sliderRow("brightness", {
+        add(sliderRow("brightness", {
             min: 0, max: 3, step: 0.05, key: "lightFillBright", fmt: bright, hint: fillHint,
             get: () => LIGHT_LVL.fill,
             set: (n) => { LIGHT_LVL.fill = n; applyLightLevels(); },
         }));
 
-        body.appendChild(sectionRow("ambient & lamp", () => {
+        sectionRow("ambient & lamp", () => {
             LIGHT_LVL.ambient = LIGHT_LVL_0.ambient;
             LIGHT_LVL.lamp = LIGHT_LVL_0.lamp;
             resetTo([["lightAmbient", LIGHT_LVL_0.ambient], ["lightLampBright", LIGHT_LVL_0.lamp]]);
             applyLightLevels();
-        }));
-        body.appendChild(sliderRow("ambient", {
+        });
+        add(sliderRow("ambient", {
             min: 0, max: 3, step: 0.05, key: "lightAmbient", fmt: bright,
             hint: "flat light from every direction at once. Raise it to lift the " +
                 "shadows without moving anything; drop it for a harder, more " +
@@ -7145,7 +7955,7 @@
             get: () => LIGHT_LVL.ambient,
             set: (n) => { LIGHT_LVL.ambient = n; applyLightLevels(); },
         }));
-        body.appendChild(sliderRow("table lamp", {
+        add(sliderRow("table lamp", {
             min: 0, max: 3, step: 0.05, key: "lightLampBright", fmt: bright,
             hint: "the hanging lamp straight over the felt. It falls off with " +
                 "distance, which is what gives the felt its bright centre — and " +
@@ -7167,6 +7977,7 @@
     function placeCardEditor(panel) {
         if (!panel) return;
         if (activeDrag && activeDrag.el === panel) return;   // don't fight a drag
+        if (panel.classList.contains("gpe-docked")) return; // docked: the rail decides
         if (!cardEditorPos) { panel.style.left = ""; panel.style.top = ""; return; }
         const p = clampToViewport(cardEditorPos.left, cardEditorPos.top,
             panel.offsetWidth, panel.offsetHeight);
@@ -7181,7 +7992,7 @@
         // After the display flip: offsetWidth/Height are zero while it is hidden,
         // and the clamp would then read the panel as a point and pin it to the
         // bottom-right corner.
-        if (panel.style.display === "block") placeCardEditor(panel);
+        if (panel.style.display === "block") { applyPanelDock(panel) || placeCardEditor(panel); }
     }
 
     // ---------- UI: 3D-table texture editor (felt / leather zoom sliders) ----------
@@ -7202,6 +8013,7 @@
         const close = document.createElement("button");
         close.type = "button"; close.textContent = "✕"; close.title = "close";
         close.addEventListener("click", closeTable3dEditor);
+        addDockButton(modal, head);
         head.appendChild(close);
 
         // Each slider keeps a refresh() so openTable3dEditor can re-sync it to the
@@ -8951,9 +9763,10 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
     // held on, and the loop may be idle with nothing due to redraw them. Do it
     // now rather than waiting up to a poll for the board to reappear.
     window.addEventListener("resize", () => {
-        if (!dealtCards.size && !tableChips.size) return;
+        if (!dealtCards.size && !tableChips.size && !seatCards.size) return;
         syncDealtCards();
         syncTableChips();
+        syncSeatCards();
         syncSeatBadges();
         if (window.GPE_COIN && GPE_COIN.redraw) GPE_COIN.redraw();
     });
@@ -8975,10 +9788,13 @@ body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
         patchProfileMenu(); // the ⋮ menu is short-lived: catch it while it's open
         placeSplashButton(); // follows the pot total as it changes
         placePersonalButton(); // rides Splash's right edge; also tracks seat/send-ability
+        syncPanelDocks(); // a docked panel follows the table as the page reflows
         syncTable3d(); // keep the 3D felt attached across GWT re-renders
         sweepCardImgs(); // backstop for any card the observer missed
         syncDealtCards(); // dealt cards follow their slots, and go when they do
+        adoptDealtCards(); // board AND hand: anything the log lists but we missed
         syncTableChips(); // ...and the bet/pot stacks track theirs
+        syncSeatCards();  // ...and the opponents' cards lie on the felt
         syncSeatBadges(); // away/turn flags stay on top of whatever we drew
         // The inspector may have been switched on before the table existed, or
         // GWT may have replaced the element under us; re-arm if so.

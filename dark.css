@@ -742,6 +742,9 @@ html.gpe-dark #gpe-chat-add:hover { background: #344056; }
 html.gpe-dark .gpe-modal-hint { color: #93a0b4; }
 html.gpe-dark .gpe-modal-section { color: #8f9cb0; border-top-color: rgba(160, 176, 200, .22); }
 html.gpe-dark .gpe-section-reset { color: #7fa6dd; }
+html.gpe-dark .gpe-float-panel.gpe-docked {
+    background: #1e2530; border-color: #3c4a61;
+}
 html.gpe-dark .gpe-slider-label { color: #d2d8e2; }
 html.gpe-dark .gpe-slider-val { color: #aab4c2; }
 html.gpe-dark .gpe-reset-btn { background: #2b3648; color: #d2d8e2; border-color: #3a4759; }

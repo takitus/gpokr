@@ -355,6 +355,12 @@ html.gpe-fourcolor .gpe-suit-c { color: #008000; }
    itself. Not restricted to <img> — gpokr's bet/pot chips are Image widgets and
    GWT is free to render one as a div. */
 [data-gpe-covered] { visibility: hidden !important; }
+/* gpokr's own chip-stack value: a black box with white text sitting ON the chips.
+   Hidden wholesale while we are drawing our own silhouette-and-tab plates, rather
+   than one label at a time — a per-label cover left a window in which a dropped
+   plate flashed the old box back. visibility, not display: the layout it occupies
+   is still what positions everything else in the stack. */
+html.gpe-chip-plates .gpokr-ChipStack-label { visibility: hidden !important; }
 
 #gpe-chips-layer {
     position: fixed;
@@ -1653,6 +1659,41 @@ html.gpe-river-lab .iogc-GameWindow-table:active { cursor: grabbing; }
     color: #6a8fc7; cursor: pointer; opacity: .75;
 }
 .gpe-section-reset:hover { opacity: 1; text-decoration: underline; }
+/* Collapsible: the whole rule is the hit target, so the caret is a hint rather
+   than the button. */
+.gpe-sec-head { cursor: pointer; user-select: none; gap: 5px; }
+.gpe-sec-caret {
+    display: inline-block; font-size: 9px; line-height: 1;
+    transition: transform .12s ease; opacity: .8;
+}
+.gpe-sec-head.gpe-sec-closed .gpe-sec-caret { transform: rotate(-90deg); }
+.gpe-sec-body > .gpe-slider-row:first-child { margin-top: 6px; }
+
+/* ---- docking a floating panel to the left flank ----
+   The look is the tester's docked rail: the site's own side-panel treatment, so a
+   docked panel reads as part of the page rather than a window sitting on it. */
+.gpe-panel-dock {
+    margin-left: auto; border: none; background: none; padding: 0 4px;
+    font-size: 14px; line-height: 1; cursor: pointer; color: #888;
+}
+.gpe-panel-dock:hover { color: #333; }
+.gpe-panel-dock.gpe-active { color: #2a6ebb; }
+/* The close button already claims margin-left:auto; once the dock button has it,
+   the close must not, or they separate. */
+.gpe-modal-head .gpe-panel-dock ~ button { margin-left: 0; }
+.gpe-float-panel.gpe-docked {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-bottom-width: 2px;
+    border-radius: 8px;
+    box-shadow: none;
+    overflow-y: auto;
+    cursor: default;
+}
+.gpe-float-panel.gpe-docked .gpe-modal-head { cursor: default; }
+html.gpe-dark .gpe-panel-dock { color: #8f9cb0; }
+html.gpe-dark .gpe-panel-dock:hover { color: #dce5f2; }
+html.gpe-dark .gpe-panel-dock.gpe-active { color: #7fa6dd; }
 
 /* ---- 3D-table texture editor: a floating panel (no screen dim) ---- */
 .gpe-float-panel {

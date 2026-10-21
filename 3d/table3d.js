@@ -46,7 +46,26 @@
     const FELT_Y_NUDGE = -9;     // shift the whole render up (art px) to sit on the old felt
 
     // ---------- camera (matches the art's tilt) ----------
-    const ELEV_DEG = 64;         // 90 = straight down; lower tilts the table back more
+    // 90 = straight down; lower tilts the table back more. THE parameter that
+    // decides how anything lying on the felt reads.
+    //
+    // It is adjustable because it is very nearly free. The felt's own silhouette
+    // does not move: its world half-depth is FELT_HALF_D_PX/sinE, so what reaches
+    // the screen is FELT_HALF_D_PX — the sinE cancels, by construction, because
+    // the painted art's half-depth is already foreshortened. Lower the elevation
+    // and the felt simply becomes DEEPER in world space and more foreshortened, to
+    // exactly the same outline.
+    //
+    // What does change is everything standing on or lying in it. At 64 a flat card
+    // is squashed 10%, which is barely a cue that it is lying down at all — it
+    // reads as propped up. At 45 it is 29%, at 30 it is 50%. The cost is the other
+    // direction: the rail has real height, so it grows from 0.18 to 0.36 apparent
+    // as the elevation drops. That trade is a matter of taste, hence a slider.
+    const ELEV_DEG_0 = 64;
+    let ELEV_DEG = ELEV_DEG_0;
+    // The angle the table's own geometry is built at. Fixed on purpose: the world
+    // table keeps one set of dimensions whatever the camera does.
+    const REF_SIN = Math.sin((ELEV_DEG_0 * Math.PI) / 180);
     const FOV = 42;
     const VIEW_W = 40;           // world units spanning the table width
 
@@ -1182,6 +1201,31 @@
     // with the horizontal plane the seat lives on. That is exact by construction
     // and needs no correction term. It does need the camera to be placed first,
     // which is why loop() re-runs this whenever syncToTable reframes.
+    // A camera at the reference angle, framed exactly as syncToTable frames the
+    // live one. Cached per table size, because it only depends on the element's box.
+    function seatRefCamera(s, r) {
+        const T = window.THREE;
+        const key = Math.round(r.width) + "x" + Math.round(r.height);
+        if (s.refCam && s.refCamKey === key) return s.refCam;
+        const cw = Math.round(r.width), ch = Math.round(r.height);
+        const wpp = VIEW_W / r.width, scale = r.width / ART_W;
+        const cosRef = Math.cos((ELEV_DEG_0 * Math.PI) / 180);
+        const d = (ch * wpp) / (2 * Math.tan((FOV * Math.PI) / 180 / 2));
+        const tx = -(FELT_CX_PX * scale - cw / 2) * wpp;
+        const tz = -((FELT_CY_PX + FELT_Y_NUDGE) * scale - ch / 2) * wpp / REF_SIN;
+        const cam = s.refCam || new T.PerspectiveCamera(FOV, 1, 0.5, 400);
+        cam.fov = FOV;
+        cam.aspect = cw / ch;
+        cam.position.set(tx, d * REF_SIN, tz + d * cosRef);
+        cam.up.set(0, cosRef, -REF_SIN);
+        cam.lookAt(tx, 0, tz);
+        cam.updateProjectionMatrix();
+        cam.updateMatrixWorld(true);
+        s.refCam = cam;
+        s.refCamKey = key;
+        return cam;
+    }
+
     function placeSeats(s) {
         if (s) s.shadowDirty = true;   // geometry moved: the shadow map is stale
 
@@ -1202,6 +1246,15 @@
         // origin, under the felt), and the rest landed hundreds of units away.
         s.camera.updateMatrixWorld(true);
 
+        // Raycast through a REFERENCE camera, not the live one.
+        //
+        // The seats are part of the table's furniture, so where they sit is a fact
+        // about the table, not about where you are standing. Through the live
+        // camera a shallow view angle sends each ray a long way before it reaches
+        // the seat plane — at 25 degrees the back seats landed 60+ units out and
+        // read as being in another room. Built at the reference angle they stay
+        // put, and the view angle does what a view angle should: move the camera.
+        const refCam = seatRefCamera(s, r);
         const ray = new T.Raycaster();
         const plane = new T.Plane(new T.Vector3(0, 1, 0), -seatY);
         const ndc = new T.Vector2();
@@ -1210,7 +1263,7 @@
             const seat = s.seats.children[i];
             if (!seat) return;
             ndc.set((ax * scale) / r.width * 2 - 1, -((ay * scale) / r.height * 2 - 1));
-            ray.setFromCamera(ndc, s.camera);
+            ray.setFromCamera(ndc, refCam);
             if (!ray.ray.intersectPlane(plane, hit)) return;
             // The group's origin is at table height, so only x/z come from the hit.
             seat.position.set(hit.x, 0, hit.z);
@@ -1322,6 +1375,17 @@
         cam.fov = FOV;
         cam.aspect = cw / ch;
         cam.position.set(tx, d * s.sinE, tz + d * s.cosE);
+        // Give lookAt an up vector that is already perpendicular to the view
+        // direction, instead of leaving it at the default (0,1,0).
+        //
+        // This is what lets the elevation reach a true 90. lookAt builds its basis
+        // as x = cross(up, z), and at straight-down z IS (0,1,0) — so with the
+        // default hint the cross product is zero and the orientation is undefined.
+        // (0, cosE, -sinE) is perpendicular to the view at every angle, and at 90
+        // it is (0,0,-1), which is a perfectly good "up" for a bird's-eye view. The
+        // basis it produces below 90 is identical to what the default hint gave,
+        // so nothing about the existing angles changes.
+        cam.up.set(0, s.cosE, -s.sinE);
         cam.lookAt(tx, 0, tz);
         cam.updateProjectionMatrix();
 
@@ -1400,35 +1464,6 @@
         };
     }
 
-    // ---------- card shadow casters ----------
-    // Invisible stand-ins for the cards, so the felt they lie on can show a real
-    // shadow of them.
-    //
-    // The cards themselves are drawn by coin3d, on its own canvas over the page,
-    // and a shadow cannot cross two WebGL contexts. But nothing says the CASTER
-    // has to be the thing you see: a card-shaped box in this scene, lit by this
-    // scene's key light, drops a real shadow on a felt that already has
-    // receiveShadow — as do the rail, the floor and the seats.
-    //
-    // The obvious way to hide it does NOT work, and that is worth writing down
-    // because it invites being tidied up. three's shadow pass reads:
-    //
-    //     if (object.visible === false) return;
-    //     const visible = object.layers.test(camera.layers);
-    //     if (visible && object.isMesh) { if (object.castShadow) ... }
-    //
-    // and that camera is the MAIN camera. An object parked on a layer the camera
-    // never draws does not cast either, and an invisible one is skipped outright.
-    // So a caster stays on the default layer, stays visible, and draws nothing
-    // instead: colorWrite off, depthWrite off. The shadow pass builds its own
-    // depth material and consults neither.
-
-    // A whole-set call rather than add/update/remove: content.js already re-states
-    // what is on the table every poll, and a set call needs no reconciliation to
-    // survive this renderer being torn down and rebuilt on every GWT re-render.
-    //
-    // Each entry is a card's viewport rect in CSS px plus its thickness:
-    //   { left, top, width, height, thick }
     // ---------- page space <-> felt space ----------
     // One conversion, in one place. It was written three times — the caster
     // filter, the caster placement and projectAbove — and every future piece that
@@ -1466,19 +1501,92 @@
         };
     }
 
-    // Is this point on the cloth? The felt is a stadium; an ellipse through the
-    // same half-extents is close enough to decide.
+    // Is this point on the cloth?
     //
     // This is the pivot the whole layer turns on. It used to answer only "should
     // a shadow caster go here?"; it now answers "which BASIS does this object
     // live in?" — on the felt means real geometry on the felt plane that casts a
     // real shadow, off it means a camera-facing billboard that does not.
+    //
+    // The felt is a STADIUM and this now tests one exactly, where it used to test
+    // an ellipse through the same half-extents. That approximation is inscribed:
+    // near the two ends it falls well short of the cloth, so it called perfectly
+    // good positions off-felt — seats at the far left and right lost their cards
+    // to it, and stacks out there were nudged inward that never needed to move.
+    // A stadium is a straight section of half-length A-B capped by two circles of
+    // radius B, which is three comparisons, so there was never much to trade.
     function onFelt(X, Z, k) {
         const s = session;
         if (!s || !s.feltA || !s.feltB) return true;
         const m = k == null ? 0.98 : k;
-        const ex = X / (s.feltA * m), ez = Z / (s.feltB * m);
-        return ex * ex + ez * ez <= 1;
+        const A = s.feltA * m, B = s.feltB * m;
+        const ax = Math.abs(X), az = Math.abs(Z);
+        if (az > B) return false;
+        const straight = Math.max(0, A - B);
+        if (ax <= straight) return true;
+        const dx = ax - straight;
+        return dx * dx + az * az <= B * B;
+    }
+
+    // A stack the site placed flush with the felt's edge no longer fits there: our
+    // chips are drawn WIDER than the 24px sprite they stand for, and each one also
+    // gets a silhouette proud of that, so the footprint laps onto the rail.
+    //
+    // Returns the screen-space nudge that brings the footprint back onto the cloth —
+    // applied by the caller to the chips AND their plate together, so they move as
+    // one and stay registered.
+    //
+    // The footprint is sampled as an ELLIPSE inscribed in the padded rect, not as
+    // that rect's corners. Chips are round and their silhouette is a stadium, and a
+    // bounding box's corner sticks out well past both — testing corners against the
+    // felt's own ellipse demanded 40-60px of correction on the diagonals, which does
+    // not move a bet off the rail so much as move it somewhere else entirely.
+    //
+    // Capped, for the same reason: past MAX the site has genuinely put the stack
+    // where it wants it, and a small overlap is a better answer than teleporting
+    // somebody's bet. The partial nudge is kept — less lap is still less lap.
+    //
+    // `overhang` alone is the pad — the silhouette is deliberately NOT included. It
+    // is a soft dark shape and nobody minds it kissing the rail, whereas including
+    // it added 4px to every side and pushed the correction into the cap for most of
+    // the felt's rim, which is a worse answer than a slightly wide silhouette.
+    const FIT_STEP = 1.5, FIT_MAX = 12;
+    function feltFit(rect, overhang) {
+        const f = feltFrame(), s = session;
+        const zero = { dx: 0, dy: 0 };
+        if (!f || !s || !s.feltA || !s.feltB || !rect || !rect.width) return zero;
+        const pad = Math.max(0, overhang || 0);
+        const rx = rect.width / 2 + pad, rz = rect.height / 2 + pad;
+        const to = { x: f.r.left + FELT_CX_PX * f.scale,
+            y: f.r.top + (FELT_CY_PX + FELT_Y_NUDGE) * f.scale };
+        const off = (cx, cy) => {
+            let worst = 0;
+            for (let i = 0; i < 12; i++) {
+                const a = (i / 12) * Math.PI * 2;
+                const q = toFelt(f, cx + Math.cos(a) * rx, cy + Math.sin(a) * rz);
+                if (!onFelt(q.X, q.Z, 0.99)) worst = 2;
+            }
+            return worst;
+        };
+        let dx = 0, dy = 0;
+        const cx0 = rect.left + rect.width / 2, cy0 = rect.top + rect.height / 2;
+        while (Math.hypot(dx, dy) < FIT_MAX) {
+            if (off(cx0 + dx, cy0 + dy) <= 1) break;
+            const vx = to.x - (cx0 + dx), vy = to.y - (cy0 + dy);
+            const len = Math.hypot(vx, vy) || 1;
+            dx += (vx / len) * FIT_STEP;
+            dy += (vy / len) * FIT_STEP;
+        }
+        return { dx: dx, dy: dy };
+    }
+
+    // Is this viewport point on the cloth? The one question callers outside this
+    // file keep needing, and the only honest place to answer it.
+    function feltHas(clientX, clientY, k) {
+        const f = feltFrame();
+        if (!f || !session) return false;
+        const q = toFelt(f, clientX, clientY);
+        return onFelt(q.X, q.Z, k == null ? 1 : k);
     }
 
     // ---------- chips on the felt ----------
@@ -1492,6 +1600,11 @@
     // thickness*sin(lean) to fake the height. Here the camera IS the angle and +Y
     // IS up, so a chip is a cylinder lying on the felt plane and a stack is
     // addition. That lean constant was a fake object too.
+    // How a chip arrives when it is dropped rather than placed. 34px is high enough
+    // to read as a fall at this camera without leaving the frame at the far rail.
+    const DROP_RISE = 34;      // css px above the resting height
+    const DROP_FALL = 0.17;    // s to fall it
+
     function chipArt(s, denom) {
         const T = window.THREE;
         const types = window.GPE_CHIPS.art.types;
@@ -1509,12 +1622,357 @@
         return a;
     }
 
-    // Shared unit cylinder — radius 0.5, height 1 — scaled per chip, so the size
-    // sliders cost a scale rather than a rebuild.
-    function chipGeo(s) {
+    // How much of the chip's edge is rounded off, as a fraction of its half
+    // thickness. 0 is the square-edged disc it has always been.
+    let CHIP_ROUND = 0;
+
+    // The unit chip — radius 0.5, height 1, axis +Y — as three shared geometries
+    // rather than one cylinder, so each gets the UVs it actually wants: the caps
+    // radial for the denomination, the rim wrapping for the edge spots. A single
+    // ExtrudeGeometry with a bevel would have been fewer parts, but it puts both
+    // caps and the wall through one UV generator and the face art comes out
+    // smeared. Same split cardMesh makes, for the same reason.
+    //
+    // With a fillet the caps shrink by it and the rim bulges out to the full radius
+    // at mid-height, so the silhouette stays exactly 0.5 whatever the rounding —
+    // the chip does not change size as you round it.
+    function chipParts(s, diam, thick) {
         const T = window.THREE;
-        if (!s.chipGeo) s.chipGeo = new T.CylinderGeometry(0.5, 0.5, 1, 32, 1);
-        return s.chipGeo;
+        const R = 0.5, HH = 0.5;
+        // The fillet is a fraction of the chip's real HALF-THICKNESS, which is the
+        // only sane reading of "round the edge": a chip is a thin disc, and its
+        // edge is as deep as it is thick.
+        //
+        // The unit chip is then scaled anisotropically — (diam, thick, diam) — so a
+        // fillet that is circular on screen must be an ELLIPSE here: fa*thick has
+        // to equal fr*diam, hence fr = fa * thick/diam. Getting this wrong is what
+        // made a rounded chip lose its face: with fr = fa the fillet ate half the
+        // radius and the denomination disappeared under the rim.
+        const aspect = (diam > 0 ? Math.max(0.01, thick / diam) : 0.25);
+        const fa = Math.max(0, Math.min(1, CHIP_ROUND)) * HH;
+        const fr = fa * aspect;
+        const key = fa.toFixed(4) + "|" + fr.toFixed(4);
+        if (s.chipParts && s.chipPartsKey === key) return s.chipParts;
+        disposeChipParts(s);
+        const capR = Math.max(0.05, R - fr);
+
+        // Rim profile in the (radius, height) half-plane, bottom to top.
+        const pts = [];
+        if (fa <= 1e-6) {
+            pts.push(new T.Vector2(R, -HH), new T.Vector2(R, HH));
+        } else {
+            const SEG = 8;
+            for (let i = 0; i <= SEG; i++) {           // bottom fillet
+                const a2 = -Math.PI / 2 + (i / SEG) * (Math.PI / 2);
+                pts.push(new T.Vector2(capR + fr * Math.cos(a2), -HH + fa + fa * Math.sin(a2)));
+            }
+            for (let i = 0; i <= SEG; i++) {           // top fillet
+                const a2 = (i / SEG) * (Math.PI / 2);
+                pts.push(new T.Vector2(capR + fr * Math.cos(a2), HH - fa + fa * Math.sin(a2)));
+            }
+        }
+        const rim = new T.LatheGeometry(pts, 48);
+        const cap = new T.CircleGeometry(capR, 48);
+        s.chipParts = { rim: rim, cap: cap, capY: HH };
+        s.chipPartsKey = key;
+        return s.chipParts;
+    }
+
+    function disposeChipParts(s) {
+        if (!s.chipParts) return;
+        s.chipParts.rim.dispose();
+        s.chipParts.cap.dispose();
+        s.chipParts = null;
+        s.chipPartsKey = "";
+    }
+
+    // Rebuild the shared chip geometry at a new rounding and hand it to every chip
+    // already on the felt.
+    function setChipRound(v) {
+        const n = parseFloat(v);
+        const q = isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+        if (q === CHIP_ROUND) return;
+        CHIP_ROUND = q;
+        const s = session;
+        if (!s) return;
+        for (const g of s.chips || []) {
+            const u = g.userData || {};
+            // Each chip carries the size it was built at, so the fillet is rebuilt
+            // against the real proportions rather than a guess.
+            const parts = chipParts(s, u.gpeDiam || 26, u.gpeThick || 4);
+            if (u.gpeRim) u.gpeRim.geometry = parts.rim;
+            if (u.gpeTop) { u.gpeTop.geometry = parts.cap; u.gpeTop.position.y = parts.capY; }
+            if (u.gpeBot) { u.gpeBot.geometry = parts.cap; u.gpeBot.position.y = -parts.capY; }
+        }
+        s.needsRender = Math.max(s.needsRender, 2);
+        s.shadowDirty = true;
+    }
+
+    // ---------- the plate under a chip stack ----------
+    // A faded white silhouette on the felt around a stack, with a tab off the near
+    // side carrying the stack's value in black. It replaces gpokr's own label — a
+    // black box with white text sitting ON the chips — which read as a sticker
+    // stuck to the table rather than part of it.
+    //
+    // Drawn as a canvas on a quad lying on the felt, UNDER the chips: the chips
+    // then stand on their own silhouette, which is what makes it read as a coaster
+    // rather than an outline. The text foreshortens with everything else, which at
+    // this camera costs 10% of its height and is the point — a label that ignored
+    // the perspective would be the sticker again.
+    const PLATE = {
+        OUT: 4,           // css px of silhouette proud of the stack, all the way round
+        PAD: 7,           // the ONLY padding number: air between the value and the
+                          // tab's edge, the same on all four sides. The tab is sized
+                          // from the glyphs plus this, so nothing can drift.
+        TAB_MIN_W: 40,    // ...unless the label is so short the tab would be a lozenge
+        TAB_R: 7,         // the tab's corner radius — always applied, see below
+        JOIN: 5,          // how far the tab reaches UP into the silhouette, so the
+                          // two are one shape with one continuous outline. Small on
+                          // purpose: the silhouette lies on the felt and the chips
+                          // STAND on it, so anything the tab slides under the stack
+                          // is occluded by the chips — enough to fuse, no more. At a
+                          // stack this size it fuses over a ~22px neck. Capped at PAD
+                          // at the point of use, so the overlap can never reach the
+                          // text — what slides under the chips is padding, not value.
+        MARGIN: 3,        // canvas margin, so a corner radius never clips at the edge
+        FILL: "rgba(0,0,0,0.42)",
+        TEXT: "#f4f7fa",
+    };
+
+    // Measured off-screen: the canvas has to be sized before there is a canvas to
+    // measure on.
+    let plateFont = "600 13px Arial, Helvetica, sans-serif";
+    let plateMeasure = null;
+    function plateCtx() {
+        if (!plateMeasure) {
+            const c = document.createElement("canvas").getContext("2d");
+            if (!c) return null;
+            plateMeasure = c;
+        }
+        plateMeasure.font = plateFont;
+        return plateMeasure;
+    }
+    // Cap height of a FIXED reference, not of the label: measuring the label itself
+    // would make the tab a different height for "$25" than for "$1,375" (the comma
+    // descends), and the plate would jiggle every time the amount changed.
+    function plateAscent() {
+        const c = plateCtx();
+        if (!c) return 9.5;
+        const m = c.measureText("$0");
+        return m.actualBoundingBoxAscent || 9.5;
+    }
+    function plateTabWidth(label) {
+        const c = plateCtx();
+        if (!c) return PLATE.TAB_MIN_W;
+        return Math.max(PLATE.TAB_MIN_W,
+            Math.ceil(c.measureText(label).width) + PLATE.PAD * 2);
+    }
+    // Digits sit PAD from the top and PAD from the bottom of the tab, which is the
+    // same PAD they get left and right. Descenders (the comma) eat into the bottom
+    // padding rather than adding to the height — centring on the comma instead of on
+    // the figures would leave the digits looking high.
+    const plateTabHeight = () => plateAscent() + PLATE.PAD * 2;
+
+    function plateTexture(T, w, h, box, tab, label) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2) * 2;   // crisp text
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(8, Math.round(w * dpr));
+        cv.height = Math.max(8, Math.round(h * dpr));
+        const g = cv.getContext("2d");
+        if (!g) return null;
+        g.scale(dpr, dpr);
+        // Appends a rounded rect as a SUBPATH — no beginPath of its own, so several
+        // can be unioned inside one fill().
+        const path = (x, y, ww, hh, r) => {
+            const rr = Math.min(r, ww / 2, hh / 2);
+            g.moveTo(x + rr, y);
+            g.arcTo(x + ww, y, x + ww, y + hh, rr);
+            g.arcTo(x + ww, y + hh, x, y + hh, rr);
+            g.arcTo(x, y + hh, x, y, rr);
+            g.arcTo(x, y, x + ww, y, rr);
+            g.closePath();
+        };
+        // ONE continuous outline. The silhouette and the tab are two subpaths of a
+        // SINGLE fill(), so they union: the boundary runs unbroken from around the
+        // stack down around the value, with no seam where they meet. Filling them
+        // separately would not do — the fill is translucent, so the overlap would
+        // composite twice and draw a bright bar across the join.
+        //
+        // The silhouette's corner radius is half its short side, so it is a stadium
+        // around the stack rather than a rounded box — a chip is round, and a boxy
+        // outline round a round thing reads as a mistake. The tab is fully rounded
+        // on all four corners, always, and the canvas is sized to fit whichever of
+        // the two is wider so a long value can never clip its corners flat.
+        g.fillStyle = PLATE.FILL;
+        g.beginPath();
+        path(box.x, box.y, box.w, box.h, Math.min(box.w, box.h) / 2);
+        path(tab.x, tab.y, tab.w, tab.h, Math.min(PLATE.TAB_R, tab.h / 2));
+        g.fill();
+        g.fillStyle = PLATE.TEXT;
+        g.font = plateFont;
+        g.textAlign = "center";
+        g.textBaseline = "alphabetic";
+        g.fillText(label, tab.x + tab.w / 2, tab.y + PLATE.PAD + plateAscent());
+
+        const tex = new T.CanvasTexture(cv);
+        tex.colorSpace = T.SRGBColorSpace;
+        tex.generateMipmaps = false;
+        tex.minFilter = T.LinearFilter;
+        tex.magFilter = T.LinearFilter;
+        return tex;
+    }
+
+    // rect is the stack's footprint in viewport px. opts.diameter is what the chips
+    // are actually DRAWN at, which is not the sprite's 24px — the plate has to hug
+    // the geometry, not the artwork it replaced.
+    function parkStackPlate(rect, amount, opts) {
+        const s = session;
+        if (!s || !rect || !rect.width) return null;
+        const T = window.THREE;
+        if (!T) return null;
+        if (!s.plateGeo) s.plateGeo = new T.PlaneGeometry(1, 1);
+        const mat = new T.MeshBasicMaterial({ transparent: true, depthWrite: false });
+        const mesh = new T.Mesh(s.plateGeo, mat);
+        mesh.rotation.x = -Math.PI / 2;      // lie on the felt
+        mesh.renderOrder = 2;                // over the felt, under the chips
+        s.scene.add(mesh);
+        if (!s.plates) s.plates = new Set();
+        s.plates.add(mesh);
+
+        let at = rect, amt = amount, gone = false;
+        let diam = (opts && opts.diameter) || 26;
+        let avoid = (opts && opts.avoid) || [];
+        const mine = s.epoch;
+        // Cheap signature, so a poll that hands us the same cards is not a re-render.
+        const sig = (list) => (list || []).map((a) =>
+            Math.round(a.left) + "," + Math.round(a.top) + "," +
+            Math.round(a.width) + "," + Math.round(a.height)).join(";");
+        let avoidSig = sig(avoid);
+
+        const place = () => {
+            const f = feltFrame();
+            if (!f) return;
+            const label = "$" + Math.round(amt).toLocaleString();
+            const tw = plateTabWidth(label);
+            // The silhouette hugs the chips: the sprite footprint grown by however
+            // much wider the drawn chip is than the 24px sprite it stands for, plus
+            // the outline itself.
+            const grow = Math.max(0, (diam - 24) / 2) + PLATE.OUT;
+            const sw = at.width + grow * 2, sh = at.height + grow * 2;
+            // The tab starts INSIDE the silhouette by `join`, which is what fuses
+            // the two into one shape. Clamped so a short stack cannot be swallowed.
+            const th = plateTabHeight();
+            const join = Math.min(PLATE.JOIN, sh / 2, PLATE.PAD);
+            const cx = at.left + at.width / 2, cy = at.top + at.height / 2;
+
+            // WHERE THE TAB GOES. Straight below is the nicest, but a stack near
+            // the felt's edge hangs its tab off the cloth — and because the canvas
+            // is the table element, off the cloth eventually means off the CANVAS,
+            // where it is cut in half by nothing at all. So the tab leans toward
+            // the middle of the table instead.
+            //
+            // Candidates in order of preference, each still fused to the silhouette
+            // by `join`: straight below, diagonally in-board, then squarely beside.
+            // NOT above — the silhouette lies on the felt and the chips STAND on it,
+            // so up-screen of a stack is exactly where the chips are.
+            const D = (sh + th) / 2 - join;             // clear below
+            const S = (sw + tw) / 2 - join;             // clear to one side
+            const inward = f.r.left + FELT_CX_PX * f.scale >= cx ? 1 : -1;
+            // Both ways round, inward first: a card sitting where the value wants to
+            // go is common enough that having only one alternative is not enough.
+            // Below first, then below-but-tucked-closer, and only then out to a
+            // side. Values scattered left, right and under around one table read as
+            // mess even when each one is individually correct, so the order buys
+            // consistency: sideways is a last resort, not an equal option.
+            const tries = [[0, D], [0, D * 0.72], [inward * S * 0.7, D * 0.75],
+                [-inward * S * 0.7, D * 0.75], [inward * S, 0], [-inward * S, 0]];
+            let ox = 0, oy = D, best = -Infinity;
+            for (const t of tries) {
+                const l = cx + t[0] - tw / 2, tp = cy + t[1] - th / 2;
+                // Score by how many of the tab's corners land on the cloth. The
+                // ellipse test is the same one that decides felt membership
+                // everywhere else, so "fits" means the same thing here as there.
+                let n = 0;
+                for (const qx of [l, l + tw]) {
+                    for (const qy of [tp, tp + th]) {
+                        const q = toFelt(f, qx, qy);
+                        if (onFelt(q.X, q.Z, 0.99)) n++;
+                    }
+                }
+                // ...then by what would sit ON TOP of it. The plate lies on the felt,
+                // under everything, so a card over the value hides the value — being
+                // on the cloth is worth more than being unobstructed, but only just.
+                let hidden = 0;
+                for (const a of avoid) {
+                    const ow = Math.min(l + tw, a.left + a.width) - Math.max(l, a.left);
+                    const oh = Math.min(tp + th, a.top + a.height) - Math.max(tp, a.top);
+                    if (ow > 0 && oh > 0) hidden += ow * oh;
+                }
+                const score = n * 4000 - hidden;
+                if (score > best) { best = score; ox = t[0]; oy = t[1]; }
+                if (n === 4 && !hidden) break;
+            }
+
+            // Canvas = the union's bounding box. The silhouette sits at the stack,
+            // the tab at (ox, oy) from it; both are laid out relative to whichever
+            // corner the box starts at, so an offset tab grows the canvas on its own
+            // side rather than dragging the silhouette off the chips.
+            const bx = -sw / 2, by = -sh / 2, txo = ox - tw / 2, tyo = oy - th / 2;
+            const minX = Math.min(bx, txo), maxX = Math.max(bx + sw, txo + tw);
+            const minY = Math.min(by, tyo), maxY = Math.max(by + sh, tyo + th);
+            const w = maxX - minX + PLATE.MARGIN * 2;
+            const h = maxY - minY + PLATE.MARGIN * 2;
+            const box = { x: bx - minX + PLATE.MARGIN, y: by - minY + PLATE.MARGIN,
+                w: sw, h: sh };
+            const tab = { x: txo - minX + PLATE.MARGIN, y: tyo - minY + PLATE.MARGIN,
+                w: tw, h: th };
+            const tex = plateTexture(T, w, h, box, tab, label);
+            if (tex) {
+                if (mat.map) mat.map.dispose();
+                mat.map = tex;
+                mat.needsUpdate = true;
+            }
+            // Place the QUAD so that the silhouette's centre lands on the stack's.
+            // A canvas px is a screen px here: the felt's depth carries 1/sinE and
+            // the camera foreshortens it straight back out again.
+            const p = toFelt(f, cx + (w / 2 - (box.x + sw / 2)),
+                cy + (h / 2 - (box.y + sh / 2)));
+            mesh.position.set(p.X, -FELT_DROP + 0.02, p.Z);
+            mesh.scale.set(w * f.wpp, h * f.wpp / s.sinE, 1);
+        };
+        place();
+        s.needsRender = Math.max(s.needsRender, 2);
+
+        return {
+            move(r, newAmount, newDiam, newAvoid) {
+                if (gone || session !== s || s.epoch !== mine) return;
+                let dirty = false;
+                if (newDiam != null && newDiam !== diam) { diam = newDiam; dirty = true; }
+                if (newAvoid) {
+                    const ns = sig(newAvoid);
+                    if (ns !== avoidSig) { avoid = newAvoid; avoidSig = ns; dirty = true; }
+                }
+                if (r && r.width && (Math.abs(r.left - at.left) > 0.5 ||
+                    Math.abs(r.top - at.top) > 0.5 || Math.abs(r.width - at.width) > 0.5 ||
+                    Math.abs(r.height - at.height) > 0.5)) { at = r; dirty = true; }
+                if (newAmount != null && newAmount !== amt) { amt = newAmount; dirty = true; }
+                if (!dirty) return;
+                place();
+                s.needsRender = Math.max(s.needsRender, 2);
+            },
+            remove() {
+                if (gone) return;
+                gone = true;
+                if (session === s) {
+                    s.plates.delete(mesh);
+                    s.scene.remove(mesh);
+                    s.needsRender = Math.max(s.needsRender, 2);
+                }
+                if (mat.map) mat.map.dispose();
+                mat.dispose();
+            },
+            isGone: () => gone || session !== s || s.epoch !== mine,
+        };
     }
 
     // rect is the site's own chip sprite, in viewport px. diameter/thickness are
@@ -1527,15 +1985,26 @@
         if (!T || !window.GPE_CHIPS) return null;
         const o = opts || {};
         const a = chipArt(s, denom);
-        // CylinderGeometry's material groups are [side, top, bottom].
-        const mesh = new T.Mesh(chipGeo(s), [a.rimMat, a.faceMat, a.faceMat]);
+        const parts = chipParts(s, o.diameter || 26, o.thickness || 4);
+        const rim = new T.Mesh(parts.rim, a.rimMat);
+        const top = new T.Mesh(parts.cap, a.faceMat);
+        const bot = new T.Mesh(parts.cap, a.faceMat);
+        top.rotation.x = -Math.PI / 2; top.position.y = parts.capY;
+        bot.rotation.x = Math.PI / 2;  bot.position.y = -parts.capY;
+        const mesh = new T.Group();
+        mesh.add(rim, top, bot);
+        mesh.userData.gpeRim = rim;
+        mesh.userData.gpeTop = top;
+        mesh.userData.gpeBot = bot;
+        mesh.userData.gpeDiam = o.diameter || 26;
+        mesh.userData.gpeThick = o.thickness || 4;
         // The cap's UVs run along local x/z, and this camera looks down the felt
         // at an angle — so the denomination comes out lying on its side unless the
         // disc is turned a quarter. Measured against the four rotations on screen,
         // not derived: +90 is the one that reads.
         mesh.rotation.y = Math.PI / 2;
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;     // so a stack shadows itself
+        // castShadow is per-object and not inherited from a group.
+        for (const m of mesh.children) { m.castShadow = true; m.receiveShadow = true; }
         s.scene.add(mesh);
         if (!s.chips) s.chips = new Set();
         s.chips.add(mesh);
@@ -1543,6 +2012,7 @@
         let at = rect, row = Math.max(0, (o.row | 0));
         let diam = o.diameter || 26, thick = o.thickness || 4;
         let gone = false;
+        let lift = 0;                        // css px above its resting height
 
         const place = () => {
             const f = feltFrame();
@@ -1551,7 +2021,7 @@
             const d = diam * f.wpp, h = Math.max(0.01, thick * f.wpp);
             // On the felt, and stacked straight up it — the whole point of being
             // in this scene rather than over it.
-            mesh.position.set(p.X, -FELT_DROP + h / 2 + row * h, p.Z);
+            mesh.position.set(p.X, -FELT_DROP + h / 2 + row * h + lift * f.wpp, p.Z);
             mesh.scale.set(d, h, d);
             // Deliberately NOT gated on onFelt. That test exists to stop a shadow
             // PROXY being planted on the leather or the floor; a real chip is
@@ -1563,12 +2033,61 @@
         s.needsRender = Math.max(s.needsRender, 2);
         s.shadowDirty = true;
 
+        // Falls in, if asked. o.drop = { delay, rise, onLand }: a chip enters above
+        // its resting height and accelerates down onto the stack, and onLand fires
+        // the instant it arrives — which is what a per-chip sound has to key off,
+        // since the whole point is that you hear each one hit rather than one noise
+        // for the bet.
+        //
+        // The fall is quadratic, so it arrives at its fastest rather than easing to
+        // a stop: a chip dropped on a stack does not decelerate politely. There is
+        // no bounce because a clay chip landing flat on cloth does not bounce.
+        if (o.drop) {
+            lift = o.drop.rise == null ? DROP_RISE : o.drop.rise;
+            let dt0 = -Math.max(0, o.drop.delay || 0);
+            const dur = Math.max(0.02, o.drop.fall || DROP_FALL);
+            let landed = false;
+            place();
+            mesh.visible = false;
+            const fall = {
+                object3D: new T.Group(),      // empty stand-in; the chip is not the actor's
+                step(dt) {
+                    if (gone) return false;
+                    dt0 += dt;
+                    if (dt0 < 0) return true;
+                    mesh.visible = true;
+                    const q = Math.min(1, dt0 / dur);
+                    lift = (o.drop.rise == null ? DROP_RISE : o.drop.rise) * (1 - q * q);
+                    place();
+                    s.shadowDirty = true;
+                    if (q < 1) return true;
+                    lift = 0;
+                    place();
+                    if (!landed) {
+                        landed = true;
+                        if (o.drop.onLand) { try { o.drop.onLand(); } catch (e) { /* not ours */ } }
+                    }
+                    return false;
+                },
+            };
+            if (!addActor(fall)) { lift = 0; mesh.visible = true; place(); }
+        }
+
         return {
             move(r, newRow, size) {
                 if (gone) return;
                 if (r && r.width) at = r;
                 if (newRow != null) row = Math.max(0, newRow | 0);
-                if (size) { diam = size.diameter || diam; thick = size.thickness || thick; }
+                if (size) {
+                    diam = size.diameter || diam; thick = size.thickness || thick;
+                    // The fillet is a proportion of the thickness, so a size change
+                    // is a geometry change.
+                    mesh.userData.gpeDiam = diam; mesh.userData.gpeThick = thick;
+                    const q = chipParts(s, diam, thick);
+                    rim.geometry = q.rim;
+                    top.geometry = q.cap; top.position.y = q.capY;
+                    bot.geometry = q.cap; bot.position.y = -q.capY;
+                }
                 place();
                 s.needsRender = Math.max(s.needsRender, 2);
                 s.shadowDirty = true;
@@ -1587,56 +2106,498 @@
         };
     }
 
-    function setCardCasters(list) {
-        const s = session;
-        if (!s || !s.cardCasters) return false;
-        const T = window.THREE;
-        const f = feltFrame();
-        // Only cards that are ON the felt. A player's own two cards sit at their
-        // seat, well outside it, and their screen position maps to a point beyond
-        // the rail — where a caster would plant a card-shaped smudge on the
-        // leather, or on the floor ten units below, since both receive shadows.
-        // Those keep coin3d's own shadow instead.
-        const items = f ? (list || []).filter((c) => {
-            const p = toFelt(f, c.left + c.width / 2, c.top + c.height / 2);
-            return onFelt(p.X, p.Z);
-        }) : [];
-        const kids = s.cardCasters.children;
+    // ---------- cards on the felt ----------
+    // A community card, as a real slab lying on the real cloth.
+    //
+    // This replaced setCardCasters, which used to plant an invisible box in this
+    // scene at the card's projected position purely so the felt had something to
+    // shadow — the card itself being in another WebGL context, and shadows not
+    // crossing contexts. The card IS in this scene now, so the felt shadows the
+    // card. That box was the clearest example of the fake objects this migration
+    // exists to delete: right size, right place, wrong object, square corners, no
+    // lean, and nothing at all while the card was in flight.
+    //
+    // Everything coin3d had to fake for an orthographic camera falls out. There
+    // is no lean (the camera is the angle), no GROW on the way in (coming in
+    // higher and further back puts the card nearer, and the camera does the rest),
+    // and no fudge lift during the flip (the card pivots on its own edge, so the
+    // geometry lifts it). Same note parkChip records about the chip lean.
+    const CARD_RX = 12 / 210, CARD_RY = 12 / 280;   // corner radii, unit card
+    const CARD_RADIUS = 0.07;                       // ...as a fraction of the width, for the back art
+    const CARD_EDGE = 0xf6f2e9;                     // paper, before any light touches it
+    const CARD_BACK_TINTS = {
+        rosette: "#8d2230", lattice: "#1f4f86", fan: "#1f6b45", deco: "#8a6a1e",
+        "": "#8d2230",           // gpokr's own back is red, so the default matches
+    };
+    const DEAL = {
+        FLY: 0.28, HOLD: 0.04, FLIP: 0.18, REST: 0.05,   // s — 0.55 total, a budget not a taste:
+        LEAD: 26,                                        // it is how long the site's card is covered
+        ENTER_LIFT: 60,          // css px above the felt it starts
+        ENTER_BACK: 72,          // ...and behind it, which is what carries it up-screen
+        SPIN: 0.55,              // rad of spin about the card's own normal, unwinding to 0
+        THICK: 2,
+    };
 
-        while (kids.length > items.length) s.cardCasters.remove(kids[kids.length - 1]);
-        while (kids.length < items.length) {
-            const m = new T.Mesh(s.casterGeo, s.casterMat);
-            m.castShadow = true;
-            s.cardCasters.add(m);
+
+
+    const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+    const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+    // The back is DRAWN, not shipped: assets/backs/*.png are the pair still-life
+    // gpokr puts at a seat, the wrong shape for one card. Cached as a CANVAS at
+    // module scope but minted into a texture per session — this context is thrown
+    // away and recreated on every GWT re-render, and a texture from a dead context
+    // is a black card.
+    let backCanvasCache = Object.create(null);
+
+    function cardBackCanvas(style) {
+        const key = style || "";
+        if (backCanvasCache[key]) return backCanvasCache[key];
+        const w = 106, h = 138;                  // 2x the card, for a HiDPI display
+        const cv = document.createElement("canvas");
+        cv.width = w; cv.height = h;
+        const g = cv.getContext("2d");
+        if (!g) return null;
+        const tint = CARD_BACK_TINTS[key] || CARD_BACK_TINTS[""];
+        const r = w * CARD_RADIUS * 2;
+        const round = (x, y, ww, hh, rr) => {
+            g.beginPath();
+            g.moveTo(x + rr, y);
+            g.arcTo(x + ww, y, x + ww, y + hh, rr);
+            g.arcTo(x + ww, y + hh, x, y + hh, rr);
+            g.arcTo(x, y + hh, x, y, rr);
+            g.arcTo(x, y, x + ww, y, rr);
+            g.closePath();
+        };
+        g.fillStyle = "#f4f1ea";                 // the paper edge, as on a real back
+        round(0, 0, w, h, r); g.fill();
+        g.fillStyle = tint;
+        round(3, 3, w - 6, h - 6, r * 0.8); g.fill();
+        g.save();
+        round(7, 7, w - 14, h - 14, r * 0.6); g.clip();
+        g.strokeStyle = "rgba(255,255,255,0.20)";
+        g.lineWidth = 1.5;
+        for (let i = -h; i < w + h; i += 9) {
+            g.beginPath(); g.moveTo(i, 0); g.lineTo(i + h, h); g.stroke();
+            g.beginPath(); g.moveTo(i + h, 0); g.lineTo(i, h); g.stroke();
         }
+        g.restore();
+        backCanvasCache[key] = cv;
+        return cv;
+    }
 
-        let changed = kids.length !== s.casterCount;
-        s.casterCount = kids.length;
-        items.forEach((c, i) => {
-            const m = kids[i];
-            if (!m || !f) return;
-            const q = rectToFelt(f, c);
-            const X = q.X, Z = q.Z, sx = q.sx, sz = q.sz;
-            const h = Math.max(0.02, (c.thick || 2) * f.wpp);
-            // Sitting ON the felt rather than above it: the underside is the felt
-            // top, so what it drops is a contact shadow, not a hovering one.
-            const y = -FELT_DROP + h / 2;
-            // Only mark the scene dirty when something actually MOVED. This is
-            // called on the 300ms poll for as long as a board is out, and a
-            // static board must cost nothing: an unconditional bump re-renders
-            // the felt, rail, floor, nine stools and a 2048 shadow map several
-            // times a second forever, where today an unchanged table renders zero
-            // times (see the needsRender counter in loop()).
-            if (Math.abs(m.position.x - X) > 0.002 || Math.abs(m.position.z - Z) > 0.002 ||
-                Math.abs(m.position.y - y) > 0.002 || Math.abs(m.scale.x - sx) > 0.002 ||
-                Math.abs(m.scale.y - h) > 0.002 || Math.abs(m.scale.z - sz) > 0.002) {
-                changed = true;
+    function cardBackTexture(T, s, style) {
+        const key = style || "";
+        if (!s.backTex) s.backTex = Object.create(null);
+        if (s.backTex[key]) return s.backTex[key];
+        const cv = cardBackCanvas(key);
+        if (!cv) return null;
+        const tex = new T.CanvasTexture(cv);
+        tex.colorSpace = T.SRGBColorSpace;
+        tex.anisotropy = 4;
+        s.backTex[key] = tex;
+        return tex;
+    }
+
+    // Mipmaps stay OFF with LinearFilter. This is the standing fix for a blur bug
+    // with four separate causes in its history — turning them on would re-open the
+    // WebGL1 NPOT resize hazard, and anisotropy without a mip chain does nothing.
+    function cardTexture(T, src) {
+        const tex = new T.Texture(src);
+        tex.colorSpace = T.SRGBColorSpace;
+        tex.generateMipmaps = false;
+        tex.minFilter = T.LinearFilter;
+        tex.magFilter = T.LinearFilter;
+        tex.needsUpdate = true;
+        return tex;
+    }
+
+    // A rounded slab plus two rounded caps, unit-sized and shared. The caps are
+    // separate meshes because an ExtrudeGeometry puts BOTH ends in one material
+    // group, and a card needs a different picture on each.
+    function cardGeo(s) {
+        if (s.cardGeo) return s.cardGeo;
+        const T = window.THREE;
+        const rx = CARD_RX, ry = CARD_RY;
+        const sh = new T.Shape();
+        sh.moveTo(rx, 0);
+        sh.lineTo(1 - rx, 0);
+        sh.quadraticCurveTo(1, 0, 1, ry);
+        sh.lineTo(1, 1 - ry);
+        sh.quadraticCurveTo(1, 1, 1 - rx, 1);
+        sh.lineTo(rx, 1);
+        sh.quadraticCurveTo(0, 1, 0, 1 - ry);
+        sh.lineTo(0, ry);
+        sh.quadraticCurveTo(0, 0, rx, 0);
+        const body = new T.ExtrudeGeometry(sh, { depth: 0.995, bevelEnabled: false, curveSegments: 8 });
+        body.translate(-0.5, -0.5, -0.4975);
+        const cap = new T.ShapeGeometry(sh, 8);
+        cap.translate(-0.5, -0.5, 0);
+        s.cardGeo = { body: body, cap: cap };
+        return s.cardGeo;
+    }
+
+    function cardMesh(T, s, faceImg, backStyle) {
+        let faceTex = null;
+        try { faceTex = cardTexture(T, faceImg); } catch (e) { return null; }
+        const backTex = cardBackTexture(T, s, backStyle);
+        if (!backTex) return null;
+        const geo = cardGeo(s);
+        // alphaTest, not transparent. The card's rounded corners come from the
+        // GEOMETRY here, so the only thing the face's alpha still has to do is cut
+        // the site PNG's own transparent corners — which alphaTest does in the
+        // OPAQUE pass, so the card writes depth and sorts against the felt, the
+        // logo and every other card by the depth buffer rather than by distance.
+        const faceMat = new T.MeshLambertMaterial({ map: faceTex, alphaTest: 0.5 });
+        const backMat = new T.MeshLambertMaterial({ map: backTex, alphaTest: 0.5 });
+        const slab = new T.Mesh(geo.body, new T.MeshLambertMaterial({ color: CARD_EDGE }));
+        const front = new T.Mesh(geo.cap, faceMat);
+        front.position.z = 0.5;
+        const back = new T.Mesh(geo.cap, backMat);
+        back.position.z = -0.5;
+        back.rotation.y = Math.PI;   // faces outward, and mirrors the back's art
+        // The slab casts, the face receives — which shadows a card by the card
+        // lying on it, for nothing, out of the same shadow map.
+        slab.castShadow = true;
+        slab.receiveShadow = true;
+        front.receiveShadow = true;
+        // Deliberately NOT on a private layer. coin3d needed one to keep its chip
+        // rig off the cards; here there is one rig and being lit by it is the point.
+        const group = new T.Group();
+        group.add(slab, front, back);
+        group.userData.gpeFaceTex = faceTex;
+        group.userData.gpeFaceMat = faceMat;
+        return group;
+    }
+
+    // The other players' hole cards. The site draws these as a small flat sprite
+    // standing upright against the cloth, which is the one thing left on the felt
+    // that does not share the table's perspective — a card on a table you are
+    // looking down at should be lying down.
+    //
+    // Same slab as a dealt card, with no flight and no flip: it arrives face-down
+    // and stays that way, so there is nothing to animate. It casts into the same
+    // shadow map as everything else, which is the whole point of one scene.
+    //
+    // The one thing NOT taken from the sprite is its aspect. gpokr's back asset is
+    // 23x26 — nearly square, because it is drawn as a flat upright tile rather than
+    // as a card in perspective. Laid flat, 23x26 foreshortens to about 23x23 and
+    // reads as a coaster, so the length is the card's own proportion off the width.
+    //
+    // Gentler than a real card's 1.4, deliberately: the PAIR has to end up in the
+    // sprite's footprint, and two cards offset by REAR already spend some of it.
+    // At 1.4 the pair came out half again as tall as the tile it replaced, which
+    // next to the seats still showing the site's own tile read as a mistake.
+    const CARD_ASPECT = 1.25;
+    // The thickness slider is set against a BOARD card, whose slot is 53px wide. A
+    // seat's card is 23px, and 8px of edge on a 23px card is a block of wood, not a
+    // card — so the same setting is applied in proportion rather than literally.
+    const CARD_THICK_REF = 53;
+    function parkCardBack(rect, opts) {
+        const s = session;
+        if (!s || !rect || !rect.width) return null;
+        const T = window.THREE;
+        if (!T) return null;
+        const o = opts || {};
+        const backTex = cardBackTexture(T, s, o.backStyle);
+        if (!backTex) return null;
+        const geo = cardGeo(s);
+        // One material for both caps of both cards: the back's art is the same either
+        // way up, and the session owns the texture, so nothing here disposes it.
+        const face = new T.MeshLambertMaterial({ map: backTex, alphaTest: 0.5 });
+        const edge = new T.MeshLambertMaterial({ color: CARD_EDGE });
+        // TWO cards, because that is what the sprite is. gpokr's 23x26 asset is a
+        // whole little still life — the pair, the rear card peeking out up-and-left,
+        // and the halo under them — so drawing one slab would turn a hand of two
+        // into a hand of one. The rear is offset and the front sits ON it, which is
+        // what the art depicts and what a real pair does.
+        const REAR = 3;                       // css px the rear card peeks, up and left
+        const cards = [];
+        for (let i = 0; i < 2; i++) {
+            const slab = new T.Mesh(geo.body, edge);
+            const up = new T.Mesh(geo.cap, face);
+            up.position.z = 0.5;
+            const down = new T.Mesh(geo.cap, face);
+            down.position.z = -0.5;
+            down.rotation.y = Math.PI;
+            slab.castShadow = true;
+            slab.receiveShadow = true;
+            up.receiveShadow = true;
+            const g = new T.Group();
+            g.add(slab, up, down);
+            s.scene.add(g);
+            s.cards.add(g);
+            cards.push(g);
+        }
+        const mine = s.epoch;
+
+        let at = rect, gone = false, thick = clampCardThick(o.thickness);
+        let spin = o.spin || 0;
+
+        const place = () => {
+            const f = feltFrame();
+            if (!f) return;
+            // Each card is the tile MINUS the offset, so the two of them together
+            // occupy the footprint the site's single tile did.
+            const w = Math.max(6, at.width - REAR);
+            const scale = Math.min(1, at.width / CARD_THICK_REF);
+            const h = Math.max(0.02, thick * scale * f.wpp);
+            const L = w * CARD_ASPECT * f.wpp;
+            for (let i = 0; i < cards.length; i++) {
+                const rear = i === 0;
+                const r = { left: at.left + (rear ? 0 : REAR),
+                    top: at.top + (rear ? 0 : REAR), width: w, height: at.height };
+                const q = rectToFelt(f, r);
+                // The front card stands on the rear one, so the pair is a stack of
+                // two rather than two slabs fighting for the same plane.
+                cards[i].position.set(q.X, -FELT_DROP + h / 2 + (rear ? 0 : h), q.Z);
+                cards[i].rotation.set(-Math.PI / 2, 0, spin);   // lie flat, back art up
+                cards[i].scale.set(q.sx, L, h);
             }
-            m.position.set(X, y, Z);
-            m.scale.set(sx, h, sz);
+            s.needsRender = Math.max(s.needsRender, 2);
+            s.shadowDirty = true;
+        };
+        place();
+
+        return {
+            move(r, newThick) {
+                if (gone || session !== s || s.epoch !== mine) return;
+                let dirty = false;
+                if (newThick != null) {
+                    const t = clampCardThick(newThick);
+                    if (t !== thick) { thick = t; dirty = true; }
+                }
+                if (r && r.width && (Math.abs(r.left - at.left) > 0.5 ||
+                    Math.abs(r.top - at.top) > 0.5 || Math.abs(r.width - at.width) > 0.5 ||
+                    Math.abs(r.height - at.height) > 0.5)) { at = r; dirty = true; }
+                if (dirty) place();
+            },
+            setThickness(t) { this.move(null, t); },
+            remove() {
+                if (gone) return;
+                gone = true;
+                for (const g of cards) {
+                    if (session === s) { s.cards.delete(g); s.scene.remove(g); }
+                    disposeCard(g);
+                }
+                if (session === s) {
+                    s.needsRender = Math.max(s.needsRender, 2);
+                    s.shadowDirty = true;
+                }
+            },
+            isGone: () => gone || session !== s || s.epoch !== mine,
+        };
+    }
+
+    // rect is the site's own card slot in viewport px; faceImg its decoded <img>.
+    // The card STAYS when the flight ends — it is the board from then on, with the
+    // site's image covered behind it — so the mesh lives in the scene and the
+    // actor only drives it from outside.
+    function dealCard(rect, faceImg, opts) {
+        const s = session;
+        if (!s || !rect || !rect.width || !faceImg) return null;
+        const T = window.THREE;
+        if (!T) return null;
+        const o = opts || {};
+        const group = cardMesh(T, s, faceImg, o.backStyle);
+        if (!group) return null;
+        s.scene.add(group);
+        s.cards.add(group);
+        const mine = s.epoch;
+
+        let at = rect, gone = false, parked = false, facedUp = false;
+        let thick = clampCardThick(o.thickness);
+        const delay = Math.max(0, o.delay || 0);
+        let t = o.instant ? (DEAL.FLY + DEAL.HOLD + DEAL.FLIP + DEAL.REST) : -delay;
+
+        // theta: PI face-down, 0 face-up. The tumble is about world X — over the
+        // card's SHORT edge, forward into empty felt. Not Z: rolling over the long
+        // edge sweeps half the card's width each side, and board cards are ~8px
+        // apart, so it would sweep straight through its neighbours.
+        //
+        // The card goes edge-on at theta ~= 116deg, about 64% through the flip, so
+        // the order is back -> one-frame sliver -> face standing upright and square
+        // to the camera -> flat. The reveal lands where the card is most legible,
+        // and a card standing on the felt mid-flip rakes a long shadow across the
+        // cloth, which is the frame that proves this whole thing.
+        const place = (X, Y, Z, theta, spin) => {
+            const f = feltFrame();
+            if (!f) return;
+            const q = rectToFelt(f, at);
+            const h = Math.max(0.02, thick * f.wpp);   // floor in WORLD units: 0.2 css px is
+            const phi = -Math.PI / 2 + theta;          // scale-dependent and lands under the
+                                                       // key light's 0.02 normalBias -> acne
+            // The card's length is its REAL proportion — rect.height * wpp — and
+            // deliberately NOT rectToFelt's sz, which carries a 1/sinE stretch.
+            //
+            // That stretch exists to make a rectangle project back onto exactly the
+            // slot the site laid out, which is right for a shadow proxy (what used
+            // it before) and wrong for the card itself: cancelling the
+            // foreshortening cancels the only cue that the card is lying down. A
+            // stretched card fills its slot perfectly and reads as standing upright
+            // facing the camera — next to a chip, whose round top foreshortens into
+            // an ellipse, it looks like it is on a different plane. Unstretched it
+            // covers 53x62 of the slot's 53x69 instead, which costs nothing: the
+            // site's own image is visibility:hidden, so there is nothing underneath
+            // for it to fail to line up with.
+            const L = at.height * f.wpp;
+            // Lowest vertex grazes the felt: h/2 lying flat at either end, L/2
+            // stood on edge at 90 degrees. That IS a card pivoting on its edge, so
+            // the contact shadow tucks under it without being told to.
+            const lift = (L / 2) * Math.abs(Math.cos(phi)) + (h / 2) * Math.abs(Math.sin(phi));
+            group.position.set(X == null ? q.X : X, (Y == null ? 0 : Y) - FELT_DROP + lift,
+                Z == null ? q.Z : Z);
+            group.rotation.set(phi, 0, spin || 0);
+            group.scale.set(q.sx, L, h);
+        };
+
+        // Where it comes in from: up and back, both of which move a point up-screen
+        // under this camera. Clamped to the canvas so it never enters off the top —
+        // which keeps this step independent of the canvas-size work.
+        const entry = () => {
+            const f = feltFrame();
+            if (!f) return null;
+            const q = rectToFelt(f, at);
+            const cy = at.top + at.height / 2;
+            const avail = Math.max(0, cy - f.r.top - 6);
+            const k = Math.min(1, avail / 98);          // 98px is what lift+back buy up-screen
+            return {
+                X: q.X + DEAL.LEAD * f.wpp,
+                Y: DEAL.ENTER_LIFT * k * f.wpp,
+                Z: q.Z - DEAL.ENTER_BACK * k * f.wpp / s.sinE,
+            };
+        };
+
+        // So a tilt change can reach a card that is already lying there.
+        group.userData.gpeReplace = () => { if (parked && !gone) place(null, null, null, 0, 0); };
+        if (o.instant) {
+            place(null, null, null, 0, 0);
+            parked = true;
+            facedUp = true;
+            // Report it face-up NOW. There is no actor on this path (see below), so
+            // nothing else ever will — and the caller's watchdog unparks a card that
+            // never reported landing, which adoptBoardCards then re-parks instantly,
+            // which never reports either: the board is torn down and rebuilt every
+            // 1.5s, forever, and any frame caught mid-cycle shows a card that has not
+            // landed properly. coin3d never had this because it registers its actor
+            // even when instant, so its step() runs once and does the reporting.
+            if (o.onFaceUp) { try { o.onFaceUp(); } catch (err) { /* not ours */ } }
+        }
+        else { place(null, null, null, Math.PI, DEAL.SPIN); group.visible = false; }
+        s.needsRender = Math.max(s.needsRender, 2);
+        s.shadowDirty = true;
+
+        const actor = {
+            // An empty stand-in on purpose: addActor puts this in the scene and
+            // removeActor takes it out, and neither must touch the card.
+            object3D: new T.Group(),
+            step(dt) {
+                if (gone) return false;
+                t += dt;
+                if (t < 0) return true;
+                group.visible = true;
+                const e = entry();
+                if (!e) return true;
+                if (t < DEAL.FLY) {
+                    const p = easeOutCubic(t / DEAL.FLY);
+                    const f = feltFrame();
+                    const q = f ? rectToFelt(f, at) : null;
+                    if (q) {
+                        place(e.X + (q.X - e.X) * p, e.Y * (1 - p), e.Z + (q.Z - e.Z) * p,
+                            Math.PI, DEAL.SPIN * (1 - p));
+                    }
+                    return true;
+                }
+                const afterFly = t - DEAL.FLY;
+                if (afterFly < DEAL.HOLD) { place(null, null, null, Math.PI, 0); return true; }
+                const fp = (afterFly - DEAL.HOLD) / DEAL.FLIP;
+                if (fp < 1) {
+                    place(null, null, null, Math.PI * (1 - easeInOutCubic(fp)), 0);
+                    return true;
+                }
+                place(null, null, null, 0, 0);
+                if (!facedUp) {
+                    facedUp = true;
+                    if (o.onFaceUp) { try { o.onFaceUp(); } catch (err) { /* not ours */ } }
+                }
+                if (afterFly - DEAL.HOLD - DEAL.FLIP < DEAL.REST) return true;
+                parked = true;
+                return false;   // NOTE: stepActors keeps an actor only on === true
+            },
+        };
+        if (!o.instant && !addActor(actor)) { s.scene.remove(group); s.cards.delete(group); return null; }
+
+        const live = () => !gone && session === s && s.epoch === mine;
+        return {
+            move(r) {
+                if (!live() || !r || !r.width) return;
+                at = r;
+                if (parked) place(null, null, null, 0, 0);
+                s.needsRender = Math.max(s.needsRender, 2);
+                s.shadowDirty = true;
+            },
+            remove() {
+                if (gone) return;
+                gone = true;
+                if (session === s) {
+                    s.cards.delete(group);
+                    s.scene.remove(group);
+                    s.needsRender = Math.max(s.needsRender, 2);
+                    s.shadowDirty = true;
+                }
+                disposeCard(group);
+            },
+            retexture(src) {
+                if (!live() || !src) return false;
+                const mat = group.userData.gpeFaceMat;
+                if (!mat) return false;
+                let tex;
+                try { tex = cardTexture(T, src); } catch (e) { return false; }
+                const old = group.userData.gpeFaceTex;
+                mat.map = tex;
+                mat.needsUpdate = true;
+                group.userData.gpeFaceTex = tex;
+                if (old) { try { old.dispose(); } catch (e) {} }
+                s.needsRender = Math.max(s.needsRender, 2);
+                return true;
+            },
+            setThickness(v) {
+                if (!live()) return;
+                const n = clampCardThick(v);
+                if (n === thick) return;
+                thick = n;
+                if (parked) place(null, null, null, 0, 0);
+                s.needsRender = Math.max(s.needsRender, 2);
+                s.shadowDirty = true;
+            },
+            thickness: () => thick,
+            isParked: () => parked && !gone,
+            isGone: () => gone || session !== s || s.epoch !== mine,
+        };
+    }
+
+
+
+    // Card thickness in CSS px. Floors at 0 here — the setting's own slider goes to
+    // 0 and "paper" is a legitimate ask; the WORLD floor that stops shadow acne is
+    // applied in place() where the conversion happens.
+    function clampCardThick(v) {
+        const n = parseFloat(v);
+        if (!isFinite(n)) return DEAL.THICK;
+        return Math.max(0, Math.min(24, n));
+    }
+
+    // A parked card is NOT an actor — its actor carries an empty stand-in — so
+    // removeActor's dispose pass never reaches it. Everything per-card is freed
+    // here; the geometry and the back texture are shared and die with the session.
+    function disposeCard(group) {
+        group.traverse((n) => {
+            const m = n.material;
+            if (!m) return;
+            (Array.isArray(m) ? m : [m]).forEach((x) => x && x.dispose());
         });
-        if (changed) { s.needsRender = Math.max(s.needsRender, 2); s.shadowDirty = true; }
-        return true;
+        const tex = group.userData && group.userData.gpeFaceTex;
+        if (tex) { try { tex.dispose(); } catch (e) {} }
     }
 
     function projectAbove(pageX, pageY, hCss) {
@@ -1653,6 +2614,19 @@
             y: f.r.top + (-v.y * 0.5 + 0.5) * f.r.height,
         };
     }
+
+    // Set the table's view angle, in degrees. sinE/cosE, the camera, and the felt,
+    // rail and wall geometry all derive from it, so this rebuilds the scene rather
+    // than trying to patch it in place. Parked cards and chips come back on their
+    // own: the epoch bump makes content.js re-park them on the next sweep.
+    function setElevation(deg) {
+        const n = parseFloat(deg);
+        const v = isFinite(n) ? Math.max(20, Math.min(90, n)) : ELEV_DEG_0;
+        if (v === ELEV_DEG) return;
+        ELEV_DEG = v;
+        if (session) { disable(); enable(); }
+    }
+    const elevation = () => ELEV_DEG;
 
     // Aim the fill — the second directional, the one that opens up whatever the
     // key leaves dark. It does not cast, so moving it costs nothing but a redraw.
@@ -1753,17 +2727,18 @@
         s.scene.add(overhead);
 
         const A = FELT_HALF_W_PX * (VIEW_W / ART_W);           // felt half-width, world
-        const B = FELT_HALF_D_PX * (VIEW_W / ART_W) / s.sinE;  // felt half-depth (un-foreshortened)
+        // Felt half-depth, un-foreshortened — against the REFERENCE angle, not the
+        // live one.
+        //
+        // This used to divide by the live sinE, which meant the table's world
+        // dimensions changed every time the view angle moved: drop to 25 and the
+        // half-depth went 5.75 -> 12.2, so the oval became a circle and the seats
+        // (raycast onto a plane) were thrown into the distance. The table is a
+        // table; its size is not a function of where you stand. So the geometry is
+        // built once, at REF_SIN, and the view angle now only moves the camera.
+        const B = FELT_HALF_D_PX * (VIEW_W / ART_W) / REF_SIN;
         s.feltA = A; s.feltB = B;
         s.feltAspect = A / B;
-
-        // Holder for the card shadow casters (see setCardCasters). Empty until
-        // content.js says what is on the table, and built with the scene, which is
-        // what carries it through the disable/enable churn of a table re-render.
-        s.casterGeo = new T.BoxGeometry(1, 1, 1);
-        s.casterMat = new T.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
-        s.cardCasters = new T.Group();
-        s.scene.add(s.cardCasters);                                   // for ~square texture tiles
 
         // ---- felt surface ----
         s.feltNormal = feltNormalTexture(T);
@@ -1837,16 +2812,29 @@
             if (!s.enabled) { tex.dispose(); return; }
             s.logoTex = tex;
             s.logoGeo = new T.PlaneGeometry(LOGO_W, LOGO_W / aspect);
-            // depthTest:false + renderOrder so it always composites onto the felt
-            // (a plane at felt height otherwise loses the depth test against it).
+            // renderOrder + depthWrite:false so it composites onto the felt rather
+            // than fighting it for the same depth.
+            //
+            // depthTest stays ON. It used to be off — back when the felt was the
+            // only thing in this scene and the watermark could not lose to
+            // anything. Now that cards and chips lie on the cloth, an untested
+            // logo paints straight over them: it is the last thing drawn and it
+            // ignores what is in front of it. Being 0.15 above the felt plane is
+            // enough to win against the felt without the hammer.
             s.logoMat = new T.MeshBasicMaterial({
                 map: tex, transparent: true, opacity: logoOpacity,
-                depthWrite: false, depthTest: false,
+                depthWrite: false, depthTest: true,
             });
             const logo = new T.Mesh(s.logoGeo, s.logoMat);
             logo.renderOrder = 10;
             logo.rotation.x = -Math.PI / 2;
-            logo.position.set(0, 0.05, 0);  // just above the felt, centered
+            // Just above the FELT, which is at -FELT_DROP — not at y=0.05, which is
+            // 0.15 above it. That gap did not matter while the watermark was the
+            // only thing in this scene; now a card lying on the cloth is 2px thick
+            // and sits BELOW a logo floating that high, so the logo drew straight
+            // through the card's face. Sitting on the felt it belongs to, it loses
+            // to anything actually resting on it.
+            logo.position.set(0, -FELT_DROP + 0.01, 0);  // on the felt, centered
             s.scene.add(logo);
             s.needsRender = Math.max(s.needsRender, 2); // redraw now it's in
         });
@@ -1949,6 +2937,7 @@
             sinE: Math.sin(e), cosE: Math.cos(e),
             // Actors, their fixed-step accumulator, and the shadow-map flag.
             actors: [], acc: 0, last: 0, shadowDirty: true,
+            cards: new Set(),
             // Bumped on every enable(). Anything holding a handle into this scene
             // compares it and lets go when it changes: syncTable3d does
             // disable(); enable() on any GWT re-render, and a same-tick pair
@@ -1989,12 +2978,12 @@
         // before the renderer goes, or a table re-render leaks one set per actor.
         for (const a of (s.actors || []).slice()) removeActor(s, a);
         [s.feltGeo, s.railGeo, s.wallGeo, s.logoGeo, s.floorGeo,
-            s.stoolSeatGeo, s.stoolLegGeo, s.stoolStretchGeo, s.casterGeo]
+            s.stoolSeatGeo, s.stoolLegGeo, s.stoolStretchGeo]
             .concat(s.chairGeos || []).forEach((g) => g && g.dispose());
         [s.feltMat, s.railMat, s.wallMat, s.logoMat, s.floorMat,
             s.stoolSeatMat, s.stoolWoodMat,
             s.chairPadMat, s.chairPrintMat, s.chairTubeMat,
-            s.casterMat].forEach((m) => m && m.dispose());
+            ].forEach((m) => m && m.dispose());
         if (s.floorMat && s.floorMat.map) s.floorMat.map.dispose();
         if (s.chairWeave) s.chairWeave.dispose();
         if (s.chairPrint) s.chairPrint.dispose();
@@ -2003,7 +2992,18 @@
         if (s.railColor) s.railColor.dispose();
         if (s.railNormal) s.railNormal.dispose();
         if (s.logoTex) s.logoTex.dispose();
-        if (s.chipGeo) s.chipGeo.dispose();
+        // Parked cards are not actors, so nothing else frees them.
+        for (const g of s.cards || []) disposeCard(g);
+        if (s.cards) s.cards.clear();
+        if (s.cardGeo) { s.cardGeo.body.dispose(); s.cardGeo.cap.dispose(); }
+        for (const k in (s.backTex || {})) { try { s.backTex[k].dispose(); } catch (e) {} }
+        for (const m of s.plates || []) {
+            if (m.material.map) m.material.map.dispose();
+            m.material.dispose();
+        }
+        if (s.plates) s.plates.clear();
+        if (s.plateGeo) s.plateGeo.dispose();
+        disposeChipParts(s);
         for (const a of s.chipArt || []) {
             if (!a) continue;
             a.faceMat.dispose(); a.rimMat.dispose();
@@ -2020,9 +3020,9 @@
 
     function disable() { if (session) dispose(session); }
 
-    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setCardCasters, setKeyLight, keyLight: () => KEY_POS.slice(),
+    window.GPE_TABLE3D = { enable, disable, setTexZoom, setTexDepth, setFeltColor, setLeatherColor, setLogoOpacity, setSurroundColor, setBackdrop, setSeats, projectAbove, feltMaskParams, setKeyLight, keyLight: () => KEY_POS.slice(),
         setFillLight, fillLight: () => FILL_POS.slice(), setLightLevels, lightLevels,
-        addActor, touchShadows, parkChip,
+        addActor, touchShadows, parkChip, dealCard, setElevation, elevation, setChipRound, parkStackPlate, feltFit, feltHas, parkCardBack,
         // Page space <-> felt space, for anything drawing into this scene.
         feltFrame, toFelt, rectToFelt, onFelt,
         epoch: () => (session ? session.epoch : 0),

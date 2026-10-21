@@ -1476,7 +1476,13 @@
             // shadow sprite of their own, which is right for a disc bouncing
             // across a felt nobody has modelled.
             s.renderer.shadowMap.enabled = true;
-            s.renderer.shadowMap.type = T.PCFSoftShadowMap;
+            // PCFShadowMap, not PCFSoftShadowMap: three r185 deprecated the soft
+            // variant and silently substitutes this one anyway
+            // (vendor/three.iife.js:37785-37788), warning from inside the shadow
+            // pass every time a renderer is built. So this is the same render with
+            // the noise removed, not a downgrade. If the shadows ever want to be
+            // softer, that is light.shadow.radius now, or VSMShadowMap.
+            s.renderer.shadowMap.type = T.PCFShadowMap;
             s.renderer.outputColorSpace = T.SRGBColorSpace;
             s.camera = new T.OrthographicCamera(0, 1, 0, -1, -2000, 2000);
             s.camera.position.set(0, 0, 500);
