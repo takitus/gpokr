@@ -227,7 +227,13 @@ export function startChips3d(ctx, look) {
 
         // ui2's shadow and label off, our plate on, for the groups we draw.
         const pad = (r, k) => ({ left: r.left - k, top: r.top - k, width: r.width + 2 * k, height: r.height + 2 * k });
-        const cardRects = readCards(app).board.map(({ sprite }) => pad(pageRect(cr, sprite.getBounds()), 5));
+        // Every card on the felt, the seats' as well as the board's: a seat's
+        // pair lies right beside its bet, and the value plate is wider than ui2's
+        // label, so a value steered only round the board went under the pair.
+        // The pairs get more room, as the 3D pair lies a little proud of ui2's.
+        const cs = readCards(app);
+        const cardRects = cs.board.concat(cs.boardBacks, cs.faces).map(({ sprite }) => pad(pageRect(cr, sprite.getBounds()), 5))
+            .concat(cs.backs.map(({ sprite }) => pad(pageRect(cr, sprite.getBounds()), 8)));
         for (const grp of good) {
             const foot = feet.get(grp.node);
             if (!foot) continue;
