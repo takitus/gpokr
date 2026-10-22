@@ -85,29 +85,25 @@
 
     // Chip faces are drawn to match the site's own chip art: a colored body with
     // six white edge spots (EDGE_SPOTS below), a big white inner disc, and the
-    // denomination in outlined gray. Every body color here was sampled off a
-    // screenshot of a live table, so the set matches what the site actually draws:
-    // $1 is grey (not the casino-standard white), $5 is a deep red rather than an
-    // orange one, and the two largest are abbreviated ("2.5K" blue, "10K" pale
-    // green) exactly as the site abbreviates them.
+    // denomination in outlined gray. The body colors are the new UI's own, copied
+    // from its chip table (CHIP_DENOMINATIONS_SVG in its bundle) rather than
+    // sampled off screenshots, so a 3D chip is the color of the flat one it
+    // replaces: $1 is grey (not the casino-standard white), $5 a deep red rather
+    // than an orange one. Values from 1,000 up are abbreviated, as the site does.
     const CHIP_TYPES = [
-        { denom: 1,     body: "#8a8a8a" },
-        { denom: 5,     body: "#a82026" },
-        { denom: 25,    body: "#189040" },
-        { denom: 100,   body: "#0d0d0d" },
-        { denom: 500,   body: "#a4007c" },
-        // The new UI's $1,000 chip; the classic site never had one. Its orange.
+        { denom: 1,     body: "#4d4d4d" },
+        { denom: 5,     body: "#990000" },
+        { denom: 25,    body: "#00912c" },
+        { denom: 100,   body: "#000000" },
+        { denom: 500,   body: "#990075" },
+        // The new UI's $1,000 chip; the classic site never had one.
         { denom: 1000,  body: "#cc6f00", label: "1K" },
-        // The site abbreviates the big two on the chip face rather than printing
-        // all the digits, so they carry explicit labels. Kept in ascending order.
-        // The 2500's blue takes the default glyph color; the 10,000's pale green
-        // needs a darker one, because #606060 goes muddy on a body that light.
-        { denom: 2500,  body: "#5292d0", label: "2.5K" },
-        { denom: 10000, body: "#bde9a4", label: "10K", text: "#3c3c3c" },
-        // The site's top two. Sampled from its own sprites (a pale wheat and a
-        // pale blue-grey), both light enough to need the darker glyph.
-        { denom: 50000,  body: "#efe2b8", label: "50K",  text: "#3c3c3c" },
-        { denom: 250000, body: "#d0e2e1", label: "250K", text: "#3c3c3c" },
+        // Kept in ascending order. The light bodies (10K and up) take a darker
+        // glyph, because #606060 goes muddy against them.
+        { denom: 2500,  body: "#0068cc", label: "2.5K" },
+        { denom: 10000, body: "#88cc66", label: "10K", text: "#3c3c3c" },
+        { denom: 50000,  body: "#ebdcad", label: "50K",  text: "#3c3c3c" },
+        { denom: 250000, body: "#b8e0dc", label: "250K", text: "#3c3c3c" },
     ];
     const CHIP_SPOT = "#f8f8f8";   // edge spots and inner disc
     const CHIP_TEXT = "#606060";   // denomination glyphs
