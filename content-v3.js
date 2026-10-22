@@ -7,16 +7,21 @@
 
     const SETTINGS_KEY = "gpt_settings";
 
-    // The classic add-on's chat and bet buttons ride along, so the shim can
-    // carry them over the first time v3 runs.
+    // The classic add-on's chat and bet buttons, nicknames and notes ride
+    // along, so the shim can carry them over the first time v3 runs.
     const LEGACY_KEY = "gpe_settings";
+    const NICKS_KEY = "gpe_player_nicknames";
+    const NOTES_KEY = "gpe_player_notes";
     const send = () => {
-        chrome.storage.local.get([SETTINGS_KEY, LEGACY_KEY], (res) => {
+        chrome.storage.local.get([SETTINGS_KEY, LEGACY_KEY, NICKS_KEY, NOTES_KEY], (res) => {
             const old = res[LEGACY_KEY] || {};
             window.postMessage({
                 __gpt: "settings",
                 values: res[SETTINGS_KEY] || {},
-                legacy: { chatButtons: old.chatButtons, betButtons: old.betButtons },
+                legacy: {
+                    chatButtons: old.chatButtons, betButtons: old.betButtons,
+                    playerNicks: res[NICKS_KEY], playerNotes: res[NOTES_KEY],
+                },
             }, "*");
         });
     };

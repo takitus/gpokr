@@ -15,6 +15,8 @@ import { startTable3d } from "./features/table3d.js";
 import { startHotkeys } from "./features/hotkeys.js";
 import { startCardStyle, cardBackStyle } from "./features/cardStyle.js";
 import { startSeatStyle } from "./features/seatStyle.js";
+import { startPlayerNotes } from "./features/playerNotes.js";
+import { createPeople } from "./lib/people.js";
 import { openTable3dEditor, openLookEditor } from "./editors.js";
 import { createPrefs } from "./lib/prefs.js";
 import { createLook } from "./lib/look.js";
@@ -68,12 +70,14 @@ export default {
         const prefs = createPrefs(ctx);
         const look = createLook(prefs);
         const editors = createEditors();
+        const people = createPeople(prefs);
 
         offs.push(toggled(ctx, "handSummary", (c) => startHandSummary(c, tracker)));
         offs.push(toggled(ctx, "betReadout", (c) => startBetReadout(c, tracker, prefs, editors)));
         // Share first: it sits ahead of the quick-chat buttons in the chat bar.
         offs.push(toggled(ctx, "shareHand", (c) => startShareHand(c, tracker)));
-        offs.push(toggled(ctx, "quickChat", (c) => startQuickChat(c, tracker, prefs, editors)));
+        offs.push(toggled(ctx, "quickChat", (c) => startQuickChat(c, tracker, prefs, editors, people)));
+        offs.push(toggled(ctx, "playerNotes", (c) => startPlayerNotes(c, people)));
         offs.push(toggled(ctx, "betButtons", (c) => startBetButtons(c, prefs, editors)));
         // Celebrations ride the same wire as throws, so they live under its switch.
         offs.push(toggled(ctx, "interactions", (c) => startInteractions(c, tracker, editors)));

@@ -1,5 +1,5 @@
 /* The player's own lists (chat buttons, bet buttons): things they edit rather
- * than switch, so they are not manifest settings. They follow the account when
+ * than switch, so they are not manifest settings (nicknames and notes too). They follow the account when
  * the host offers account storage, and live in this browser otherwise. Lists
  * saved by the classic add-on are copied in by the Chrome shim, as local
  * values, the first time v3 runs. */
@@ -17,7 +17,7 @@ export function createPrefs(ctx) {
         }
         doc = fromAccount && typeof fromAccount === "object" ? { ...fromAccount } : {};
         // Seed from this browser for anything the account does not have yet.
-        for (const k of ["chatButtons", "betButtons", "look", "betReadout"]) {
+        for (const k of ["chatButtons", "betButtons", "look", "betReadout", "playerNicks", "playerNotes"]) {
             if (doc[k] === undefined) {
                 const v = local.get(k);
                 if (v !== undefined) doc[k] = v;

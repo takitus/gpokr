@@ -31,26 +31,30 @@ const TOKENS = [
     { re: /\[lastwinner\]/gi, label: "[lastwinner]", key: "winner" },
 ];
 
-export function fillTokens(text, names) {
+/* call: how to address a player, their nickname if they have one (the
+ * classic add-on's displayName), the handle otherwise. */
+export function fillTokens(text, names, call = (n) => n) {
     let out = text;
-    for (const t of TOKENS) out = out.replace(t.re, names[t.key] || "");
+    for (const t of TOKENS) out = out.replace(t.re, names[t.key] ? call(names[t.key]) || names[t.key] : "");
     return out.replace(/\s+/g, " ").trim();
 }
 
-function tipFor(b, names) {
+function tipFor(b, names, call) {
     const used = TOKENS.filter((t) => { t.re.lastIndex = 0; return t.re.test(b.text); });
     if (!used.length) return b.name && b.name !== b.text ? "sends: " + b.text : "";
     const unknown = used.filter((t) => !names[t.key]).map((t) => t.label);
-    const msg = fillTokens(b.text, names);
+    const msg = fillTokens(b.text, names, call);
     if (!msg) return "nothing to send yet — " + unknown.join(" and ") + " unknown";
     return "sends: " + msg + (unknown.length ? `  (${unknown.join(" and ")} unknown)` : "");
 }
 
-export function startQuickChat(ctx, tracker, prefs, editors) {
+export function startQuickChat(ctx, tracker, prefs, editors, people) {
     const names = { departed: "", winner: "" };
     let departedAge = 0;
     const offs = [];
     const myName = () => (ctx.state.get().user || {}).name;
+    // Nicknames only while Player notes is on: switched off, it is all off.
+    const call = (n) => (people && ctx.settings.get("playerNotes") !== false && people.nick(n)) || n;
 
     // [lastwinner]: the main pot of the hand just played, never me.
     offs.push(tracker.subscribe((hand) => {
@@ -89,9 +93,9 @@ export function startQuickChat(ctx, tracker, prefs, editors) {
             btn.type = "button";
             btn.className = "gpt-chat-btn";
             btn.textContent = b.name || b.text;
-            btn.addEventListener("mouseenter", () => { btn.title = tipFor(b, names); });
+            btn.addEventListener("mouseenter", () => { btn.title = tipFor(b, names, call); });
             btn.addEventListener("click", () => {
-                const msg = fillTokens(b.text, names);
+                const msg = fillTokens(b.text, names, call);
                 if (msg) props.send(msg);
             });
             el.append(btn);

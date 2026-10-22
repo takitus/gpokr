@@ -49,6 +49,13 @@
             "default": true
         },
         {
+            "key": "playerNotes",
+            "type": "switch",
+            "label": "Nicknames and notes",
+            "hint": "Hover a seat for its nickname and notes (✎ to edit); the * chat buttons address players by nickname",
+            "default": true
+        },
+        {
             "key": "quickChat",
             "type": "switch",
             "label": "Quick chat buttons",

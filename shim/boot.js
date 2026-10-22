@@ -44,14 +44,17 @@ function settingsStore(manifest) {
     return store;
 }
 
-/* The classic add-on's button lists, copied once into the storage v3 reads
- * (the host's own local-storage layout), never over anything v3 has saved. */
+/* The classic add-on's button lists, nicknames and notes, copied once into
+ * the storage v3 reads (the host's own local-storage layout), never over
+ * anything v3 has saved. */
+const isMap = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 function adoptLegacy(id, legacy) {
     if (!legacy) return;
-    for (const k of ["chatButtons", "betButtons"]) {
+    for (const k of ["chatButtons", "betButtons", "playerNicks", "playerNotes"]) {
         const key = `ext.${id}.${k}`;
+        const ok = k.startsWith("player") ? isMap(legacy[k]) : Array.isArray(legacy[k]);
         try {
-            if (Array.isArray(legacy[k]) && localStorage.getItem(key) === null) {
+            if (ok && localStorage.getItem(key) === null) {
                 localStorage.setItem(key, JSON.stringify(legacy[k]));
             }
         } catch (e) { /* storage blocked */ }
