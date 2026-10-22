@@ -657,14 +657,16 @@ body.dark-mode .gpt-note-editor input, body.dark-mode .gpt-note-editor textarea 
 }
 
 /* Seat style: the same space above and below the text in the card's name and
- * money rows. ui2 gives the name 2px and the money 3px plus a min-height
- * worth another 1px a side (all × table scale); 3px each is the same total,
- * so the card keeps its height. */
-html.gpt-seats #GGame .iogc-PlayerPanel-portraitH .iogc-PlayerPanel-name-portrait {
+ * money rows, in both seat layouts. ui2 gives the money 3px plus a min-height
+ * worth another 1px a side (all × table scale), and the name 2px side by side
+ * but none at all stacked (avatar over card). 3px each everywhere: the side-by-
+ * side card keeps its height, the stacked one grows by the name's missing 6px
+ * less the money's 2px. */
+html.gpt-seats #GGame .iogc-PlayerPanel-portrait .iogc-PlayerPanel-name-portrait {
     padding-top: calc(3px * var(--table-scale, 1));
     padding-bottom: calc(3px * var(--table-scale, 1));
 }
-html.gpt-seats #GGame .iogc-PlayerPanel-portraitH .iogc-PlayerStatsPanel-portrait {
+html.gpt-seats #GGame .iogc-PlayerPanel-portrait .iogc-PlayerStatsPanel-portrait {
     min-height: 0;
     padding-top: calc(3px * var(--table-scale, 1));
     padding-bottom: calc(3px * var(--table-scale, 1));
