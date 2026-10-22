@@ -29,6 +29,7 @@ import { readCards } from "../lib/pixiCards.js";
 
 const DROP_GAP = 0.075;     // s between landings
 const DROP_SPAN = 0.55;     // s for a whole stack, however many chips
+const PLATE_GAP = 12;       // px kept clear between two bets' values
 
 const isChip = (n) => {
     const t = n && n.texture;
@@ -244,7 +245,10 @@ export function startChips3d(ctx, look) {
                 k.renderable = false;
             }
             if (!api.parkStackPlate) continue;
-            const avoid = cardRects.concat([...feet].filter(([o]) => o !== grp.node).map(([, f]) => pad(f, 5)));
+            // Other values, with a gutter: two tabs side by side read as one figure.
+            const tabs = [...plates].filter(([o]) => o !== grp.node).map(([, p]) => p.handle.tab && p.handle.tab())
+                .filter(Boolean).map((r) => ({ ...pad(r, PLATE_GAP), w: 4 }));
+            const avoid = cardRects.concat([...feet].filter(([o]) => o !== grp.node).map(([, f]) => pad(f, 5)), tabs);
             const pl = plates.get(grp.node);
             if (pl && pl.epoch === epoch && !pl.handle.isGone()) { pl.handle.move(foot, grp.amount, DIAM, avoid); continue; }
             if (pl) dropPlate(grp.node);

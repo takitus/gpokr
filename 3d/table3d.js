@@ -1861,14 +1861,14 @@
         if (!s.plates) s.plates = new Set();
         s.plates.add(mesh);
 
-        let at = rect, amt = amount, gone = false;
+        let at = rect, amt = amount, gone = false, tabAt = null;
         let diam = (opts && opts.diameter) || 26;
         let avoid = (opts && opts.avoid) || [];
         const mine = s.epoch;
         // Cheap signature, so a poll that hands us the same cards is not a re-render.
         const sig = (list) => (list || []).map((a) =>
             Math.round(a.left) + "," + Math.round(a.top) + "," +
-            Math.round(a.width) + "," + Math.round(a.height)).join(";");
+            Math.round(a.width) + "," + Math.round(a.height) + "," + (a.w || 1)).join(";");
         let avoidSig = sig(avoid);
 
         const place = () => {
@@ -1906,8 +1906,13 @@
             // side. Values scattered left, right and under around one table read as
             // mess even when each one is individually correct, so the order buys
             // consistency: sideways is a last resort, not an equal option.
+            // Last, at a price: up-screen but well off to the side, clear of the
+            // chips. For a stack with its pair on one side, the rail below and a
+            // neighbour's value on the other, it is the one spot that is free.
+            const UP_COST = 600;
             const tries = [[0, D], [0, D * 0.72], [inward * S * 0.7, D * 0.75],
-                [-inward * S * 0.7, D * 0.75], [inward * S, 0], [-inward * S, 0]];
+                [-inward * S * 0.7, D * 0.75], [inward * S, 0], [-inward * S, 0],
+                [inward * S, -D * 0.55, UP_COST], [-inward * S, -D * 0.55, UP_COST]];
             let ox = 0, oy = D, best = -Infinity;
             for (const t of tries) {
                 const l = cx + t[0] - tw / 2, tp = cy + t[1] - th / 2;
@@ -1928,9 +1933,11 @@
                 for (const a of avoid) {
                     const ow = Math.min(l + tw, a.left + a.width) - Math.max(l, a.left);
                     const oh = Math.min(tp + th, a.top + a.height) - Math.max(tp, a.top);
-                    if (ow > 0 && oh > 0) hidden += ow * oh;
+                    // w: how much worse than hidden this overlap is (another
+                    // value too close reads as one figure).
+                    if (ow > 0 && oh > 0) hidden += ow * oh * (a.w || 1);
                 }
-                const score = n * 4000 - hidden;
+                const score = n * 4000 - hidden - (t[2] || 0);
                 if (score > best) { best = score; ox = t[0]; oy = t[1]; }
                 if (n === 4 && !hidden) break;
             }
@@ -1939,6 +1946,7 @@
             // the tab at (ox, oy) from it; both are laid out relative to whichever
             // corner the box starts at, so an offset tab grows the canvas on its own
             // side rather than dragging the silhouette off the chips.
+            tabAt = { left: cx + ox - tw / 2, top: cy + oy - th / 2, width: tw, height: th };
             const bx = -sw / 2, by = -sh / 2, txo = ox - tw / 2, tyo = oy - th / 2;
             const minX = Math.min(bx, txo), maxX = Math.max(bx + sw, txo + tw);
             const minY = Math.min(by, tyo), maxY = Math.max(by + sh, tyo + th);
@@ -1993,6 +2001,9 @@
                 if (mat.map) mat.map.dispose();
                 mat.dispose();
             },
+            // Where the value tab went, in viewport px, so other plates can keep
+            // their distance.
+            tab: () => (gone ? null : tabAt),
             isGone: () => gone || session !== s || s.epoch !== mine,
         };
     }
