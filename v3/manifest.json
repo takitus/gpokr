@@ -52,7 +52,7 @@
             "key": "playerNotes",
             "type": "switch",
             "label": "Nicknames and notes",
-            "hint": "Hover a seat for its nickname and notes (✎ to edit); the * chat buttons address players by nickname",
+            "hint": "Hover a seat for its nickname and notes (✎ to edit); nicknames replace handles on the player cards and in the * chat buttons",
             "default": true
         },
         {
@@ -94,7 +94,7 @@
             "key": "seatStyle",
             "type": "switch",
             "label": "Seat style",
-            "hint": "Folded players darkened instead of faded, and 4px rounded corners on avatars and player cards",
+            "hint": "Folded players darkened instead of faded, 4px rounded corners, and even spacing in the player card",
             "default": true
         },
         {

@@ -642,3 +642,30 @@ body.dark-mode .gpt-note-editor input, body.dark-mode .gpt-note-editor textarea 
     box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
     transform: translateY(-9px);
 }
+
+/* A nickname in place of the handle on the player card. The handle's text is
+ * kept (so the row keeps its size, and React its text) but not painted; the
+ * nickname is drawn over it in the same font and colour. */
+#GGame .iogc-PlayerPanel-name-portrait[data-gpt-nick] { position: relative; -webkit-text-fill-color: transparent; }
+#GGame .iogc-PlayerPanel-name-portrait[data-gpt-nick]::after {
+    content: attr(data-gpt-nick);
+    position: absolute; inset: 0;
+    padding: inherit;
+    -webkit-text-fill-color: currentColor;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-align: center;
+}
+
+/* Seat style: the same space above and below the text in the card's name and
+ * money rows. ui2 gives the name 2px and the money 3px plus a min-height
+ * worth another 1px a side (all × table scale); 3px each is the same total,
+ * so the card keeps its height. */
+html.gpt-seats #GGame .iogc-PlayerPanel-portraitH .iogc-PlayerPanel-name-portrait {
+    padding-top: calc(3px * var(--table-scale, 1));
+    padding-bottom: calc(3px * var(--table-scale, 1));
+}
+html.gpt-seats #GGame .iogc-PlayerPanel-portraitH .iogc-PlayerStatsPanel-portrait {
+    min-height: 0;
+    padding-top: calc(3px * var(--table-scale, 1));
+    padding-bottom: calc(3px * var(--table-scale, 1));
+}

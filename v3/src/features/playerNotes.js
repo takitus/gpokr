@@ -2,7 +2,12 @@
  * Hovering a seat raises a tab above its player card: the nickname (or "no
  * nickname"), a 📝 when there is a note (the note on hover), and ✎ to edit.
  * The editor takes a nickname, which the quick-chat buttons use in place of
- * the handle, and free-text notes. */
+ * the handle, and free-text notes. A nickname also replaces the handle in the
+ * player card's name row (the handle on hover).
+ *
+ * The name row is ui2's React text, so it is never rewritten: it is tagged
+ * (data-gpt-nick) and style.css hides its text and draws the nickname over
+ * it, keeping the row's size and React's hold on it. */
 
 import { slot } from "../slot.js";
 
@@ -79,7 +84,29 @@ export function startPlayerNotes(ctx, people) {
         v.note.hidden = !note;
         v.note.title = note;
         v.edit.title = "nickname & notes for " + name;
+        tagCard(v, nick);
     };
+    // The card's name row, tagged with the nickname, or untagged without one.
+    const tagged = new Set();
+    function tagCard(v, nick) {
+        const row = v.col && v.col.querySelector(".iogc-PlayerPanel-name-portrait");
+        if (v.row && v.row !== row) untag(v.row);
+        v.row = row;
+        if (!row) return;
+        if (nick && v.name) {
+            if (row.dataset.gptNick !== nick) row.dataset.gptNick = nick;
+            if (row.title !== v.name) row.title = v.name;
+            tagged.add(row);
+        } else untag(row);
+    }
+    function untag(row) {
+        if (!tagged.has(row)) return;
+        delete row.dataset.gptNick;
+        row.removeAttribute("title");
+        tagged.delete(row);
+    }
+    // ui2 may draw a fresh row (a re-render, a reseat); catch it up.
+    const timer = setInterval(() => views.forEach((v) => tagCard(v, v.name ? people.nick(v.name) : "")), 1500);
     const off = people.onChange(() => views.forEach(paint));
 
     const unreg = ctx.ui.register("seat.badge", slot(ctx, (el, props) => {
@@ -97,7 +124,7 @@ export function startPlayerNotes(ctx, people) {
         edit.textContent = "✎";
         tab.append(nick, note, edit);
         el.append(tab);
-        const v = { tab, nick, note, edit, name: null };
+        const v = { tab, nick, note, edit, name: null, col: el.parentElement, row: null };
         const take = (p) => { v.name = p && !p.isMe && p.user ? p.user.name : null; paint(v); };
         // Above the card when there is room. The top row of seats sits on the
         // table area's top edge, which clips, so there it opens under the seat.
@@ -115,8 +142,8 @@ export function startPlayerNotes(ctx, people) {
         edit.addEventListener("click", (e) => { e.stopPropagation(); if (v.name) openEditor(people, v.name, tab); });
         take(props);
         views.add(v);
-        return { update: take, destroy() { views.delete(v); if (seat) seat.removeEventListener("pointerenter", place); } };
+        return { update: take, destroy() { views.delete(v); if (v.row) untag(v.row); if (seat) seat.removeEventListener("pointerenter", place); } };
     }));
 
-    return () => { off(); unreg && unreg(); views.clear(); closeEditor(); };
+    return () => { off(); clearInterval(timer); unreg && unreg(); views.clear(); [...tagged].forEach(untag); closeEditor(); };
 }
