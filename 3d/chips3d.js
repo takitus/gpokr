@@ -96,6 +96,8 @@
         { denom: 25,    body: "#189040" },
         { denom: 100,   body: "#0d0d0d" },
         { denom: 500,   body: "#a4007c" },
+        // The new UI's $1,000 chip; the classic site never had one. Its orange.
+        { denom: 1000,  body: "#cc6f00", label: "1K" },
         // The site abbreviates the big two on the chip face rather than printing
         // all the digits, so they carry explicit labels. Kept in ascending order.
         // The 2500's blue takes the default glyph color; the 10,000's pale green
@@ -760,6 +762,15 @@
         get proportions() { return { r: CHIP_R, h: CHIP_H }; },
         textures(T, i) {
             const type = CHIP_TYPES[((i | 0) % CHIP_TYPES.length + CHIP_TYPES.length) % CHIP_TYPES.length];
+            return { face: chipFaceTexture(T, type), rim: chipRimTexture(T, type), type };
+        },
+        // By value. A value with no art of its own (the site adding a chip) is
+        // drawn plain with its own number, never passed off as another chip.
+        texturesFor(T, denom) {
+            const type = CHIP_TYPES.find((t) => t.denom === denom) || {
+                denom, body: "#6e6e6e",
+                label: denom >= 1000 ? denom / 1000 + "K" : String(denom),
+            };
             return { face: chipFaceTexture(T, type), rim: chipRimTexture(T, type), type };
         },
     };

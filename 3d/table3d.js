@@ -1616,12 +1616,13 @@
 
     function chipArt(s, denom) {
         const T = window.THREE;
-        const types = window.GPE_CHIPS.art.types;
-        let i = types.findIndex((t) => t.denom === denom);
-        if (i < 0) i = 0;
-        if (!s.chipArt) s.chipArt = [];
-        if (s.chipArt[i]) return s.chipArt[i];
-        const { face, rim } = window.GPE_CHIPS.art.textures(T, i);
+        // Keyed by value: an unknown value gets art with its own number on it
+        // rather than the first chip in the list (which put "1" on $1,000s).
+        if (!s.chipArt) s.chipArt = new Map();
+        if (s.chipArt.has(denom)) return s.chipArt.get(denom);
+        const art = window.GPE_CHIPS.art;
+        const { face, rim } = art.texturesFor ? art.texturesFor(T, denom)
+            : art.textures(T, Math.max(0, art.types.findIndex((t) => t.denom === denom)));
         const a = {
             face, rim,
             faceMat: new T.MeshStandardMaterial({ map: face, roughness: 0.5, metalness: 0.06 }),
@@ -1629,7 +1630,7 @@
             // different sheen either side of the join shows the join.
             rimMat: new T.MeshStandardMaterial({ map: rim, roughness: 0.5, metalness: 0.06 }),
         };
-        s.chipArt[i] = a;
+        s.chipArt.set(denom, a);
         return a;
     }
 
@@ -3078,7 +3079,7 @@
         if (s.plates) s.plates.clear();
         if (s.plateGeo) s.plateGeo.dispose();
         disposeChipParts(s);
-        for (const a of s.chipArt || []) {
+        for (const a of (s.chipArt ? s.chipArt.values() : [])) {
             if (!a) continue;
             a.faceMat.dispose(); a.rimMat.dispose();
             a.face.dispose(); a.rim.dispose();   // minted for us by GPE_CHIPS.art
