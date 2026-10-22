@@ -1,7 +1,8 @@
-/* A line on each seat about the money that player puts in. Two modes, picked
- * in its editor:
- *   - "street": the hand in play, street by street ("P $50 · F $100 ✕"); it
- *     stays up after the pot is pushed until the next deal.
+/* A side panel of the money each player puts in, a row per player (it used
+ * to sit on the seats, over what ui2 shows there). Two modes, switched at
+ * the top of the panel (N is set in its editor):
+ *   - "street": the hand in play, street by street, folds marked; it stays
+ *     up after the pot is pushed until the next deal.
  *   - "hands": the classic readout, everything the player bet or raised over
  *     their last N hands at this table, calls and blinds excluded — how hard
  *     they push, at a glance.
@@ -9,16 +10,14 @@
  * deep per player, whichever mode is showing, so switching has data at once. */
 
 import { slot } from "../slot.js";
-import { money } from "../lib/fmt.js";
+import { STREETS } from "../hand.js";
 import { openPanel, choiceRow, sliderRow, hint } from "../lib/panel.js";
 
-const SHORT = ["P", "F", "T", "R"];
 const KEEP = 20;
 const DEFAULTS = { mode: "street", window: 3 };
 
 export function startBetReadout(ctx, tracker, prefs, editors) {
     const opts = () => ({ ...DEFAULTS, ...(prefs.get("betReadout") || {}) });
-    const views = new Map(); // pill -> seat
     const offs = [];
 
     /* ----- history: bets and raises per hand, per player, per table ----- */
@@ -60,51 +59,101 @@ export function startBetReadout(ctx, tracker, prefs, editors) {
         paintAll();
     }));
 
-    /* ----- what a seat shows ----- */
-    const streetText = (seat) => {
+    /* ----- the panel ----- */
+    // A side panel, not the seats: on the seats it covered what ui2 shows
+    // there. One table, a row per player, in seat order.
+    const h = (tag, cls, text) => {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text != null) e.textContent = text;
+        return e;
+    };
+    const cell = (text, cls) => h("td", cls, text);
+    // Compact amounts for the narrow rail: $750, $1.8k, $25k, $1.2M.
+    const short = (n) => {
+        if (!n) return "–";
+        if (n < 1000) return "$" + n;
+        if (n < 1e6) return "$" + (n / 1e3).toFixed(n < 1e4 ? 1 : 0).replace(/\.0$/, "") + "k";
+        return "$" + (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+    };
+
+    function streetTable() {
         const hand = tracker.get();
-        const s = hand && hand.seats[seat];
-        if (!s || !s.total) return "";
-        const parts = [];
-        for (let st = 0; st <= hand.street; st++) {
-            if (s.foldStreet >= 0 && st > s.foldStreet) break;
-            parts.push(`${SHORT[st]} ${money(s.streets[st])}`);
+        const seats = hand ? Object.values(hand.seats).sort((a, b) => a.seat - b.seat) : [];
+        if (!seats.length) return h("div", "gpt-empty", "Bets show up here once a hand is dealt.");
+        const t = h("table", "gpt-bets-table");
+        const head = h("tr");
+        // The side rail is narrow: one letter per street, the name on hover.
+        head.append(h("th", null, ""), ...STREETS.map((s) => { const th = h("th", null, s[0]); th.title = s; return th; }), h("th", null, "Tot"));
+        t.append(head);
+        for (const s of seats) {
+            const tr = h("tr", [s.foldStreet >= 0 ? "folded" : "", s.isMe ? "me" : ""].join(" ").trim() || null);
+            const name = cell(null, "gpt-bets-name");
+            name.append(s.name);
+            if (s.isButton) name.append(h("span", "gpt-btn-chip", "D"));
+            tr.append(name);
+            for (let st = 0; st < 4; st++) {
+                if (st > hand.street || (s.foldStreet >= 0 && st > s.foldStreet)) { tr.append(cell("")); continue; }
+                const c = cell(short(s.streets[st]), st === s.foldStreet ? "fold-here" : null);
+                if (st === s.foldStreet) c.title = "folded";
+                tr.append(c);
+            }
+            tr.append(cell(short(s.total), "gpt-bets-total"));
+            t.append(tr);
         }
-        return parts.join(" · ") + (s.foldStreet >= 0 ? " ✕" : "");
-    };
-    const handsText = (seat) => {
+        return t;
+    }
+
+    function handsTable() {
         const gi = ctx.state.get().gameInfo;
-        const p = gi && gi.playerInfo && gi.playerInfo[seat];
-        const rows = p && p.user && hist[p.user.name];
-        if (!rows || !rows.length) return "";
         const n = Math.max(1, Math.min(KEEP, opts().window | 0));
-        const total = rows.slice(-n).reduce((a, r) => a + r.n, 0);
-        return `${money(total) === "–" ? "$0" : money(total)} / ${Math.min(n, rows.length)}h`;
-    };
-    const paint = (pill) => {
-        const seat = views.get(pill);
-        const t = opts().mode === "hands" ? handsText(seat) : streetText(seat);
-        pill.textContent = t;
-        pill.title = opts().mode === "hands" ? "bet and raised over their last hands here (calls and blinds not counted)" : "";
-        pill.hidden = !t;
-    };
-    function paintAll() { for (const pill of views.keys()) paint(pill); }
+        const rows = [];
+        ((gi && gi.playerInfo) || []).forEach((p, seat) => {
+            if (!p || !p.user) return;
+            const hrows = hist[p.user.name] || [];
+            const last = hrows.slice(-n);
+            rows.push({ seat, name: p.user.name, total: last.reduce((a, r) => a + r.n, 0), hands: last.length, me: seat === ctx.state.get().mySeat });
+        });
+        if (!rows.length) return h("div", "gpt-empty", "No one is seated.");
+        const t = h("table", "gpt-bets-table");
+        const head = h("tr");
+        head.append(h("th", null, ""), h("th", null, "Bet / raised"), h("th", null, "Hands"));
+        t.append(head);
+        for (const r of rows) {
+            const tr = h("tr", r.me ? "me" : null);
+            tr.append(cell(r.name, "gpt-bets-name"), cell(r.total ? short(r.total) : "$0", "gpt-bets-total"), cell(String(r.hands)));
+            t.append(tr);
+        }
+        return t;
+    }
+
+    const views = new Set();
+    function paintAll() {
+        for (const el of views) {
+            const o = opts();
+            const set = (patch) => prefs.set("betReadout", { ...o, ...patch });
+            const bar = h("div", "gpt-bets-modes");
+            for (const [mode, label] of [["street", "This hand"], ["hands", `Last ${o.window} hands`]]) {
+                const b = h("button", "gpt-chip-btn" + (o.mode === mode ? " is-on" : ""), label);
+                b.type = "button";
+                b.addEventListener("click", () => set({ mode }));
+                bar.append(b);
+            }
+            el.replaceChildren(bar, o.mode === "hands" ? handsTable() : streetTable());
+            if (o.mode === "hands") el.append(h("div", "gpt-panel-hint", "Everything each player bet or raised over their last hands at this table; calls and blinds not counted."));
+        }
+    }
 
     offs.push(tracker.subscribe(paintAll));
+    offs.push(ctx.state.subscribe(() => { if (opts().mode === "hands") paintAll(); }));
     offs.push(prefs.onChange((k) => { if (k === "betReadout") paintAll(); }));
 
-    offs.push(ctx.ui.register("seat.badge", slot(ctx, (el, props) => {
-        el.classList.add("gpt-root");
-        const pill = document.createElement("span");
-        pill.className = "gpt-bet-readout";
-        el.appendChild(pill);
-        views.set(pill, props.seat);
-        paint(pill);
-        return {
-            update(p) { views.set(pill, p.seat); paint(pill); },
-            destroy() { views.delete(pill); pill.remove(); },
-        };
-    })));
+    offs.push(ctx.ui.register("rail.panel", slot(ctx, (el) => {
+        el.classList.add("gpt-root", "gpt-bets");
+        views.add(el);
+        paintAll();
+        return { destroy() { views.delete(el); } };
+    }), { title: "Bets by street" }));
 
     const openEditor = () => openPanel(ctx, {
         id: "betReadout", title: "bets by street", width: 300,

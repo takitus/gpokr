@@ -184,8 +184,12 @@ export function createHandTracker(ctx) {
 
     // Joining mid-hand: start from the table's current state so the readout
     // is not blank until the next deal. Street splits before now are unknown.
+    // ui2's state flag can read idle mid-hand, so go by the table itself: a
+    // hand is on if anyone has chips in or cards on the board.
     const gi = ctx.state.get().gameInfo;
-    if (gi && gi.gameId && gi.state !== 0) {
+    const live = gi && gi.gameId && ((gi.tableCards || []).some(Boolean) ||
+        (gi.playerInfo || []).some((p) => p && p.user && typeof p.chipsAtStart === "number" && p.chipsAtStart > p.score));
+    if (live) {
         hand = newHand(ctx.state.get(), { gameId: gi.gameId, dealer: gi.start, smallblind: gi.smallBlind, bigblind: gi.bigBlind });
         hand.partial = true;
         syncBoard(gi);

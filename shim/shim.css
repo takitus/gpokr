@@ -57,3 +57,26 @@
     white-space: nowrap;
 }
 .gpt-rail-edit:hover { background: var(--sh-hover); }
+
+/* A side panel (rail.panel) as the shim draws it: a box in the table's right
+   rail, under the Me panel, titled like ui2's own sections. */
+.gpt-rail-panel {
+    margin: 8px 0;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--sh-panel-bg, rgba(127, 127, 127, .12));
+    border: 1px solid var(--sh-line, rgba(127, 127, 127, .25));
+    color: var(--sh-ink, inherit);
+    font: 12px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-height: 60vh;
+    overflow: auto;
+}
+.gpt-rail-panel[data-title]::before {
+    content: attr(data-title);
+    display: block;
+    margin-bottom: 6px;
+    font: 600 11px system-ui, sans-serif;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    opacity: .7;
+}

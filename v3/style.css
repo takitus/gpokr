@@ -507,3 +507,25 @@ html.gpt-fourcolor .gpt-suit-c { color: #008000; }
    the classic filters apply straight off the attribute. */
 html.gpt-fourcolor svg.card[data-face$="D"] { filter: url(#gpt-suit-diamond); }
 html.gpt-fourcolor svg.card[data-face$="C"] { filter: url(#gpt-suit-club); }
+
+/* ---------- bets by street (side panel) ---------- */
+.gpt-bets-modes { display: flex; gap: 4px; margin-bottom: 6px; }
+.gpt-bets-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.gpt-bets-table th { color: var(--gpt-dim); font-weight: 500; text-align: right; padding: 2px 3px; }
+.gpt-bets-table td { text-align: right; padding: 2px 3px; border-top: 1px solid var(--gpt-line); white-space: nowrap; }
+.gpt-bets-table td.gpt-bets-name { text-align: left; max-width: 8em; overflow: hidden; text-overflow: ellipsis; }
+.gpt-bets-table td.gpt-bets-total { font-weight: 600; }
+.gpt-bets-table tr.folded td { color: var(--gpt-dim); }
+.gpt-bets-table td.fold-here::after { content: " ✕"; color: var(--gpt-red); }
+.gpt-bets-table tr.me td.gpt-bets-name { font-weight: 600; }
+.gpt-bets .gpt-btn-chip { margin: 0 0 0 4px; }
+.gpt-btn-chip {
+    display: inline-block; width: 1.3em; height: 1.3em;
+    border-radius: 50%; background: #d8b23a; color: #1a1a1a;
+    font: bold 9px/1.3em Arial, sans-serif; text-align: center; vertical-align: middle;
+}
+.gpt-bets-modes .gpt-chip-btn { white-space: nowrap; padding: 2px 8px; font-size: 11px; }
+.gpt-bets { overflow-x: auto; }
+.gpt-bets-table { font-size: 11px; }
+.gpt-bets-table th, .gpt-bets-table td { padding: 2px 2px; }
+.gpt-bets-table td.gpt-bets-name { max-width: 6.5em; }
