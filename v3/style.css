@@ -671,3 +671,12 @@ html.gpt-seats #GGame .iogc-PlayerPanel-portrait .iogc-PlayerStatsPanel-portrait
     padding-top: calc(3px * var(--table-scale, 1));
     padding-bottom: calc(3px * var(--table-scale, 1));
 }
+
+/* Table style: the classic add-on's bevels, as they were (overlay.css, from
+ * "dark mode polish"): a 1px highlight top-left and a faint edge bottom-right
+ * on the game window's frame and on buttons, a soft shade along the top of
+ * the play area, and a highlight along the top of the controls bar. */
+html.gpt-seats .iogc-GameWindow-container { box-shadow: 1px 1px 0 0 rgba(255, 255, 255, 1) inset, -1px -1px 0 0 rgba(0, 0, 0, .125) inset !important; }
+html.gpt-seats .ui-button_content { box-shadow: 1px 1px 0 0 rgba(255, 255, 255, 1) inset, -1px -1px 0 0 rgba(0, 0, 0, .25) inset; }
+html.gpt-seats .iogc-GameWindow-table { box-shadow: rgba(0, 0, 0, .125) 0 -4px 8px 0 inset !important; }
+html.gpt-seats .iogc-Controls { box-shadow: 0 1px 0 0 rgba(255, 255, 255, .75) inset !important; }

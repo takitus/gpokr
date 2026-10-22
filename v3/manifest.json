@@ -93,8 +93,8 @@
         {
             "key": "seatStyle",
             "type": "switch",
-            "label": "Seat style",
-            "hint": "Folded players darkened instead of faded, 4px rounded corners, and even spacing in the player card",
+            "label": "Table style",
+            "hint": "Folded players darkened instead of faded, 4px rounded seat corners, even spacing in the player card, and bevels on the frame and buttons",
             "default": true
         },
         {

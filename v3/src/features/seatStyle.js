@@ -1,6 +1,7 @@
-/* How the seats look: folded players darkened rather than faded, and 4px
- * corners on the avatars and player cards. CSS only (style.css, under
- * html.gpt-seats); this switches the class.
+/* Table style (the "seatStyle" switch, named for where it started): folded
+ * players darkened rather than faded, 4px corners and even spacing on the
+ * seats, and the classic add-on's bevels on the frame and buttons. CSS only
+ * (style.css, under html.gpt-seats); this switches the class.
  *
  * ui2 fades a folded seat piece by piece: the avatar goes to 70% opacity over
  * a box it paints solid white only while folded. The white then shows through
