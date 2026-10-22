@@ -629,11 +629,21 @@ html.gpt-seats #GGame .iogc-PlayerPanel-badgesBelow { border-radius: 0 0 4px 4px
 .gpt-note-editor textarea { height: 64px; resize: vertical; }
 .gpt-note-row { display: flex; gap: 6px; margin-top: 6px; }
 .gpt-note-row .gpt-chip-btn { flex: 1; justify-content: center; }
-body.dark-mode .gpt-nick-tab { background: rgba(40, 44, 48, .94); color: #d6dbe0; border-color: rgba(255, 255, 255, .14); }
-body.dark-mode .gpt-nick-edit { color: #bbb; background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .18); }
-body.dark-mode .gpt-nick-edit:hover { background: rgba(255, 255, 255, .2); color: #fff; }
-body.dark-mode .gpt-note-editor { background: #26292d; color: #e6e6e6; border-color: #3b4046; }
-body.dark-mode .gpt-note-editor input, body.dark-mode .gpt-note-editor textarea { background: #1c1e21; border-color: #3b4046; }
+/* Dark mode (ui2's body.dark-mode): the classic add-on's dark palette for
+ * these, from its dark.css. */
+body.dark-mode .gpt-nick-tab {
+    background: rgba(30, 37, 48, .94);
+    color: #b9c2cf;
+    border-color: #3c4a61;
+    box-shadow: 0 -1px 3px rgba(0, 0, 0, .35);
+}
+body.dark-mode .gpt-nick-tab.is-below { box-shadow: 0 1px 3px rgba(0, 0, 0, .35); }
+body.dark-mode .gpt-nick-edit { color: #93a0b4; border-color: #45526b; background: rgba(20, 26, 34, .6); }
+body.dark-mode .gpt-nick-edit:hover { background: #2c3645; color: #fff; }
+body.dark-mode .gpt-note-editor { background: #232c3a; color: #d2d8e2; border-color: #3c4a61; }
+body.dark-mode .gpt-note-editor input, body.dark-mode .gpt-note-editor textarea { background: #1b222d; color: #d2d8e2; border-color: #44516a; }
+body.dark-mode .gpt-note-row .gpt-chip-btn { background: #2a3342; color: #d2d8e2; border-color: #45526b; }
+body.dark-mode .gpt-note-row .gpt-chip-btn:hover { background: #344056; }
 .gpt-nick-tab.is-below {
     bottom: auto;
     border-bottom: 1px solid rgba(0, 0, 0, .18);
@@ -680,3 +690,9 @@ html.gpt-seats .iogc-GameWindow-container { box-shadow: 1px 1px 0 0 rgba(255, 25
 html.gpt-seats .ui-button_content { box-shadow: 1px 1px 0 0 rgba(255, 255, 255, 1) inset, -1px -1px 0 0 rgba(0, 0, 0, .25) inset; }
 html.gpt-seats .iogc-GameWindow-table { box-shadow: rgba(0, 0, 0, .125) 0 -4px 8px 0 inset !important; }
 html.gpt-seats .iogc-Controls { box-shadow: 0 1px 0 0 rgba(255, 255, 255, .75) inset !important; }
+/* ...and its dark-mode set (dark.css): the frame's highlight down to 10%, a
+ * deeper shade in the play area, no highlight on the controls bar. Buttons
+ * keep the same bevel in both. */
+html.gpt-seats body.dark-mode .iogc-GameWindow-container { box-shadow: 1px 1px 0 0 rgba(255, 255, 255, .1) inset, -1px -1px 0 0 rgba(0, 0, 0, .125) inset !important; }
+html.gpt-seats body.dark-mode .iogc-GameWindow-table { box-shadow: 0 -8px 16px 0 rgba(0, 0, 0, .5) inset !important; }
+html.gpt-seats body.dark-mode .iogc-Controls { box-shadow: none !important; }
