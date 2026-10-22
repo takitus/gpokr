@@ -14,6 +14,7 @@ import { startInteractions } from "./features/interactions.js";
 import { startTable3d } from "./features/table3d.js";
 import { startHotkeys } from "./features/hotkeys.js";
 import { startCardStyle, cardBackStyle } from "./features/cardStyle.js";
+import { startSeatStyle } from "./features/seatStyle.js";
 import { openTable3dEditor, openLookEditor } from "./editors.js";
 import { createPrefs } from "./lib/prefs.js";
 import { createLook } from "./lib/look.js";
@@ -78,6 +79,7 @@ export default {
         offs.push(toggled(ctx, "interactions", (c) => startInteractions(c, tracker, editors)));
         offs.push(toggled(ctx, "hotkeys", (c) => startHotkeys(c, prefs)));
         offs.push(toggled(ctx, "cardStyle", (c) => startCardStyle(c, prefs, editors)));
+        offs.push(toggled(ctx, "seatStyle", () => startSeatStyle()));
         // The 3D cards wear the chosen back when Card style is on.
         const backStyle = () => (ctx.settings.get("cardStyle") !== false ? cardBackStyle(prefs) : "");
         offs.push(toggled(ctx, "table3d", (c) => startTable3d(c, look, backStyle)));

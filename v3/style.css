@@ -529,3 +529,30 @@ html.gpt-fourcolor svg.card[data-face$="C"] { filter: url(#gpt-suit-club); }
 .gpt-bets-table { font-size: 11px; }
 .gpt-bets-table th, .gpt-bets-table td { padding: 2px 2px; }
 .gpt-bets-table td.gpt-bets-name { max-width: 6.5em; }
+
+/* ---------- seat style (html.gpt-seats, features/seatStyle.js) ----------
+ * Scoped under #GGame so it outranks ui2's class-only rules, dark mode's too.
+ *
+ * Folded: ui2 fades the avatar to 70% over a box it paints white only while
+ * folded, so the white shows through the picture (wholly, for a transparent
+ * avatar) and the box's square corners show round the picture's rounded ones.
+ * Darken with a filter instead, and leave the box clear. */
+html.gpt-seats #GGame .iogc-PlayerPanel-dimmed .iogc-PlayerPanelAvatar-portrait { background-color: transparent; }
+html.gpt-seats #GGame .iogc-PlayerPanel-dimmed .iogc-PlayerPanel-avatar,
+html.gpt-seats #GGame .iogc-PlayerPanel-dimmed .iogc-PlayerPanel-badges > *,
+html.gpt-seats #GGame .iogc-PlayerPanel-dimmed + .iogc-PlayerPanel-badgesBelow > * {
+    opacity: 1;
+    filter: grayscale(80%) brightness(55%);
+}
+
+/* 4px corners, in place of ui2's 3px × table scale, on every rule that
+ * rounds a seat. Side by side (avatar left, card right) and stacked. */
+html.gpt-seats #GGame .iogc-PlayerPanel-portraitH-container .iogc-PlayerPanel-avatar,
+html.gpt-seats #GGame .iogc-PlayerPanel-portraitH-container .iogc-PlayerPanelAvatar-portrait { border-radius: 4px 0 0 4px; }
+html.gpt-seats #GGame .iogc-PlayerPanel.iogc-PlayerPanel-portraitH,
+html.gpt-seats #GGame .iogc-PlayerPanel-portraitH-container > .iogc-PlayerPanel-portraitCol:has(> .iogc-PlayerPanel-badges) { border-radius: 0 4px 4px 0; }
+html.gpt-seats #GGame .iogc-PlayerPanel-portraitCol > .iogc-PlayerPanel.iogc-PlayerPanel-portraitH:has(+ .iogc-PlayerPanel-badges) { border-radius: 0 4px 0 0; }
+html.gpt-seats #GGame .iogc-PlayerPanel-badges { border-bottom-right-radius: 4px; }
+html.gpt-seats #GGame .iogc-PlayerPanel-portrait-container:not(.iogc-PlayerPanel-portraitH-container) { border-radius: 4px; }
+html.gpt-seats #GGame .iogc-PlayerPanel-portrait-container:not(.iogc-PlayerPanel-portraitH-container):has(+ .iogc-PlayerPanel-badgesBelow) { border-radius: 4px 4px 0 0; }
+html.gpt-seats #GGame .iogc-PlayerPanel-badgesBelow { border-radius: 0 0 4px 4px; }

@@ -84,6 +84,13 @@
             "default": true
         },
         {
+            "key": "seatStyle",
+            "type": "switch",
+            "label": "Seat style",
+            "hint": "Folded players darkened instead of faded, and 4px rounded corners on avatars and player cards",
+            "default": true
+        },
+        {
             "key": "table3d",
             "type": "switch",
             "label": "3D table and chips",
