@@ -194,9 +194,51 @@ export function startHandSummary(ctx, tracker) {
     const sigs = new Map();         // gameId -> what its panel shows
 
     const box = el("div", "gpt-root gpt-sumbox");
+    const grip = el("div", "gpt-sumbox-grip");
+    grip.title = "drag to share the space between the game log and the summaries";
     const list = el("div", "gpt-sumbox-list");
     const empty = el("div", "gpt-sumbox-empty", "Hand summaries show up here as hands finish.");
-    box.append(list, empty);
+    box.append(grip, list, empty);
+
+    // The divider between the log and the box: drag it to give one more room
+    // and the other less. The height is kept in this browser.
+    const MIN_BOX = 90, MIN_LOG = 80;
+    const setHeight = (h) => {
+        const room = column ? column.clientHeight - MIN_LOG - 8 : h;
+        const v = Math.round(Math.max(MIN_BOX, Math.min(room, h)));
+        box.style.height = v + "px";
+        return v;
+    };
+    const savedH = ctx.storage.local.get("sumboxHeight");
+    if (typeof savedH === "number") box.style.height = savedH + "px";
+    grip.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        try { grip.setPointerCapture(e.pointerId); } catch (err) { /* not an active pointer */ }
+        const y0 = e.clientY, h0 = box.getBoundingClientRect().height;
+        let last = h0;
+        box.classList.add("is-resizing");
+        const move = (ev) => { last = setHeight(h0 - (ev.clientY - y0)); };
+        const up = () => {
+            grip.removeEventListener("pointermove", move);
+            grip.removeEventListener("pointerup", up);
+            grip.removeEventListener("pointercancel", up);
+            box.classList.remove("is-resizing");
+            ctx.storage.local.set("sumboxHeight", last);
+            stick();
+        };
+        grip.addEventListener("pointermove", move);
+        grip.addEventListener("pointerup", up);
+        grip.addEventListener("pointercancel", up);
+    });
+
+    // An expanded summary is scrolled until its bottom meets the bottom of the
+    // box, so the breakdown that just opened is in view rather than below it.
+    const reveal = (panel) => requestAnimationFrame(() => {
+        if (!panel || !panel.isConnected) return;
+        const pr = panel.getBoundingClientRect(), lr = list.getBoundingClientRect();
+        if (pr.bottom > lr.bottom) list.scrollTop += pr.bottom - lr.bottom;
+    });
 
     // Stay pinned to the newest unless the player has scrolled back.
     let pinned = true;
@@ -210,7 +252,7 @@ export function startHandSummary(ctx, tracker) {
         if (sigs.get(hand.gameId) === sig) return;
         sigs.set(hand.gameId, sig);
         const next = buildPanel(hand, open.has(hand.gameId), (isOpen) => {
-            if (isOpen) open.add(hand.gameId); else open.delete(hand.gameId);
+            if (isOpen) { open.add(hand.gameId); reveal(panels.get(hand.gameId)); } else open.delete(hand.gameId);
         });
         const prev = panels.get(hand.gameId);
         if (!next) { if (prev) prev.remove(); panels.delete(hand.gameId); return; }
