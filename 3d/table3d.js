@@ -1625,7 +1625,9 @@
         const a = {
             face, rim,
             faceMat: new T.MeshStandardMaterial({ map: face, roughness: 0.5, metalness: 0.06 }),
-            rimMat: new T.MeshStandardMaterial({ map: rim, roughness: 0.62, metalness: 0.04 }),
+            // Same finish as the face: a rounded edge runs into the face, and a
+            // different sheen either side of the join shows the join.
+            rimMat: new T.MeshStandardMaterial({ map: rim, roughness: 0.5, metalness: 0.06 }),
         };
         s.chipArt[i] = a;
         return a;
@@ -1661,8 +1663,11 @@
         const fa = Math.max(0, Math.min(1, CHIP_ROUND)) * HH;
         const fr = fa * aspect;
         const key = fa.toFixed(4) + "|" + fr.toFixed(4);
-        if (s.chipParts && s.chipPartsKey === key) return s.chipParts;
-        disposeChipParts(s);
+        // One set per shape, kept: chips of two sizes on the felt at once used to
+        // throw each other's geometry away on every park.
+        if (!s.chipParts) s.chipParts = new Map();
+        const have = s.chipParts.get(key);
+        if (have) return have;
         const capR = Math.max(0.05, R - fr);
 
         // Rim profile in the (radius, height) half-plane, bottom to top.
@@ -1681,18 +1686,26 @@
             }
         }
         const rim = new T.LatheGeometry(pts, 48);
+        // The rim art carries painted shading, dark at its top and bottom edges,
+        // to make a square edge look turned. On a real fillet the lamp does that,
+        // and the painted dark band landed right against the face as a seam: the
+        // edge read as a separate ring sitting proud of the chip. So a rounded
+        // rim samples only the art's flat middle.
+        if (fa > 1e-6) {
+            const uv = rim.attributes.uv;
+            for (let i = 0; i < uv.count; i++) uv.setY(i, 0.5);
+            uv.needsUpdate = true;
+        }
         const cap = new T.CircleGeometry(capR, 48);
-        s.chipParts = { rim: rim, cap: cap, capY: HH };
-        s.chipPartsKey = key;
-        return s.chipParts;
+        const parts = { rim: rim, cap: cap, capY: HH };
+        s.chipParts.set(key, parts);
+        return parts;
     }
 
     function disposeChipParts(s) {
         if (!s.chipParts) return;
-        s.chipParts.rim.dispose();
-        s.chipParts.cap.dispose();
+        for (const p of s.chipParts.values()) { p.rim.dispose(); p.cap.dispose(); }
         s.chipParts = null;
-        s.chipPartsKey = "";
     }
 
     // Rebuild the shared chip geometry at a new rounding and hand it to every chip

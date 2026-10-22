@@ -143,10 +143,11 @@
         cv.width = cv.height = S;
         const g = cv.getContext("2d");
 
+        // Body color to the corners, not just the disc: the cap is a polygon
+        // reaching the texture's edge, and the transparent black outside a drawn
+        // circle filtered in there as a dark seam round the face.
         g.fillStyle = type.body;
-        g.beginPath();
-        g.arc(R, R, R - 1, 0, Math.PI * 2);
-        g.fill();
+        g.fillRect(0, 0, S, S);
 
         // Edge spots: wedges from the rim inward, one every 360/EDGE_SPOTS.
         // half-width as a fraction of the spot-to-spot spacing, so the white
@@ -156,7 +157,9 @@
         for (let i = 0; i < EDGE_SPOTS; i++) {
             const a = (i / EDGE_SPOTS) * Math.PI * 2 - Math.PI / 2;
             g.beginPath();
-            g.arc(R, R, R * 0.985, a - half, a + half);
+            // Out past the edge: stopping short left a hairline of body
+            // color between the spot on the face and the same spot on the rim.
+            g.arc(R, R, R * 1.5, a - half, a + half);
             g.arc(R, R, R * 0.78, a + half, a - half, true);
             g.closePath();
             g.fill();
