@@ -1,8 +1,10 @@
 /* The cards in 3D, in the 3D table's scene:
  *   - the board: each card a real slab on the felt, lit and shadowed by the
- *     table's lamp. A card that appears while we watch is dealt: it flies in
- *     face down and turns over on its spot (the deal animation); one already
- *     there when the scene starts is simply laid down.
+ *     table's lamp. ui2 deals the board face down, a back in each slot, and
+ *     turns the cards over a beat later; the 3D card follows it: it flies in
+ *     face down when the back appears and turns over where it lies when the
+ *     face does. A card already there when the scene starts is simply laid
+ *     down.
  *   - every other player's face-down pair, lying on the felt rather than
  *     standing up flat against it.
  * ui2's own sprite is switched off under each, and back on when we let go.
@@ -18,15 +20,29 @@ const STAGGER = 0.12;   // s between the cards of one deal (the flop)
 
 export function startCards3d(ctx, look, backStyle) {
     const T3D = () => window.GPE_TABLE3D;
-    const board = new Map();    // sprite -> { handle, uid, epoch }
+    const board = new Map();    // slot -> { handle, card, face, epoch, sprites }
     const backs = new Map();    // pair node -> { handle, sprites, epoch }
     let first = true;           // cards present at start are laid, not dealt
     let raf = 0;
 
     const pageRect = (cr, b) => ({ left: cr.left + b.x, top: cr.top + b.y, width: b.width, height: b.height });
-    const dropBoard = (s) => { const r = board.get(s); if (!r) return; board.delete(s); try { r.handle.remove(); } catch (e) { /* scene gone */ } s.renderable = true; };
+    const dropBoard = (k) => { const r = board.get(k); if (!r) return; board.delete(k); try { r.handle.remove(); } catch (e) { /* scene gone */ } for (const s of r.sprites) s.renderable = true; };
+    const loose = new Set();    // board sprites hidden with no card of ours on them yet
+    const slotRect = new Map(); // slot -> the last rect read with the card square on
+    // A board slot's rect, at the face's size whether a back or a face is in it.
+    // While ui2 turns a card it squeezes it edgewise, and that rect is no
+    // footprint: then it is the last square one, or none yet.
+    const boardRect = (cr, slot, sprite) => {
+        const b = sprite.getBounds();
+        if (b.width >= 0.9 * b.height * (60 / 84)) {
+            const r = pageRect(cr, { x: b.x, y: b.y, width: b.width, height: b.width * (84 / 60) });
+            slotRect.set(slot, r);
+            return r;
+        }
+        return slotRect.get(slot) || null;
+    };
     const dropBack = (n) => { const r = backs.get(n); if (!r) return; backs.delete(n); try { r.handle.remove(); } catch (e) { /* scene gone */ } for (const s of r.sprites) s.renderable = true; };
-    const dropAll = () => { for (const s of [...board.keys()]) dropBoard(s); for (const n of [...backs.keys()]) dropBack(n); };
+    const dropAll = () => { for (const s of loose) s.renderable = true; loose.clear(); for (const s of [...board.keys()]) dropBoard(s); for (const n of [...backs.keys()]) dropBack(n); };
 
     const frame = () => {
         raf = requestAnimationFrame(frame);
@@ -41,39 +57,75 @@ export function startCards3d(ctx, look, backStyle) {
         const cards = readCards(app);
 
         /* ----- the board ----- */
+        // Keyed by slot, not sprite: ui2 swaps a slot's sprite object mid-hand
+        // (around the street events), and a new sprite is not a new card.
         const seenBoard = new Set();
+        // Sprites hidden last frame with no 3D card over them yet (caught mid-
+        // turn): shown again unless this frame covers them again.
+        for (const s of loose) s.renderable = true;
+        loose.clear();
         if (L.cards3d) {
             let fresh = 0;
             const gi = ctx.state.get().gameInfo || {};
-            for (const { sprite, slot } of cards.board.sort((a, b) => a.slot - b.slot)) {
-                seenBoard.add(sprite);
-                const rect = pageRect(cr, sprite.getBounds());
-                const rec = board.get(sprite);
+            const slots = cards.board.map((c) => ({ ...c, up: true }))
+                .concat(cards.boardBacks.map((c) => ({ ...c, up: false })))
+                .sort((a, b) => a.slot - b.slot);
+            for (const { sprite, slot, up } of slots) {
+                seenBoard.add(slot);
+                let rec = board.get(slot);
+                if (rec && (rec.epoch !== epoch || rec.handle.isGone())) { dropBoard(slot); rec = null; }
+                // Whatever ui2 has in the slot now is ours to cover, square or not.
+                sprite.renderable = false;
+                if (rec) rec.sprites.add(sprite); else loose.add(sprite);
+                if (rec && rec.handle.thickness() !== L.cardThick) rec.handle.setThickness(L.cardThick);
+                const rect = boardRect(cr, slot, sprite);
+                const instant = first || !L.dealAnim || document.hidden;
+                if (!up) {
+                    // A back. Already ours face down: follow it. Face up: the
+                    // slot was dealt again (a new hand), so start over.
+                    if (rec && !rec.handle.isRevealed()) { if (rect) rec.handle.move(rect); continue; }
+                    if (rec) dropBoard(slot);
+                    if (!rect) continue;
+                    const handle = api.dealCard(rect, null, {
+                        faceDown: true, instant, delay: instant ? 0 : fresh++ * STAGGER,
+                        backStyle: backStyle(), thickness: L.cardThick,
+                    });
+                    if (handle) board.set(slot, { handle, card: null, face: null, epoch, gameId: gi.gameId, sprites: new Set([sprite]) });
+                    continue;
+                }
                 const face = sprite.texture.source && sprite.texture.source.resource;
                 // Which card this slot holds, from the state: ui2 reuses a slot's
                 // sprite (and its canvas) for the next hand, so the sprite says
                 // nothing about which card it is now.
                 const card = cardStr((gi.tableCards || [])[slot]) || "?" + sprite.texture.uid;
-                if (rec && rec.card === card && rec.epoch === epoch && !rec.handle.isGone()) {
-                    rec.handle.move(rect);
-                    if (rec.handle.thickness() !== L.cardThick) rec.handle.setThickness(L.cardThick);
+                if (rec && !rec.handle.isRevealed()) {
+                    // The face-down card we dealt turns over where it lies.
+                    if (face) { rec.handle.reveal(face, { instant: !L.dealAnim || document.hidden }); rec.card = card; rec.face = face; }
+                    if (rect) rec.handle.move(rect);
+                    continue;
+                }
+                // Face up already: it stays the hand's card for the rest of the
+                // hand. The state's view of it is no test — around the street
+                // events and the pot it reads differently for a frame, and
+                // dealing again on that sent the card back to the top.
+                if (rec && (rec.gameId === gi.gameId || rec.card === card)) {
+                    if (rect) rec.handle.move(rect);
                     // Same card, new art (four colours switched on or off).
                     if (face && rec.face !== face && rec.handle.retexture) { rec.handle.retexture(face); rec.face = face; }
                     continue;
                 }
-                if (rec) dropBoard(sprite);
-                if (!face) continue;
-                const instant = first || !L.dealAnim || document.hidden;
+                if (rec) dropBoard(slot);
+                if (!face || !rect) continue;
                 const handle = api.dealCard(rect, face, {
                     instant, delay: instant ? 0 : fresh++ * STAGGER,
                     backStyle: backStyle(), thickness: L.cardThick,
                 });
-                if (!handle) continue;
-                sprite.renderable = false;
-                board.set(sprite, { handle, card, face, epoch });
+                if (handle) board.set(slot, { handle, card, face, epoch, gameId: gi.gameId, sprites: new Set([sprite]) });
             }
         }
-        for (const s of [...board.keys()]) if (!seenBoard.has(s) || !s.parent) dropBoard(s);
+        for (const k of [...board.keys()]) if (!seenBoard.has(k)) dropBoard(k);
+        // ui2's own card in flight from the dealer: ours is dealt when it lands.
+        if (L.cards3d) for (const { sprite } of cards.flying) { sprite.renderable = false; loose.add(sprite); }
 
         /* ----- face-down pairs at the seats ----- */
         const seenPairs = new Set();

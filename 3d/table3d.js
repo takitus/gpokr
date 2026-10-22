@@ -2415,12 +2415,21 @@
     // The card STAYS when the flight ends — it is the board from then on, with the
     // site's image covered behind it — so the mesh lives in the scene and the
     // actor only drives it from outside.
+    // opts.faceDown deals a card nobody has seen yet: it flies in and stays face
+    // down on its spot until reveal(face) turns it over. That is how the site
+    // deals the board, a back in each slot first and the face a beat later, and
+    // following it means one card per slot from the deal to the end of the hand.
     function dealCard(rect, faceImg, opts) {
         const s = session;
-        if (!s || !rect || !rect.width || !faceImg) return null;
+        const o = opts || {};
+        if (!s || !rect || !rect.width || (!faceImg && !o.faceDown)) return null;
         const T = window.THREE;
         if (!T) return null;
-        const o = opts || {};
+        if (!faceImg) {
+            // The face is unknown until reveal(); something has to be on it.
+            faceImg = document.createElement("canvas");
+            faceImg.width = faceImg.height = 4;
+        }
         const group = cardMesh(T, s, faceImg, o.backStyle);
         if (!group) return null;
         s.scene.add(group);
@@ -2428,6 +2437,8 @@
         const mine = s.epoch;
 
         let at = rect, gone = false, parked = false, facedUp = false;
+        let revealed = !o.faceDown;
+        const rest = () => place(null, null, null, facedUp ? 0 : Math.PI, 0);
         let thick = clampCardThick(o.thickness);
         const delay = Math.max(0, o.delay || 0);
         let t = o.instant ? (DEAL.FLY + DEAL.HOLD + DEAL.FLIP + DEAL.REST) : -delay;
@@ -2491,8 +2502,12 @@
         };
 
         // So a tilt change can reach a card that is already lying there.
-        group.userData.gpeReplace = () => { if (parked && !gone) place(null, null, null, 0, 0); };
-        if (o.instant) {
+        group.userData.gpeReplace = () => { if (parked && !gone) rest(); };
+        if (o.instant && !revealed) {
+            place(null, null, null, Math.PI, 0);
+            parked = true;
+        }
+        else if (o.instant) {
             place(null, null, null, 0, 0);
             parked = true;
             facedUp = true;
@@ -2530,6 +2545,9 @@
                     }
                     return true;
                 }
+                // Face down and waiting: lie there, off the actor list, until
+                // reveal() puts it back on for the flip.
+                if (!revealed) { place(null, null, null, Math.PI, 0); parked = true; return false; }
                 const afterFly = t - DEAL.FLY;
                 if (afterFly < DEAL.HOLD) { place(null, null, null, Math.PI, 0); return true; }
                 const fp = (afterFly - DEAL.HOLD) / DEAL.FLIP;
@@ -2550,11 +2568,11 @@
         if (!o.instant && !addActor(actor)) { s.scene.remove(group); s.cards.delete(group); return null; }
 
         const live = () => !gone && session === s && s.epoch === mine;
-        return {
+        const handle = {
             move(r) {
                 if (!live() || !r || !r.width) return;
                 at = r;
-                if (parked) place(null, null, null, 0, 0);
+                if (parked) rest();
                 s.needsRender = Math.max(s.needsRender, 2);
                 s.shadowDirty = true;
             },
@@ -2588,14 +2606,37 @@
                 const n = clampCardThick(v);
                 if (n === thick) return;
                 thick = n;
-                if (parked) place(null, null, null, 0, 0);
+                if (parked) rest();
                 s.needsRender = Math.max(s.needsRender, 2);
                 s.shadowDirty = true;
             },
+            // Turn a face-down deal over, showing src. Still in the air, it just
+            // flips on landing as an ordinary deal would; lying there, it flips
+            // where it lies — or snaps over, with ro.instant.
+            reveal(src, ro) {
+                if (!live() || revealed) return false;
+                if (src) handle.retexture(src);
+                revealed = true;
+                if (!parked) return true;
+                if (ro && ro.instant) {
+                    facedUp = true;
+                    rest();
+                    s.needsRender = Math.max(s.needsRender, 2);
+                    s.shadowDirty = true;
+                    if (o.onFaceUp) { try { o.onFaceUp(); } catch (err) { /* not ours */ } }
+                    return true;
+                }
+                parked = false;
+                t = DEAL.FLY;
+                group.visible = true;
+                return addActor(actor);
+            },
+            isRevealed: () => revealed,
             thickness: () => thick,
             isParked: () => parked && !gone,
             isGone: () => gone || session !== s || s.epoch !== mine,
         };
+        return handle;
     }
 
 

@@ -32,27 +32,59 @@ function walk(n, fn, depth = 0) {
     for (const c of n.children || []) walk(c, fn, depth + 1);
 }
 
-/* { board: [{sprite, slot}], faces: [{sprite}], backs: [{sprite}] } — the
- * ones drawn now. A face may be one of ours (four colours) swapped in; the
- * shape test only looks at size, so it still counts. */
+/* { board: [{sprite, slot}], boardBacks: [{sprite, slot}], faces: [{sprite}],
+ * backs: [{sprite}], flying: [{sprite}] } — the ones drawn now. A face may be one of ours (four
+ * colours) swapped in; the shape test only looks at size, so it still counts.
+ *
+ * ui2 deals the board face down: a back goes into each slot (drawn at face
+ * size) and turns into the face a beat later, one card at a time. Those backs
+ * are the board's, in boardBacks, and never a seat's. Before that each card
+ * flies out from the dealer, growing as it goes, in a node of its own: those
+ * are in flying, also never a seat's. */
+const isCard = (x) => isFace(x) || isBack(x);
+const boards = new WeakSet();
+const BOARD_MIN_H = 60;         // px: a board card is ~100 tall, a seat's back ~35
+const flights = new WeakSet();  // nodes ui2 flies cards out of the dealer in
+const holder = (n) => (n.parent && n.parent.parent ? n.parent.parent : n.parent);   // nodes once seen holding three cards or more
+
 export function readCards(app) {
-    const out = { board: [], faces: [], backs: [] };
+    const out = { board: [], boardBacks: [], faces: [], backs: [], flying: [] };
     const root = app && app.stage;
     if (!root) return out;
     const onBoard = new Set();
-    // The board: 3 to 5 slots, at most one face each, at least three dealt.
-    // (A seat's pair is two children, so it never qualifies.)
+    // The board: 3 to 5 slots, at most one card each. Three faces make it
+    // certain (a seat's pair is two), and the node is remembered: ui2 keeps it
+    // from hand to hand. Before that — the first deal after a load — it is five
+    // bare containers holding cards drawn at board size: the backs ui2 flies
+    // out to the seats travel in a node of their own, and are seat-sized
+    // (about 35px; the board's are 96).
     walk(root, (n) => {
         const kids = n.children || [];
         if (kids.length < 3 || kids.length > 5) return;
-        const per = kids.map((k) => { const f = []; walk(k, (x) => { if (isFace(x)) f.push(x); }); return f; });
-        if (per.some((f) => f.length > 1) || per.filter((f) => f.length).length < 3) return;
-        per.forEach((f, slot) => { if (f[0]) { onBoard.add(f[0]); if (shown(f[0])) out.board.push({ sprite: f[0], slot }); } });
+        const per = kids.map((k) => { const f = []; walk(k, (x) => { if (isCard(x)) f.push(x); }); return f; });
+        if (per.some((f) => f.length > 1)) return;
+        const dealt = per.filter((f) => f.length).length;
+        if (!dealt) return;
+        if (per.filter((f) => f.length && isFace(f[0])).length >= 3) boards.add(n);
+        else if (!boards.has(n) && !(kids.length === 5 && kids.every((k) => !k.texture) &&
+            per.every((f) => !f.length || f[0].getBounds().height >= BOARD_MIN_H))) return;
+        per.forEach((f, slot) => {
+            const c = f[0];
+            if (!c) return;
+            onBoard.add(c);
+            if (!shown(c)) return;
+            (isFace(c) ? out.board : out.boardBacks).push({ sprite: c, slot });
+        });
     });
     walk(root, (n) => {
-        if (!shown(n)) return;
-        if (isFace(n) && !onBoard.has(n)) out.faces.push({ sprite: n });
-        else if (isBack(n)) out.backs.push({ sprite: n });
+        if (!shown(n) || onBoard.has(n)) return;
+        if (isFace(n)) { out.faces.push({ sprite: n }); return; }
+        if (!isBack(n)) return;
+        // A back grown to board size off the board is on its way there; its
+        // node is the flight node from then on (it starts out seat-sized).
+        const h = holder(n);
+        if (n.getBounds().height >= BOARD_MIN_H) flights.add(h);
+        (flights.has(h) ? out.flying : out.backs).push({ sprite: n });
     });
     return out;
 }

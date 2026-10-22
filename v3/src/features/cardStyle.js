@@ -214,7 +214,7 @@ export function startCardStyle(ctx, prefs, editors) {
         // The back.
         if (o.back !== backStyle) { restoreAll("back"); backStyle = o.back; }
         if (backStyle) {
-            for (const { sprite } of cards.backs) {
+            for (const { sprite } of cards.backs.concat(cards.boardBacks)) {
                 const src = sprite.texture.source, cv = src && src.resource;
                 if (!cv || changed.has(cv)) continue;
                 changed.set(cv, { backup: snapshot(cv), source: src, what: "back" });
