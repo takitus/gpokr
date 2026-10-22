@@ -2,9 +2,12 @@
 
 name: Deploy to tools.gpokr.com
 
+# Manual only. The root manifest.json is the Chrome extension's now (the
+# ui2 build), and its version no longer tracks the classic site build: on a
+# push to main, a bump there would republish the classic content.js under the
+# new version and move current.json for every classic player. Run this by hand
+# for a deliberate classic release.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

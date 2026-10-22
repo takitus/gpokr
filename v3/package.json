@@ -1,0 +1,12 @@
+{
+  "name": "takitus-tools",
+  "private": true,
+  "description": "GPokr Tools for ui2's extension host (built to dist/ for tools.gpokr.com)",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
+}

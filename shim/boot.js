@@ -61,21 +61,24 @@ function adoptLegacy(id, legacy) {
     }
 }
 
-/* v3 ran as "takitus-tools" before it took its own id ("takitus-gpokr-tools"),
- * and that is also the id of ui2's bundled copy. Whatever v3 saved under the
- * old id comes across once; the bundled copy's own document ("doc") stays
- * where it is, since it was never ours. */
-const OLD_ID = "takitus-tools";
+/* v3 is "takitus-tools", the id of ui2's bundled 3.0.0, which a registry
+ * build replaces once it is newer. For a while (2026-10-21/22) it ran as
+ * "takitus-gpokr-tools"; what it saved then is the newest copy, so it comes
+ * back over the older "takitus-tools" values, once. The bundled copy's own
+ * document ("doc") is never touched. */
+const OLD_ID = "takitus-gpokr-tools";
 function adoptOldId(id) {
     if (id === OLD_ID) return;
     try {
-        const from = `ext.${OLD_ID}.`, to = `ext.${id}.`;
+        const from = `ext.${OLD_ID}.`, to = `ext.${id}.`, done = to + "adopted-" + OLD_ID;
+        if (localStorage.getItem(done) !== null) return;
+        const keys = [];
         for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
-            if (!k || !k.startsWith(from) || k === from + "doc") continue;
-            const nk = to + k.slice(from.length);
-            if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+            if (k && k.startsWith(from) && k !== from + "doc") keys.push(k);
         }
+        for (const k of keys) localStorage.setItem(to + k.slice(from.length), localStorage.getItem(k));
+        localStorage.setItem(done, "1");
     } catch (e) { /* storage blocked */ }
 }
 

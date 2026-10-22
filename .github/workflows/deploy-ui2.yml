@@ -1,0 +1,114 @@
+# Builds the extension and publishes it to https://tools.gpokr.com/<id>/<version>/.
+# The tablegames admins then point the registry entry at the new version.
+#
+# From the tablegames admins' template, adapted for this repo:
+#   - The ui2 extension lives in v3/ (its own manifest.json, package.json,
+#     package-lock.json), beside the classic add-on, whose deploy.yml reads the
+#     root manifest.json. Every step runs in v3/.
+#   - The role is the one deploy.yml already uses; it may also write
+#     tools.gpokr.com/takitus-tools/.
+#   - v3 loads its stylesheet, the 3D renderers, three.js, sounds and card art
+#     relative to its entry (ctx.assets.url), so the whole of dist/ is uploaded,
+#     not only index.js. The registry's sha256 covers index.js.
+
+name: Deploy the ui2 extension to tools.gpokr.com
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC token for AWS
+  contents: read
+
+env:
+  DEPLOY_ROLE_ARN: arn:aws:iam::069812419770:role/gpokr-tools-github-deploy
+  REGISTRY_URL: https://tools.gpokr.com/registry.json
+
+defaults:
+  run:
+    working-directory: v3
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read id and version from manifest.json
+        id: manifest
+        run: |
+          echo "id=$(python3 -c "import json; print(json.load(open('manifest.json'))['id'])")" >> "$GITHUB_OUTPUT"
+          echo "version=$(python3 -c "import json; print(json.load(open('manifest.json'))['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version is already published
+        id: live
+        env:
+          EXT_ID: ${{ steps.manifest.outputs.id }}
+          EXT_VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          LIVE="$(curl -fsS "$REGISTRY_URL" | python3 -c 'import json, os, sys; entries = [e for e in json.load(sys.stdin).get("extensions", []) if e.get("id") == os.environ["EXT_ID"]]; print(entries[0].get("version", "") if entries else "")' || true)"
+          echo "Registry: ${LIVE:-none} | Repo: $EXT_VERSION"
+          if [ "$LIVE" = "$EXT_VERSION" ]; then
+            echo "::notice::$EXT_ID v$LIVE is already in the registry. Bump the version in v3/manifest.json to deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          # The versioned files are immutable once browsers cache them, so a
+          # version that waits for its registry entry is never uploaded twice.
+          elif curl -fsSI "https://tools.gpokr.com/$EXT_ID/$EXT_VERSION/index.js" > /dev/null 2>&1; then
+            echo "::notice::$EXT_ID v$EXT_VERSION is already uploaded and waits for its registry entry. Bump the version in v3/manifest.json to deploy a change."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.live.outputs.skip != 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: v3/package-lock.json
+
+      - name: Build
+        if: steps.live.outputs.skip != 'true'
+        run: |
+          npm ci
+          npm run build
+
+      - name: Sanity checks
+        if: steps.live.outputs.skip != 'true'
+        run: |
+          test -s dist/index.js || { echo "::error::dist/index.js missing or empty"; exit 1; }
+          node --check dist/index.js
+          for f in v3/style.css 3d/table3d.js 3d/chips3d.js 3d/coin3d.js 3d/props3d.js vendor/three.iife.js assets/table.png; do
+            test -s "dist/$f" || { echo "::error::dist/$f missing or empty"; exit 1; }
+          done
+
+      - name: Authenticate to AWS (OIDC, no keys)
+        if: steps.live.outputs.skip != 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Publish to S3
+        if: steps.live.outputs.skip != 'true'
+        env:
+          EXT_ID: ${{ steps.manifest.outputs.id }}
+          EXT_VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          PREFIX="s3://tools.gpokr.com/$EXT_ID/$EXT_VERSION"
+          CACHE="public, max-age=31536000, immutable"
+          # cp, not sync: the deploy role can put objects but cannot list the bucket.
+          # Everything but the entry first, so the entry never points at files
+          # that are not there yet. Types are set where the CLI's guess is shaky.
+          aws s3 cp dist/ "$PREFIX/" --recursive --cache-control "$CACHE" \
+            --exclude index.js --exclude '*.js' --exclude '*.css' --exclude '*.glb'
+          aws s3 cp dist/ "$PREFIX/" --recursive --cache-control "$CACHE" \
+            --exclude '*' --include '*.js' --exclude index.js --content-type "text/javascript; charset=utf-8"
+          aws s3 cp dist/ "$PREFIX/" --recursive --cache-control "$CACHE" \
+            --exclude '*' --include '*.css' --content-type "text/css; charset=utf-8"
+          aws s3 cp dist/ "$PREFIX/" --recursive --cache-control "$CACHE" \
+            --exclude '*' --include '*.glb' --content-type "model/gltf-binary"
+          aws s3 cp manifest.json "$PREFIX/manifest.json" --content-type "application/json" --cache-control "$CACHE"
+          aws s3 cp dist/index.js "$PREFIX/index.js" --content-type "text/javascript; charset=utf-8" --cache-control "$CACHE"
+          SHA256="$(sha256sum dist/index.js | cut -d ' ' -f 1)"
+          echo "::notice::Published $EXT_ID v$EXT_VERSION to https://tools.gpokr.com/$EXT_ID/$EXT_VERSION/index.js (sha256 $SHA256). Send both to the tablegames admins for the registry entry."
