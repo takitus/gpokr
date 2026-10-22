@@ -18,7 +18,7 @@
 
 import { slot } from "../slot.js";
 import { findPixiApp } from "../lib/pixi.js";
-import { readCards, createCardLearner } from "../lib/pixiCards.js";
+import { readCards, identify } from "../lib/pixiCards.js";
 import { openPanel, checkRow, choiceRow, hint } from "../lib/panel.js";
 
 export const BACK_STYLES = [["", "team (site)"], ["rosette", "rosette"], ["lattice", "lattice"], ["fan", "fan"], ["deco", "deco"]];
@@ -63,6 +63,23 @@ function recolor(cv, suit) {
     return true;
 }
 
+/* Is the card's index (the rank and suit in its top-left corner) red, as on
+ * hearts and diamonds, or black? Only the corner: a court card's picture has
+ * red in it whatever the suit. */
+function hasRedInk(cv) {
+    const g = cv.getContext("2d", { willReadFrequently: true });
+    if (!g) return null;
+    const w = Math.round(cv.width * 0.24), h = Math.round(cv.height * 0.32);
+    const d = g.getImageData(0, 0, w, h).data;
+    let red = 0, dark = 0;
+    for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 200) continue;
+        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) red++;
+        else if (d[i] < 70 && d[i + 1] < 70 && d[i + 2] < 70) dark++;
+    }
+    return red > dark;
+}
+
 function snapshot(cv) {
     const copy = document.createElement("canvas");
     copy.width = cv.width; copy.height = cv.height;
@@ -82,9 +99,40 @@ function loadImage(url) {
 
 export function startCardStyle(ctx, prefs, editors) {
     const opts = () => ({ ...DEFAULTS, ...(prefs.get("cardStyle") || {}) });
-    const learner = createCardLearner(ctx);
-    const changed = new Map();      // canvas -> { backup, source, what }
+    const changed = new Map();      // back canvas -> { backup, source, what }
+    const swapped = new Map();      // face sprite -> { orig, ours, card }
+    const made = new Map();         // card + ui2 texture uid -> our texture
     let raf = 0;
+
+    const unswap = (sprite, rec) => {
+        if (sprite.texture === rec.ours) sprite.texture = rec.orig;
+        swapped.delete(sprite);
+    };
+    const unswapAll = () => { for (const [s, rec] of [...swapped]) unswap(s, rec); };
+
+    // A pixi texture of ui2's own art for this card, recoloured. Built with
+    // ui2's own texture classes (taken off the original), at its resolution.
+    // The art has to agree with the state about the card's colour (a red
+    // diamond, a black club); if it does not, something is misread and the
+    // card is left alone rather than painted wrong.
+    function fourColorTexture(orig, card) {
+        const key = card + ":" + orig.uid;
+        if (made.has(key)) return made.get(key);
+        let tex = null;
+        try {
+            const src = orig.source, cv = src && src.resource;
+            if (cv && hasRedInk(cv) === (card[1] === "d")) {
+                const copy = snapshot(cv);
+                copy.dataset.gptCard = card;   // which card this art was made for (debugging)
+                if (recolor(copy, card[1])) {
+                    const source = new src.constructor({ resource: copy, resolution: src.resolution });
+                    tex = new orig.constructor({ source });
+                }
+            }
+        } catch (e) { ctx.log("four-colour texture", e); tex = null; }
+        made.set(key, tex);
+        return tex;
+    }
 
     const restore = (cv) => {
         const rec = changed.get(cv);
@@ -141,19 +189,28 @@ export function startCardStyle(ctx, prefs, editors) {
         const app = findPixiApp();
         if (!app) return;
         const cards = readCards(app);
-        learner.learn(cards, seatCentres());
         const o = opts();
-        // Four colours on every named diamond and club.
-        if (o.fourColor) {
-            for (const { sprite } of cards.board.concat(cards.faces)) {
-                const card = learner.cardOf(sprite);
-                if (!card || (card[1] !== "d" && card[1] !== "c")) continue;
-                const src = sprite.texture.source, cv = src && src.resource;
-                if (!cv || changed.has(cv)) continue;
-                const backup = snapshot(cv);
-                if (recolor(cv, card[1])) { changed.set(cv, { backup, source: src, what: "suit" }); src.update(); }
+        // Four colours: every diamond and club the state names this frame
+        // gets a recoloured copy of its own art swapped in. ui2's canvases are
+        // never written; when ui2 hands the sprite a new texture (next hand,
+        // a re-render) or the card changes, ours steps aside and the decision
+        // is made again from scratch.
+        const ids = o.fourColor ? identify(ctx, cards, seatCentres()) : new Map();
+        const live = new Set();
+        for (const { sprite } of cards.board.concat(cards.faces)) {
+            live.add(sprite);
+            let rec = swapped.get(sprite);
+            if (rec && sprite.texture !== rec.ours) { swapped.delete(sprite); rec = null; }   // ui2 moved on
+            const card = ids.get(sprite);
+            const want = !!card && (card[1] === "d" || card[1] === "c");
+            if (rec && (!want || rec.card !== card)) { unswap(sprite, rec); rec = null; }
+            if (want && !rec) {
+                const orig = sprite.texture;
+                const ours = fourColorTexture(orig, card);
+                if (ours) { sprite.texture = ours; swapped.set(sprite, { orig, ours, card }); }
             }
         }
+        for (const [s, rec] of [...swapped]) if (!live.has(s) && (!s.parent || s.destroyed)) swapped.delete(s);
         // The back.
         if (o.back !== backStyle) { restoreAll("back"); backStyle = o.back; }
         if (backStyle) {
@@ -182,7 +239,7 @@ export function startCardStyle(ctx, prefs, editors) {
     const offPrefs = prefs.onChange((k) => {
         if (k !== "cardStyle") return;
         rootClass();
-        if (!opts().fourColor) restoreAll("suit");
+        if (!opts().fourColor) unswapAll();
     });
 
     const openEditor = () => openPanel(ctx, {
@@ -204,6 +261,7 @@ export function startCardStyle(ctx, prefs, editors) {
         cancelAnimationFrame(raf);
         offPrefs(); offEditor(); offBadge();
         restoreAll();
+        unswapAll();
         holder.remove();
         document.documentElement.classList.remove("gpt-fourcolor");
     };

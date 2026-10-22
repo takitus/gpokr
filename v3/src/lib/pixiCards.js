@@ -1,14 +1,15 @@
-/* ui2's cards in its pixi scene, and which card each texture is.
+/* ui2's cards in its pixi scene, and which card each one is right now.
  *
- * Faces are drawn from one canvas per card (240x336, shown 60x84 at 1.2);
+ * Faces are drawn from per-card canvases (240x336, shown 60x84 at 1.2);
  * backs from one shared canvas (120x160, shown 30x40). The board is a node of
- * five slots, one card each, in deal order; every other face sits at a seat.
+ * five fixed slots in deal order, the ones not dealt yet empty; every other
+ * face sits at a seat, a pair per player.
  *
- * A texture says nothing about which card it is, so that is learned from the
- * table state: the board's slots against gameInfo.tableCards, a seat's faces
- * (left to right) against that player's card1/card2. Learned once per
- * texture; ui2 keeps one texture per card, so the map fills up over a few
- * hands and stays right. */
+ * Identity is read from the table state every frame and never remembered:
+ * ui2 reuses sprites and canvases from hand to hand, so anything keyed on a
+ * texture goes stale (that was the wrong-card bug). The board's slot k is
+ * gameInfo.tableCards[k]; a seat's pair, in the order ui2 builds it, is that
+ * player's card1 then card2. */
 
 import { cardStr } from "./cards.js";
 
@@ -26,26 +27,27 @@ export const isBack = (s) => {
 const shown = (n) => { for (let p = n; p; p = p.parent) if (p.visible === false) return false; return true; };
 
 function walk(n, fn, depth = 0) {
-    if (!n || depth > 8) return;
+    if (!n || depth > 9) return;
     fn(n);
     for (const c of n.children || []) walk(c, fn, depth + 1);
 }
 
-/* { board: [{sprite, slot}], faces: [{sprite}], backs: [{sprite}] } — visible
- * ones only, as drawn now. */
+/* { board: [{sprite, slot}], faces: [{sprite}], backs: [{sprite}] } — the
+ * ones drawn now. A face may be one of ours (four colours) swapped in; the
+ * shape test only looks at size, so it still counts. */
 export function readCards(app) {
     const out = { board: [], faces: [], backs: [] };
     const root = app && app.stage;
     if (!root) return out;
     const onBoard = new Set();
-    // The board: a node of 3 to 5 children, one face in each, in deal order.
-    // (A seat's shown pair is two such children, so it never qualifies.)
+    // The board: 3 to 5 slots, at most one face each, at least three dealt.
+    // (A seat's pair is two children, so it never qualifies.)
     walk(root, (n) => {
         const kids = n.children || [];
         if (kids.length < 3 || kids.length > 5) return;
         const per = kids.map((k) => { const f = []; walk(k, (x) => { if (isFace(x)) f.push(x); }); return f; });
-        if (per.some((f) => f.length !== 1)) return;
-        per.forEach((f, slot) => { onBoard.add(f[0]); if (shown(f[0])) out.board.push({ sprite: f[0], slot }); });
+        if (per.some((f) => f.length > 1) || per.filter((f) => f.length).length < 3) return;
+        per.forEach((f, slot) => { if (f[0]) { onBoard.add(f[0]); if (shown(f[0])) out.board.push({ sprite: f[0], slot }); } });
     });
     walk(root, (n) => {
         if (!shown(n)) return;
@@ -55,41 +57,46 @@ export function readCards(app) {
     return out;
 }
 
-export function createCardLearner(ctx) {
-    const cardOf = new Map();   // texture uid -> "As"
+/* Tree order of a node, for sorting siblings-of-siblings the way ui2 built them. */
+const treeKey = (n) => { const p = []; for (let x = n; x && x.parent; x = x.parent) p.unshift(x.parent.children.indexOf(x)); return p; };
+const byTree = (a, b) => {
+    const ka = treeKey(a), kb = treeKey(b);
+    for (let i = 0; i < Math.min(ka.length, kb.length); i++) if (ka[i] !== kb[i]) return ka[i] - kb[i];
+    return ka.length - kb.length;
+};
 
-    /* seatCentres: { seat: {x, y} } in pixi world coordinates. */
-    function learn(cards, seatCentres) {
-        const gi = ctx.state.get().gameInfo;
-        if (!gi) return;
-        for (const { sprite, slot } of cards.board) {
-            const c = cardStr((gi.tableCards || [])[slot]);
-            if (c) cardOf.set(sprite.texture.uid, c);
-        }
-        if (!seatCentres) return;
-        // Seat faces: nearest seat, then left to right against card1, card2.
-        const bySeat = new Map();
-        for (const f of cards.faces) {
-            const b = f.sprite.getBounds();
-            const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
-            let best = -1, bd = Infinity;
-            for (const [seat, c] of Object.entries(seatCentres)) {
-                const d = (c.x - cx) ** 2 + (c.y - cy) ** 2;
-                if (d < bd) { bd = d; best = +seat; }
-            }
-            if (best < 0) continue;
-            if (!bySeat.has(best)) bySeat.set(best, []);
-            bySeat.get(best).push({ sprite: f.sprite, x: b.x });
-        }
-        for (const [seat, list] of bySeat) {
-            const p = (gi.playerInfo || [])[seat];
-            if (!p || list.length !== 2) continue;
-            const c1 = cardStr(p.card1), c2 = cardStr(p.card2);
-            if (!c1 || !c2) continue;
-            list.sort((a, b) => a.x - b.x);
-            cardOf.set(list[0].sprite.texture.uid, c1);
-            cardOf.set(list[1].sprite.texture.uid, c2);
-        }
+/* sprite -> "As" for every face whose card the state names now.
+ * seatCentres: { seat: {x, y} } in pixi world coordinates. */
+export function identify(ctx, cards, seatCentres) {
+    const out = new Map();
+    const gi = ctx.state.get().gameInfo;
+    if (!gi) return out;
+    for (const { sprite, slot } of cards.board) {
+        const c = cardStr((gi.tableCards || [])[slot]);
+        if (c) out.set(sprite, c);
     }
-    return { learn, cardOf: (sprite) => cardOf.get(sprite.texture.uid) || null };
+    if (!seatCentres || !cards.faces.length) return out;
+    const bySeat = new Map();
+    for (const { sprite } of cards.faces) {
+        const b = sprite.getBounds();
+        const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        let best = -1, bd = Infinity;
+        for (const [seat, c] of Object.entries(seatCentres)) {
+            const d = (c.x - cx) ** 2 + (c.y - cy) ** 2;
+            if (d < bd) { bd = d; best = +seat; }
+        }
+        if (best < 0) continue;
+        if (!bySeat.has(best)) bySeat.set(best, []);
+        bySeat.get(best).push(sprite);
+    }
+    for (const [seat, list] of bySeat) {
+        const p = (gi.playerInfo || [])[seat];
+        if (!p || list.length !== 2) continue;
+        const c1 = cardStr(p.card1), c2 = cardStr(p.card2);
+        if (!c1 || !c2) continue;
+        list.sort(byTree);
+        out.set(list[0], c1);
+        out.set(list[1], c2);
+    }
+    return out;
 }

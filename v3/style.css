@@ -480,3 +480,8 @@ html.gpt-fourcolor img[data-gpe-card$="d"] { filter: url(#gpt-suit-diamond); }
 html.gpt-fourcolor img[data-gpe-card$="c"] { filter: url(#gpt-suit-club); }
 html.gpt-fourcolor .gpt-suit-d { color: #0000ff; }
 html.gpt-fourcolor .gpt-suit-c { color: #008000; }
+/* ui2's own HTML cards (a hand shown at a seat, your hole cards, the hand
+   helper) are <svg class="card" data-face="8S">: the card names itself, so
+   the classic filters apply straight off the attribute. */
+html.gpt-fourcolor svg.card[data-face$="D"] { filter: url(#gpt-suit-diamond); }
+html.gpt-fourcolor svg.card[data-face$="C"] { filter: url(#gpt-suit-club); }

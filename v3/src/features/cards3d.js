@@ -12,6 +12,7 @@
 
 import { findPixiApp } from "../lib/pixi.js";
 import { readCards } from "../lib/pixiCards.js";
+import { cardStr } from "../lib/cards.js";
 
 const STAGGER = 0.12;   // s between the cards of one deal (the flop)
 
@@ -43,18 +44,24 @@ export function startCards3d(ctx, look, backStyle) {
         const seenBoard = new Set();
         if (L.cards3d) {
             let fresh = 0;
-            for (const { sprite } of cards.board.sort((a, b) => a.slot - b.slot)) {
+            const gi = ctx.state.get().gameInfo || {};
+            for (const { sprite, slot } of cards.board.sort((a, b) => a.slot - b.slot)) {
                 seenBoard.add(sprite);
                 const rect = pageRect(cr, sprite.getBounds());
                 const rec = board.get(sprite);
-                // ui2 reuses a slot's sprite with a new texture for the next hand.
-                if (rec && rec.uid === sprite.texture.uid && rec.epoch === epoch && !rec.handle.isGone()) {
+                const face = sprite.texture.source && sprite.texture.source.resource;
+                // Which card this slot holds, from the state: ui2 reuses a slot's
+                // sprite (and its canvas) for the next hand, so the sprite says
+                // nothing about which card it is now.
+                const card = cardStr((gi.tableCards || [])[slot]) || "?" + sprite.texture.uid;
+                if (rec && rec.card === card && rec.epoch === epoch && !rec.handle.isGone()) {
                     rec.handle.move(rect);
                     if (rec.handle.thickness() !== L.cardThick) rec.handle.setThickness(L.cardThick);
+                    // Same card, new art (four colours switched on or off).
+                    if (face && rec.face !== face && rec.handle.retexture) { rec.handle.retexture(face); rec.face = face; }
                     continue;
                 }
                 if (rec) dropBoard(sprite);
-                const face = sprite.texture.source && sprite.texture.source.resource;
                 if (!face) continue;
                 const instant = first || !L.dealAnim || document.hidden;
                 const handle = api.dealCard(rect, face, {
@@ -63,7 +70,7 @@ export function startCards3d(ctx, look, backStyle) {
                 });
                 if (!handle) continue;
                 sprite.renderable = false;
-                board.set(sprite, { handle, uid: sprite.texture.uid, epoch });
+                board.set(sprite, { handle, card, face, epoch });
             }
         }
         for (const s of [...board.keys()]) if (!seenBoard.has(s) || !s.parent) dropBoard(s);

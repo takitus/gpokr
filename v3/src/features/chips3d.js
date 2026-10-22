@@ -4,16 +4,24 @@
  *
  * Read from pixi, reconciled every frame, as the classic add-on reconciled the
  * site's chip elements: park what is there, move what moved, drop what left.
- * A stack in ui2's scene is a container of columns; a column is a run of chip
- * sprites from the bottom up (26px, all from the chip art's 104px canvases).
+ * ui2 draws each bet (and the pot) as a group: a shadow under the chips, a
+ * "$N" label, and one or more stacks; a stack is a container of columns, a
+ * column a run of chip sprites from the bottom up (26px, from the chip art's
+ * 104px canvases).
  *
- * The denomination of each texture is learned rather than assumed: the table
- * state lists every bet's chips (callChips) and the pot's (centerChips) in the
- * same order ui2 stacks them, so matching a stack's textures against those
- * lists names each texture once. A texture nobody has named yet is left 2D.
+ * The label is the authority on the amount: it is the server's number as ui2
+ * prints it, so the plate shows exactly that. Chip denominations (for the
+ * art) are learned per texture from the state's chip lists (callChips,
+ * centerChips), and a learned value is only believed when the group's chips
+ * then add up to the label. A group that does not add up stays 2D, ui2's own
+ * label and all, and what was learned from it is forgotten, so a bad guess
+ * never sticks.
  *
  * A bet that grows drops in chip by chip, with a clink per landing; chips
- * swept to the pot, or pushed to the winner, simply appear where they are. */
+ * swept to the pot, or pushed to the winner, simply appear where they are.
+ * Beside each group ui2's shadow and label are switched off (its canvas is
+ * above ours, so they would lie dark on our discs) and the classic value
+ * plate, the stack's silhouette and amount, takes their place. */
 
 import { findPixiApp } from "../lib/pixi.js";
 import { playClink } from "../lib/sounds.js";
@@ -29,14 +37,13 @@ const isChip = (n) => {
         res && res.width === 104 && res.height === 104;
 };
 
-/* Every stack on the table, as { sprites: [{sprite, col, row}], key }. */
-function readStacks(app) {
+/* Every bet group on the table: { node, stacks: [{node, sprites:[{sprite,col,row}]}], label } */
+function readGroups(app) {
     const root = app && app.stage && app.stage.children[0];
     if (!root) return [];
     const stacks = [];
     const visit = (n, depth) => {
         if (depth > 6 || !n.children) return;
-        // A stack: children are columns, each column's children each hold one chip.
         const cols = n.children.filter((c) => c.children && c.children.length &&
             c.children.every((k) => k.children && k.children.length === 1 && isChip(k.children[0])));
         if (cols.length && cols.length === n.children.length) {
@@ -47,50 +54,38 @@ function readStacks(app) {
         }
         for (const c of n.children) visit(c, depth + 1);
     };
-    root.children.forEach((layer, i) => visit(layer, 0));
-    return stacks;
+    root.children.forEach((layer) => visit(layer, 0));
+    const groups = new Map();
+    for (const st of stacks) {
+        const g = st.node.parent;
+        if (!g) continue;
+        if (!groups.has(g)) groups.set(g, { node: g, stacks: [], label: null });
+        groups.get(g).stacks.push(st);
+    }
+    // The label: a sibling of the stacks holding a text node.
+    for (const grp of groups.values()) {
+        const stackNodes = new Set(grp.stacks.map((s) => s.node));
+        for (const k of grp.node.children) {
+            if (stackNodes.has(k)) continue;
+            const t = (k.children || []).find((x) => typeof x.text === "string");
+            if (t) { grp.label = t; break; }
+        }
+    }
+    return [...groups.values()];
 }
+
+const parseMoney = (s) => { const n = parseInt(String(s).replace(/[^\d]/g, ""), 10); return isFinite(n) ? n : null; };
 
 export function startChips3d(ctx, look) {
     const T3D = () => window.GPE_TABLE3D;
     const denomOf = new Map();     // texture uid -> denomination
-    const parked = new Map();      // sprite -> { handle, denom, row, at, epoch }
-    const amounts = new Map();     // stack position key -> amount last frame
+    const parked = new Map();      // sprite -> { handle, denom, row, at, epoch, diam, thick }
+    const amounts = new Map();     // group position key -> amount last frame
+    const plates = new Map();      // group node -> { handle, epoch }
+    const hiddenExtras = new Map(); // ui2's shadow / label node -> its group
     let raf = 0;
 
-    // Name textures from the state's chip lists: a run of sprites as long as a
-    // list, with no clash against what is already known, teaches the rest.
-    const learn = (stacks) => {
-        const gi = ctx.state.get().gameInfo;
-        if (!gi) return;
-        const lists = [];
-        for (const p of gi.playerInfo || []) if (p && p.callChips && p.callChips.length) lists.push(p.callChips);
-        if (gi.centerChips && gi.centerChips.length) lists.push(gi.centerChips);
-        for (const sp of gi.sidePots || []) if (Array.isArray(sp) && sp.length) lists.push(sp);
-        // Stacks in one layer (the pot's several piles) are tried together too.
-        const runs = stacks.map((s) => s.sprites.map((x) => x.sprite.texture.uid));
-        const byLayer = new Map();
-        stacks.forEach((s, i) => {
-            const layer = s.node.parent;
-            if (!byLayer.has(layer)) byLayer.set(layer, []);
-            byLayer.get(layer).push(...runs[i]);
-        });
-        const candidates = runs.concat([...byLayer.values()]);
-        for (const run of candidates) {
-            for (const list of lists) {
-                if (list.length !== run.length) continue;
-                const fresh = new Map();
-                let ok = true;
-                for (let i = 0; i < run.length && ok; i++) {
-                    const known = denomOf.get(run[i]) ?? fresh.get(run[i]);
-                    if (known != null && known !== list[i]) ok = false;
-                    else fresh.set(run[i], list[i]);
-                }
-                if (ok) { for (const [u, d] of fresh) denomOf.set(u, d); break; }
-            }
-        }
-    };
-
+    const pageRect = (cr, b) => ({ left: cr.left + b.x, top: cr.top + b.y, width: b.width, height: b.height });
     const unpark = (sprite) => {
         const rec = parked.get(sprite);
         if (!rec) return;
@@ -98,16 +93,42 @@ export function startChips3d(ctx, look) {
         try { rec.handle.remove(); } catch (e) { /* scene already gone */ }
         sprite.renderable = true;
     };
-    const plates = new Map();       // group node -> { handle, epoch }
-    const hiddenExtras = new Map(); // ui2's shadow / label node -> its group
     const dropPlate = (g) => { const p = plates.get(g); if (!p) return; plates.delete(g); try { p.handle.remove(); } catch (e) { /* scene gone */ } };
-    const pageRect = (cr, b) => ({ left: cr.left + b.x, top: cr.top + b.y, width: b.width, height: b.height });
+    const showExtras = (g) => { for (const [k, owner] of [...hiddenExtras]) if (!g || owner === g) { k.renderable = true; hiddenExtras.delete(k); } };
     const unparkAll = () => {
         for (const s of [...parked.keys()]) unpark(s);
         for (const g of [...plates.keys()]) dropPlate(g);
-        for (const k of hiddenExtras.keys()) k.renderable = true;
-        hiddenExtras.clear();
+        showExtras(null);
     };
+
+    // The state's chip lists that could be this group's: every bet, the pot.
+    const chipLists = () => {
+        const gi = ctx.state.get().gameInfo || {};
+        const lists = [];
+        for (const p of gi.playerInfo || []) if (p && p.callChips && p.callChips.length) lists.push(p.callChips);
+        if (gi.centerChips && gi.centerChips.length) lists.push(gi.centerChips);
+        for (const sp of gi.sidePots || []) if (Array.isArray(sp) && sp.length) lists.push(sp);
+        return lists;
+    };
+
+    /* Name the group's textures from a state list of the same length that
+     * adds up to the label, consistent with what is already known. */
+    function learn(grp, label) {
+        const run = [];
+        for (const st of grp.stacks) for (const x of st.sprites) run.push(x.sprite.texture.uid);
+        for (const list of chipLists()) {
+            if (list.length !== run.length || list.reduce((a, b) => a + b, 0) !== label) continue;
+            const fresh = new Map();
+            let ok = true;
+            for (let i = 0; i < run.length && ok; i++) {
+                const known = denomOf.get(run[i]) ?? fresh.get(run[i]);
+                if (known != null && known !== list[i]) ok = false;
+                else fresh.set(run[i], list[i]);
+            }
+            if (ok) { for (const [u, d] of fresh) denomOf.set(u, d); return true; }
+        }
+        return false;
+    }
 
     const frame = () => {
         raf = requestAnimationFrame(frame);
@@ -120,34 +141,63 @@ export function startChips3d(ctx, look) {
         if (!app || !cv) return;
         const cr = cv.getBoundingClientRect();
         const epoch = api.epoch();
-        const stacks = readStacks(app);
-        learn(stacks);
-        const perLayer = new Map();
-        for (const st of stacks) perLayer.set(st.node.parent, (perLayer.get(st.node.parent) || 0) + 1);
-        const seen = new Set();
-        for (const st of stacks) {
-            const plan = [];
-            const base = new Map();
-            let amount = 0, complete = true;
-            for (const x of st.sprites) {
-                const denom = denomOf.get(x.sprite.texture.uid);
-                if (denom == null) { complete = false; break; }
-                const b = x.sprite.getBounds();
-                const r = { left: cr.left + b.x, top: cr.top + b.y, width: b.width, height: b.height };
-                if (x.row === 0) base.set(x.col, r);
-                plan.push({ ...x, denom, own: r });
-                amount += denom;
+        const gi = ctx.state.get().gameInfo || {};
+        const groups = readGroups(app);
+
+        // Which groups we can draw: every chip named, and the names add up.
+        const good = [];
+        for (const grp of groups) {
+            const label = grp.label ? parseMoney(grp.label.text) : null;
+            const sum = () => {
+                let s = 0;
+                for (const st of grp.stacks) for (const x of st.sprites) {
+                    const d = denomOf.get(x.sprite.texture.uid);
+                    if (d == null) return null;
+                    s += d;
+                }
+                return s;
+            };
+            let total = sum();
+            if (label != null && total !== label) {
+                // Unnamed chips, or a guess that does not add up: forget this
+                // group's textures and learn them again from the state.
+                if (total != null) for (const st of grp.stacks) for (const x of st.sprites) denomOf.delete(x.sprite.texture.uid);
+                if (learn(grp, label)) total = sum();
             }
-            if (!complete || !plan.length) continue;   // a chip we cannot name: leave the stack 2D
-            for (const p of plan) p.at = base.get(p.col) || p.own;
+            if (total == null || (label != null && total !== label)) continue;
+            good.push({ ...grp, amount: label != null ? label : total });
+        }
+
+        // Plan every chip of every drawable group.
+        const seen = new Set();
+        const feet = new Map();
+        for (const grp of good) {
+            const plan = [];
+            for (const st of grp.stacks) {
+                const base = new Map();
+                const rows = [];
+                for (const x of st.sprites) {
+                    const r = pageRect(cr, x.sprite.getBounds());
+                    if (x.row === 0) base.set(x.col, r);
+                    rows.push({ ...x, denom: denomOf.get(x.sprite.texture.uid), own: r });
+                }
+                for (const p of rows) p.at = base.get(p.col) || p.own;
+                plan.push(...rows);
+            }
+            if (!plan.length) continue;
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            for (const p of plan) {
+                x0 = Math.min(x0, p.at.left); y0 = Math.min(y0, p.at.top);
+                x1 = Math.max(x1, p.at.left + p.at.width); y1 = Math.max(y1, p.at.top + p.at.height);
+            }
+            feet.set(grp.node, { left: x0, top: y0, width: x1 - x0, height: y1 - y0 });
+
             // New money falls in; moved money (the pot, a payout) just appears.
-            const key = Math.round(plan[0].at.left / 4) + ":" + Math.round(plan[0].at.top / 4);
+            const key = Math.round(x0 / 4) + ":" + Math.round(y0 / 4);
             const was = amounts.get(key);
-            amounts.set(key, amount);
-            // The pot: the one stack worth the whole pot, or any of the piles ui2
-            // splits a big pot into (a bet is always a single stack).
-            const isPot = (ctx.state.get().gameInfo || {}).pot === amount || (perLayer.get(st.node.parent) || 0) > 1;
-            const drops = L.chipDrop && !document.hidden && !isPot && (was == null || amount > was) && was !== amount;
+            amounts.set(key, grp.amount);
+            const isPot = gi.pot === grp.amount || grp.stacks.length > 1;
+            const drops = L.chipDrop && !document.hidden && !isPot && (was == null || grp.amount > was);
             const order = plan.slice().sort((a, b) => a.row - b.row || a.col - b.col);
             const gap = Math.min(DROP_GAP, DROP_SPAN / Math.max(1, order.length));
             order.forEach((p, i) => { p.delay = drops ? i * gap : null; });
@@ -175,50 +225,28 @@ export function startChips3d(ctx, look) {
         }
         for (const s of [...parked.keys()]) if (!seen.has(s) || s.destroyed || !s.parent) unpark(s);
 
-        /* ----- per bet (or the pot): ui2's shadow and label off, our plate on ----- */
-        // ui2 draws, beside each group's chips, a dark shadow under them and a
-        // "$N" label. Its canvas is above ours, so left on they would lie ON
-        // our discs; instead they go, and the classic plate (the stack's
-        // silhouette and its value, kept clear of the cards and other stacks)
-        // takes their place. A group with a chip we cannot name stays 2D.
-        const groups = new Map();   // group node -> { stacks, foot, amount, ok }
-        for (const st of stacks) {
-            const g = st.node.parent;
-            if (!g) continue;
-            if (!groups.has(g)) groups.set(g, { stacks: new Set(), amount: 0, ok: true, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
-            const rec = groups.get(g);
-            rec.stacks.add(st.node);
-            for (const x of st.sprites) {
-                const p = parked.get(x.sprite);
-                if (!p) { rec.ok = false; continue; }
-                rec.amount += p.denom;
-                rec.x0 = Math.min(rec.x0, p.at.left); rec.y0 = Math.min(rec.y0, p.at.top);
-                rec.x1 = Math.max(rec.x1, p.at.left + p.at.width); rec.y1 = Math.max(rec.y1, p.at.top + p.at.height);
-            }
-        }
+        // ui2's shadow and label off, our plate on, for the groups we draw.
         const pad = (r, k) => ({ left: r.left - k, top: r.top - k, width: r.width + 2 * k, height: r.height + 2 * k });
         const cardRects = readCards(app).board.map(({ sprite }) => pad(pageRect(cr, sprite.getBounds()), 5));
-        const feet = new Map();
-        for (const [g, rec] of groups) if (rec.ok && rec.amount) feet.set(g, { left: rec.x0, top: rec.y0, width: rec.x1 - rec.x0, height: rec.y1 - rec.y0 });
-        const seenGroups = new Set();
-        for (const [g, foot] of feet) {
-            seenGroups.add(g);
-            const rec = groups.get(g);
-            for (const k of g.children) {
-                if (rec.stacks.has(k) || hiddenExtras.has(k)) continue;
-                hiddenExtras.set(k, g);
+        for (const grp of good) {
+            const foot = feet.get(grp.node);
+            if (!foot) continue;
+            const stackNodes = new Set(grp.stacks.map((s) => s.node));
+            for (const k of grp.node.children) {
+                if (stackNodes.has(k) || hiddenExtras.has(k)) continue;
+                hiddenExtras.set(k, grp.node);
                 k.renderable = false;
             }
             if (!api.parkStackPlate) continue;
-            const avoid = cardRects.concat([...feet].filter(([o]) => o !== g).map(([, f]) => pad(f, 5)));
-            const pl = plates.get(g);
-            if (pl && pl.epoch === epoch && !pl.handle.isGone()) { pl.handle.move(foot, rec.amount, DIAM, avoid); continue; }
-            if (pl) dropPlate(g);
-            const handle = api.parkStackPlate(foot, rec.amount, { diameter: DIAM, avoid });
-            if (handle) plates.set(g, { handle, epoch });
+            const avoid = cardRects.concat([...feet].filter(([o]) => o !== grp.node).map(([, f]) => pad(f, 5)));
+            const pl = plates.get(grp.node);
+            if (pl && pl.epoch === epoch && !pl.handle.isGone()) { pl.handle.move(foot, grp.amount, DIAM, avoid); continue; }
+            if (pl) dropPlate(grp.node);
+            const handle = api.parkStackPlate(foot, grp.amount, { diameter: DIAM, avoid });
+            if (handle) plates.set(grp.node, { handle, epoch });
         }
-        for (const g of [...plates.keys()]) if (!seenGroups.has(g)) dropPlate(g);
-        for (const [k, g] of [...hiddenExtras]) if (!seenGroups.has(g) || k.parent !== g) { k.renderable = true; hiddenExtras.delete(k); }
+        for (const g of [...plates.keys()]) if (!feet.has(g)) dropPlate(g);
+        for (const [k, g] of [...hiddenExtras]) if (!feet.has(g) || k.parent !== g) { k.renderable = true; hiddenExtras.delete(k); }
     };
     raf = requestAnimationFrame(frame);
 
