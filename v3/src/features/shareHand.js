@@ -13,9 +13,9 @@
  * In the chat toolbar, sharing is offered two ways that take turns in one
  * slot: a "share hand" box that shares at the end of the hand in play (once),
  * and a "share last hand" button from the end of a hand until the next flop.
- * The "always share" switch shares every hand. A verified share from someone
- * else shows over their seat for a few seconds and goes into that hand's
- * summary. */
+ * Nothing is ever shared without one of those two clicks. A verified share
+ * from someone else shows over their seat for a few seconds and goes into
+ * that hand's summary. */
 
 import { slot } from "../slot.js";
 import { cardStr } from "../lib/cards.js";
@@ -131,10 +131,10 @@ export function startShareHand(ctx, tracker) {
         paint();
     };
 
-    // Auto-share at the end of the hand ("always share", or the one-shot box).
+    // Share at the end of the hand when the one-shot box is ticked.
     offs.push(tracker.subscribe((h) => {
         if (!h || !h.ended || h !== tracker.get()) { paint(); return; }
-        if (ctx.settings.get("alwaysShare") || shareNext) {
+        if (shareNext) {
             const m = mine(h);
             if (m) { share(m); shareNext = false; }
         }
@@ -150,11 +150,9 @@ export function startShareHand(ctx, tracker) {
             v.toggle.hidden = !!last;
             v.btn.disabled = !!done;
             v.btn.textContent = done ? "hand shared ✓" : "share last hand";
-            v.box.disabled = !!ctx.settings.get("alwaysShare");
-            v.box.checked = ctx.settings.get("alwaysShare") ? true : shareNext;
+            v.box.checked = shareNext;
         }
     }
-    offs.push(ctx.settings.onChange("alwaysShare", paint));
 
     offs.push(ctx.ui.register("chat.toolbar", slot(ctx, (el) => {
         el.classList.add("gpt-root", "gpt-share");
