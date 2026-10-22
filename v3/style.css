@@ -696,3 +696,45 @@ html.gpt-seats .iogc-Controls { box-shadow: 0 1px 0 0 rgba(255, 255, 255, .75) i
 html.gpt-seats body.dark-mode .iogc-GameWindow-container { box-shadow: 1px 1px 0 0 rgba(255, 255, 255, .1) inset, -1px -1px 0 0 rgba(0, 0, 0, .125) inset !important; }
 html.gpt-seats body.dark-mode .iogc-GameWindow-table { box-shadow: 0 -8px 16px 0 rgba(0, 0, 0, .5) inset !important; }
 html.gpt-seats body.dark-mode .iogc-Controls { box-shadow: none !important; }
+
+/* ---------- player stats (features/playerStats.js) ----------
+ * The badge, hover card and panel rows are ui2's own takitusTools-* styles,
+ * the ones its bundled 3.0.0 uses, so this build looks the same. Under the
+ * Chrome shim the badge is pinned over the top edge of the avatar. */
+.gpt-seat-badge.gpt-stat-slot[hidden] { display: none; }
+.gpt-stat-badge[hidden] { display: none; }
+.iogc-PlayerPanelAvatar-portrait > .gpt-stat-badge { position: absolute; left: 0; right: 0; top: 0; z-index: 2; }
+.takitusTools-panel .gpt-panel-sub { font-size: 10px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; opacity: .6; margin-bottom: 4px; }
+
+/* ui2's own styles for its bundled Takitus Tools 3.0.0 (from its stylesheet,
+ * which loads only alongside that build), so this build looks the same
+ * wherever it runs. */
+.takitusTools-badge{box-sizing:border-box;width:100%;padding:0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;background:#f4f6f8f0;color:#3a4250;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;font-size:calc(9px * var(--table-scale, 1));font-weight:400;line-height:1.4;font-variant-numeric:tabular-nums;letter-spacing:.2px;cursor:default;-webkit-user-select:none;user-select:none }
+.takitusTools-badge:hover{background:#fff;color:#111 }
+.takitusTools-badge.is-dark{background:#1e2530f0;color:#b9c2cf }
+.takitusTools-badge.is-dark:hover{background:#232c3a;color:#fff }
+.takitusTools-hover{display:flex;align-items:center;justify-content:center;gap:5px;box-sizing:border-box;width:max-content;max-width:220px;margin:0 auto;padding:1px 4px 2px;background:#f4f6f8f0;color:#3a4250;border:1px solid rgba(0,0,0,.18);border-radius:6px;box-shadow:0 1px 3px #0000001f;font:10px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;font-weight:400;white-space:nowrap;cursor:default }
+.takitusTools-hover-nickname,.takitusTools-hover-note{min-width:0;max-width:120px;overflow:hidden;text-overflow:ellipsis }
+.takitusTools-hover-nickname.is-empty{opacity:.5;font-style:italic }
+.takitusTools-hover-edit{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex:none;padding:1px 5px;border:1px solid rgba(0,0,0,.18);border-radius:5px;background:#fff9;color:#666;font-size:11px;line-height:1;cursor:pointer }
+.takitusTools-hover-edit:hover,.takitusTools-hover-edit:focus-visible{background:#fff;color:#111 }
+.takitusTools-hover.is-dark{background:#1e2530f0;color:#b9c2cf;border-color:#3c4a61;box-shadow:0 1px 3px #00000059 }
+.takitusTools-hover.is-dark .takitusTools-hover-edit{background:#141a2299;color:#93a0b4;border-color:#45526b }
+.takitusTools-hover.is-dark .takitusTools-hover-edit:hover,.takitusTools-hover.is-dark .takitusTools-hover-edit:focus-visible{background:#2c3645;color:#fff }
+.takitusTools-editor{box-sizing:border-box;width:200px;margin:0 auto;padding:8px;background:#fff;color:#333;border:1px solid #cfcfcf;border-radius:8px;box-shadow:0 6px 22px #00000040;font:12px/1.4 Arial,sans-serif;font-weight:400;text-align:left;white-space:normal;cursor:default }
+.takitusTools-editor-name{margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700 }
+.takitusTools-editor-nickname,.takitusTools-editor-note{display:block;width:100%;box-sizing:border-box;padding:4px;border:1px solid #c9c9c9;border-radius:4px;background:#fff;color:inherit;font:inherit }
+.takitusTools-editor-nickname{margin-bottom:6px }
+.takitusTools-editor-note{height:64px;resize:vertical }
+.takitusTools-editor-buttons{display:flex;gap:6px;margin-top:6px }
+.takitusTools-editor-buttons button{flex:1;padding:3px 0;border:1px solid #c9c9c9;border-radius:5px;background:#fff;color:inherit;font:inherit;cursor:pointer }
+.takitusTools-editor-buttons button:hover{background:#f0f0f0 }
+.takitusTools-editor.is-dark{background:#232c3a;color:#d2d8e2;border-color:#3c4a61 }
+.takitusTools-editor.is-dark .takitusTools-editor-nickname,.takitusTools-editor.is-dark .takitusTools-editor-note{background:#1b222d;border-color:#44516a }
+.takitusTools-editor.is-dark .takitusTools-editor-buttons button{background:#2a3342;border-color:#45526b }
+.takitusTools-editor.is-dark .takitusTools-editor-buttons button:hover{background:#344056 }
+.takitusTools-panel-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:baseline;gap:8px;padding:2px 0;font-size:11px }
+.takitusTools-panel-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+.takitusTools-panel-nickname,.takitusTools-panel-hands{opacity:.6 }
+.takitusTools-panel-stats,.takitusTools-panel-hands{font-variant-numeric:tabular-nums;white-space:nowrap }
+.takitusTools-panel-empty{padding:4px 0;color:#999;font-size:10px }

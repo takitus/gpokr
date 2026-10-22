@@ -3,7 +3,7 @@
     "name": "GPokr Tools",
     "version": "3.1.0",
     "author": "takitus",
-    "description": "Hand summary, bet readout by street, custom bet buttons, quick chat, thrown props and celebrations, and a 3D table.",
+    "description": "Player stats (VPIP/PFR/showdowns), notes and nicknames, hand summary, bet readout by street, custom bet buttons, quick chat, thrown props and celebrations, and a 3D table.",
     "docs": "https://github.com/takitus/gpokr",
     "games": [
         "gpokr"
@@ -20,6 +20,35 @@
         "storage:account"
     ],
     "settings": [
+        {
+            "key": "showStats",
+            "type": "switch",
+            "label": "Player stats on avatars",
+            "hint": "VPIP / PFR / showdown wins, counted from the hands you watched",
+            "default": true
+        },
+        {
+            "key": "showMine",
+            "type": "switch",
+            "label": "Show my own stats",
+            "default": false
+        },
+        {
+            "key": "badgeFormat",
+            "type": "choice",
+            "label": "Stats badge",
+            "options": [
+                {
+                    "value": "vpip-pfr",
+                    "label": "VPIP / PFR"
+                },
+                {
+                    "value": "vpip-pfr-sd",
+                    "label": "VPIP / PFR / showdown wins"
+                }
+            ],
+            "default": "vpip-pfr-sd"
+        },
         {
             "key": "handSummary",
             "type": "switch",

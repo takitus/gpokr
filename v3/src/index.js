@@ -17,6 +17,8 @@ import { startCardStyle, cardBackStyle } from "./features/cardStyle.js";
 import { startSeatStyle } from "./features/seatStyle.js";
 import { startPlayerNotes } from "./features/playerNotes.js";
 import { createPeople } from "./lib/people.js";
+import { createToolsDoc } from "./lib/toolsDoc.js";
+import { startPlayerStats } from "./features/playerStats.js";
 import { openTable3dEditor, openLookEditor } from "./editors.js";
 import { createPrefs } from "./lib/prefs.js";
 import { createLook } from "./lib/look.js";
@@ -70,7 +72,14 @@ export default {
         const prefs = createPrefs(ctx);
         const look = createLook(prefs);
         const editors = createEditors();
-        const people = createPeople(prefs);
+        // The stats, notes and nicknames document ui2's bundled 3.0.0 keeps,
+        // shared with it (the app runs it), so always loaded.
+        const store = createToolsDoc(ctx);
+        store.load();
+        offs.push(() => store.dispose());
+        const people = createPeople(ctx, store, prefs);
+        // 3.0.0's stats: counted always, shown per its showStats setting.
+        offs.push(startPlayerStats(ctx, store));
 
         offs.push(toggled(ctx, "handSummary", (c) => startHandSummary(c, tracker)));
         offs.push(toggled(ctx, "betReadout", (c) => startBetReadout(c, tracker, prefs, editors)));
